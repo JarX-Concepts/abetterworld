@@ -1,0 +1,15 @@
+[package]
+name = "desktop"
+version = "0.1.0"
+edition = "2021"
+resolver = "2"
+
+[dependencies]
+winit = {workspace = true}
+wgpu = {workspace = true}
+pollster = "0.2"
+env_logger = "0.10"
+abetterworld = { path = "../../abetterworld" }
+
+[build-dependencies]
+cc = "1.0"
