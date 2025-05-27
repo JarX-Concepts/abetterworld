@@ -163,7 +163,7 @@ fn process_tileset(
         &tile_info.bounding_volume,
         tile_info.geometric_error,
         1024.0,
-        200.0,
+        100.0,
     );
 
     fn is_nested_tileset(uri: &str) -> bool {

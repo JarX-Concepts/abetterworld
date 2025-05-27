@@ -36,6 +36,7 @@ pub struct SphereRenderer {
     depth_view: wgpu::TextureView,
     texture_bind_group_layout: wgpu::BindGroupLayout,
     content: TileContent,
+    input_state: input::InputState,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -68,8 +69,8 @@ pub enum MouseButton {
 pub enum InputEvent {
     KeyPressed(Key),
     KeyReleased(Key),
-    MouseMoved { delta: (f32, f32) },
-    MouseScrolled { delta: f32 },
+    MouseMoved(f32, f32),
+    MouseScrolled(f32),
     MouseButtonPressed(MouseButton),
     MouseButtonReleased(MouseButton),
     TouchStart { id: u64, position: (f32, f32) },
@@ -366,6 +367,7 @@ impl SphereRenderer {
             depth_view,
             texture_bind_group_layout,
             content: TileContent::new().unwrap(),
+            input_state: input::InputState::new(),
         }
     }
 
@@ -487,20 +489,22 @@ impl SphereRenderer {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) -> Result<(), Box<dyn Error>> {
-        //self.camera.yaw(Deg(2.0));
+        //self.debug_camera.yaw(Deg(2.0));
         //self.camera.zoom(5000.0);
         self.camera.update(None);
 
         self.debug_camera.update(Some(20000.0));
 
-        self.content.update_in_range(&self.debug_camera)?;
-        let state = self.content.update_loaded();
-        if state.is_err() {
-            eprintln!("Error updating content: {:?}", state.err());
-            exit(1);
+        if self.content.latest_render.is_empty() {
+            self.content.update_in_range(&self.debug_camera)?;
+            let state = self.content.update_loaded();
+            if state.is_err() {
+                eprintln!("Error updating content: {:?}", state.err());
+                exit(1);
+            }
+            self.content
+                .update_render(device, queue, &self.texture_bind_group_layout)?;
         }
-        self.content
-            .update_render(device, queue, &self.texture_bind_group_layout)?;
 
         let mut counter = 0;
         for tile in &self.content.latest_render {
@@ -520,6 +524,6 @@ impl SphereRenderer {
     }
 
     pub fn input(&mut self, event: InputEvent) {
-        input::process_input(&mut self.camera, event);
+        self.input_state.process_input(&mut self.camera, event);
     }
 }

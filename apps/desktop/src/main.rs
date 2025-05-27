@@ -5,7 +5,7 @@ use winit::{
     window::WindowBuilder,
 };
 
-use abetterworld::{InputEvent, Key, SphereRenderer};
+use abetterworld::{InputEvent, Key, MouseButton, SphereRenderer};
 use std::sync::Arc;
 
 struct State<'window> {
@@ -238,6 +238,43 @@ fn main() {
                         }
                     }
                 }
+                WindowEvent::MouseInput {
+                    state: button_state,
+                    button,
+                    ..
+                } => {
+                    let mapped_button = match button {
+                        winit::event::MouseButton::Left => Some(MouseButton::Left),
+                        winit::event::MouseButton::Right => Some(MouseButton::Right),
+                        winit::event::MouseButton::Middle => Some(MouseButton::Middle),
+                        _ => None,
+                    };
+
+                    if let Some(btn) = mapped_button {
+                        match button_state {
+                            ElementState::Pressed => {
+                                state.input(InputEvent::MouseButtonPressed(btn))
+                            }
+                            ElementState::Released => {
+                                state.input(InputEvent::MouseButtonReleased(btn))
+                            }
+                        }
+                    }
+                }
+
+                WindowEvent::CursorMoved { position, .. } => {
+                    let (x, y) = (position.x as f32, position.y as f32);
+                    state.input(InputEvent::MouseMoved(x, y));
+                }
+
+                WindowEvent::MouseWheel { delta, .. } => {
+                    let scroll_delta = match delta {
+                        winit::event::MouseScrollDelta::LineDelta(_, y) => *y as f32,
+                        winit::event::MouseScrollDelta::PixelDelta(pos) => pos.y as f32,
+                    };
+                    state.input(InputEvent::MouseScrolled(scroll_delta));
+                }
+
                 _ => {}
             },
             Event::AboutToWait => {
