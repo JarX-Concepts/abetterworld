@@ -13,6 +13,7 @@ use serde::de;
 use tiles::TileContent;
 use wgpu::util::DeviceExt;
 mod importer;
+mod input;
 
 pub struct UniformDataBlob {
     pub data: Vec<u8>,
@@ -35,6 +36,45 @@ pub struct SphereRenderer {
     depth_view: wgpu::TextureView,
     texture_bind_group_layout: wgpu::BindGroupLayout,
     content: TileContent,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Key {
+    W,
+    A,
+    S,
+    D,
+    ArrowUp,
+    ArrowDown,
+    ArrowLeft,
+    ArrowRight,
+    ZoomIn,
+    ZoomOut,
+    Shift,
+    Ctrl,
+    Alt,
+    Escape,
+    // Add more as needed
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MouseButton {
+    Left,
+    Right,
+    Middle,
+}
+
+#[derive(Debug)]
+pub enum InputEvent {
+    KeyPressed(Key),
+    KeyReleased(Key),
+    MouseMoved { delta: (f32, f32) },
+    MouseScrolled { delta: f32 },
+    MouseButtonPressed(MouseButton),
+    MouseButtonReleased(MouseButton),
+    TouchStart { id: u64, position: (f32, f32) },
+    TouchMove { id: u64, position: (f32, f32) },
+    TouchEnd { id: u64 },
 }
 
 impl SphereRenderer {
@@ -239,7 +279,7 @@ impl SphereRenderer {
                 strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw,
                 cull_mode: Some(wgpu::Face::Back),
-                polygon_mode: wgpu::PolygonMode::Fill,
+                polygon_mode: wgpu::PolygonMode::Line,
                 unclipped_depth: false,
                 conservative: false,
             },
@@ -346,6 +386,12 @@ impl SphereRenderer {
             bytemuck::bytes_of(&camera_vp),
         );
         render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+
+        if (self.content.latest_render.is_empty()) {
+            println!("No content to render");
+            return;
+        }
+
         render_pass.set_pipeline(&self.pipeline);
 
         let mut counter = 0;
@@ -362,7 +408,7 @@ impl SphereRenderer {
 
                 for mesh_index in node.mesh_indices.iter() {
                     if (*mesh_index as usize) >= tile.meshes.len() {
-                        println!("Mesh index out of bounds: {}", mesh_index);
+                        //println!("Mesh index out of bounds: {}", mesh_index);
                         continue;
                     }
                     let mesh = &tile.meshes[*mesh_index];
@@ -430,49 +476,10 @@ impl SphereRenderer {
             usage: wgpu::BufferUsages::INDEX,
         });
 
-        /*         render_pass.set_pipeline(&self.debug_pipeline);
+        render_pass.set_pipeline(&self.debug_pipeline);
         render_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
         render_pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-        render_pass.draw_indexed(0..frustum_indices.len() as u32, 0, 0..1); */
-
-        let frustum_corners = self.debug_camera.frustum_corners_from_planes();
-        let plane_vertices: Vec<[f32; 3]> = frustum_corners
-            .iter()
-            .map(|p| [p.x as f32, p.y as f32, p.z as f32])
-            .collect();
-
-        const PLANE_OUTLINES: [[u16; 4]; 6] = [
-            [0, 1, 2, 3], // Near
-            [4, 5, 6, 7], // Far
-            [0, 3, 7, 4], // Left
-            [1, 2, 6, 5], // Right
-            [0, 1, 5, 4], // Top
-            [3, 2, 6, 7], // Bottom
-        ];
-
-        let mut plane_indices: Vec<u16> = Vec::new();
-        for outline in PLANE_OUTLINES.iter() {
-            for i in 0..4 {
-                plane_indices.push(outline[i]);
-                plane_indices.push(outline[(i + 1) % 4]);
-            }
-        }
-
-        let plane_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Plane Outline Vertices"),
-            contents: bytemuck::cast_slice(&plane_vertices),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-        let plane_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Plane Outline Indices"),
-            contents: bytemuck::cast_slice(&plane_indices),
-            usage: wgpu::BufferUsages::INDEX,
-        });
-
-        render_pass.set_pipeline(&self.debug_pipeline);
-        render_pass.set_vertex_buffer(0, plane_vertex_buffer.slice(..));
-        render_pass.set_index_buffer(plane_index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-        render_pass.draw_indexed(0..plane_indices.len() as u32, 0, 0..1);
+        render_pass.draw_indexed(0..frustum_indices.len() as u32, 0, 0..1);
     }
 
     pub fn update(
@@ -482,12 +489,16 @@ impl SphereRenderer {
     ) -> Result<(), Box<dyn Error>> {
         //self.camera.yaw(Deg(2.0));
         //self.camera.zoom(5000.0);
-        self.camera.update(Some(10000.0));
+        self.camera.update(None);
 
         self.debug_camera.update(Some(20000.0));
 
         self.content.update_in_range(&self.debug_camera)?;
-        self.content.update_loaded()?;
+        let state = self.content.update_loaded();
+        if state.is_err() {
+            eprintln!("Error updating content: {:?}", state.err());
+            exit(1);
+        }
         self.content
             .update_render(device, queue, &self.texture_bind_group_layout)?;
 
@@ -506,5 +517,9 @@ impl SphereRenderer {
         }
 
         Ok(())
+    }
+
+    pub fn input(&mut self, event: InputEvent) {
+        input::process_input(&mut self.camera, event);
     }
 }

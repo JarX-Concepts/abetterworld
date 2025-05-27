@@ -112,33 +112,6 @@ impl Uniforms {
     }
 }
 
-fn intersect_planes(
-    n1: Vector3<f64>,
-    d1: f64,
-    n2: Vector3<f64>,
-    d2: f64,
-    n3: Vector3<f64>,
-    d3: f64,
-) -> Option<Point3<f32>> {
-    println!(
-        "intersect_planes: n1: {:?}, d1: {}, n2: {:?}, d2: {}, n3: {:?}, d3: {}",
-        n1, d1, n2, d2, n3, d3
-    );
-    let cross23 = n2.cross(n3);
-    let cross31 = n3.cross(n1);
-    let cross12 = n1.cross(n2);
-
-    let denom = n1.dot(cross23);
-    if denom.abs() < 1e-8 {
-        println!("Planes are parallel or nearly so");
-        return None; // Planes are parallel or nearly so
-    }
-
-    let p = (-d1 * cross23 + -d2 * cross31 + -d3 * cross12) / denom;
-
-    Some(Point3::from_vec(p.cast::<f32>().unwrap()))
-}
-
 pub struct Camera {
     // intrinsic
     fovy: Deg<f64>,
@@ -180,6 +153,10 @@ impl Camera {
         };
         cam.update(None);
         cam
+    }
+
+    pub fn height_above_terrain(&self) -> f64 {
+        self.eye.to_vec().magnitude() - EARTH_RADIUS_M
     }
 
     /// move camera and target along camera-right (x) and camera-up (y) axes
@@ -323,9 +300,9 @@ impl Camera {
         sse_threshold: f64,
     ) -> bool {
         // 1. Frustum test
-        if !self.is_bounding_volume_visible(bounding_volume) {
+        /*         if !self.is_bounding_volume_visible(bounding_volume) {
             return false;
-        }
+        } */
 
         // 2. Compute distance to box center (in world space)
         let offset_vec = Vector3::new(
@@ -334,9 +311,12 @@ impl Camera {
             self.uniform.offset[2] as f64,
         );
         let obb = bounding_volume.to_obb_y_up_with_offset(offset_vec);
-        let cam_pos = self.cam_world - offset_vec; // world position
-        let tile_center = obb.center;
-        let dist = (tile_center - cam_pos).magnitude().max(0.001); // avoid div0
+        let cam_pos = self.cam_world - offset_vec;
+        let closest_point = obb.closest_point(cam_pos);
+
+        let diagonal = obb.half_axes.iter().map(|a| a.magnitude()).sum::<f64>() * 2.0;
+        let min_dist = diagonal * 0.01; // 1% of tile diagonal
+        let dist = (closest_point - cam_pos).magnitude().max(min_dist);
 
         // 3. Compute vertical FOV (in radians)
         let vertical_fov = self.fovy.0.to_radians();
@@ -346,30 +326,6 @@ impl Camera {
 
         // 5. Needs refinement?
         sse > sse_threshold
-    }
-
-    pub fn frustum_corners_from_planes(&self) -> [Point3<f32>; 8] {
-        println!("frustum_corners_from_planes");
-        println!("planes: {:?}", self.planes);
-        let p = |i: usize| -> (Vector3<f64>, f64) { (self.planes[i].1, self.planes[i].2) };
-        [
-            // Near-Left-Top
-            intersect_planes(p(0).0, p(0).1, p(3).0, p(3).1, p(4).0, p(4).1).unwrap(),
-            // Near-Right-Top
-            intersect_planes(p(1).0, p(1).1, p(3).0, p(3).1, p(4).0, p(4).1).unwrap(),
-            // Near-Right-Bottom
-            intersect_planes(p(1).0, p(1).1, p(2).0, p(2).1, p(4).0, p(4).1).unwrap(),
-            // Near-Left-Bottom
-            intersect_planes(p(0).0, p(0).1, p(2).0, p(2).1, p(4).0, p(4).1).unwrap(),
-            // Far-Left-Top
-            intersect_planes(p(0).0, p(0).1, p(3).0, p(3).1, p(5).0, p(5).1).unwrap(),
-            // Far-Right-Top
-            intersect_planes(p(1).0, p(1).1, p(3).0, p(3).1, p(5).0, p(5).1).unwrap(),
-            // Far-Right-Bottom
-            intersect_planes(p(1).0, p(1).1, p(2).0, p(2).1, p(5).0, p(5).1).unwrap(),
-            // Far-Left-Bottom
-            intersect_planes(p(0).0, p(0).1, p(2).0, p(2).1, p(5).0, p(5).1).unwrap(),
-        ]
     }
 
     pub fn frustum_corners(&self) -> [Point3<f64>; 8] {

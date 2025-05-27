@@ -11,14 +11,16 @@ use crate::importer::upload_textures_to_gpu;
 use crate::Camera;
 use crate::TILESET_CACHE;
 use bytes::Bytes;
+use cgmath::InnerSpace;
 use cgmath::Vector3;
 use reqwest::blocking::Client;
 use serde::Deserialize;
 use std::error::Error;
+use url::Url;
 use wgpu::util::DeviceExt;
 
-const CESIUM_ION_ACCESS_TOKEN: &str = "";
-const CESIUM_ION_ASSET_ID: u32 = 5;
+const CESIUM_ION_ACCESS_TOKEN: &str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJkMzMxNGZlYi1iYzcxLTQzMjItOGU0Mi0yYjA3Y2ZmMDRiNWMiLCJpZCI6MTI2NTQwLCJpYXQiOjE2Nzc1MzYyOTl9.2S8ESSboEWY4nxbdGJ9vMgdh9pO2pz42L-PV4KwUlK0";
+const CESIUM_ION_ASSET_ID: u32 = 2275207; // Replace with your asset ID
 
 #[derive(Debug, Deserialize)]
 struct CesiumEndpointResponse {
@@ -65,6 +67,26 @@ impl BoundingVolume {
             Vector3::new(b[9], b[11], -b[10]),
         ];
         OrientedBoundingBox { center, half_axes }
+    }
+}
+
+impl OrientedBoundingBox {
+    pub fn closest_point(&self, point: Vector3<f64>) -> Vector3<f64> {
+        let mut closest = self.center;
+
+        for axis in &self.half_axes {
+            let dir = axis.normalize();
+            let half_len = axis.magnitude();
+
+            // Project point onto axis
+            let v = point - self.center;
+            let dist = v.dot(dir).clamp(-half_len, half_len);
+
+            // Move along axis by clamped projection
+            closest += dir * dist;
+        }
+
+        closest
     }
 }
 
@@ -131,57 +153,62 @@ fn process_tileset(
     camera: &Camera,
     state: &ConnectionState,
 ) -> Result<Vec<ContentInRange>, Box<dyn Error>> {
-    if state.tile.is_none() {
-        return Err("No tile found".into());
-    }
+    let Some(tile_info) = &state.tile else {
+        return Ok(vec![]);
+    };
 
     let mut tiles = Vec::new();
-    let tile_info = state.tile.unwrap();
 
     let needs_refinement = camera.needs_refinement(
         &tile_info.bounding_volume,
         tile_info.geometric_error,
         1024.0,
-        15.0,
+        200.0,
     );
 
-    if !needs_refinement || tile_info.children.is_none() {
-        if let Some(content) = &tile_info.content {
-            let tile_url = resolve_url(&state.tileset_url, &content.uri)?;
+    fn is_nested_tileset(uri: &str) -> bool {
+        if let Ok(parsed) = Url::parse(uri) {
+            parsed.path().ends_with(".json")
+        } else {
+            uri.split('?')
+                .next()
+                .map_or(false, |path| path.ends_with(".json"))
+        }
+    }
 
-            if tile_url.ends_with(".glb") {
-                if let Some(session) = &state.session {
-                    tiles.push(ContentInRange {
-                        uri: tile_url,
-                        session: session.clone(),
-                    });
-                }
-            } else {
-                // Recurse into the nested tileset
-                let mut session_update: String;
+    if let Some(content) = &tile_info.content {
+        let tile_url = resolve_url(&state.tileset_url, &content.uri)?;
 
-                if let Some(session) = &state.session {
-                    session_update = session.clone();
-                } else {
-                    session_update = String::new();
-                }
+        let is_nested = is_nested_tileset(&tile_url);
+        if is_nested && needs_refinement {
+            let mut session_update = state.session.clone().unwrap_or_default();
+            if let Some((_, new_session)) = tile_url.split_once("session=") {
+                session_update = new_session.to_string();
+            }
 
-                if let Some((_, new_session)) = tile_url.split_once("session=") {
-                    session_update = String::from(new_session);
-                }
+            return import_tileset(
+                camera,
+                &ConnectionState {
+                    connection: state.connection,
+                    session: Some(session_update),
+                    tileset_url: &tile_url,
+                    tile: None,
+                },
+            );
+        }
 
-                return import_tileset(
-                    camera,
-                    &ConnectionState {
-                        connection: state.connection,
-                        session: Some(session_update),
-                        tileset_url: &tile_url,
-                        tile: None,
-                    },
-                );
+        if tile_url.ends_with(".glb") && (!needs_refinement || tile_info.children.is_none()) {
+            if let Some(session) = &state.session {
+                tiles.push(ContentInRange {
+                    uri: tile_url,
+                    session: session.clone(),
+                });
             }
         }
-    } else {
+    }
+
+    // Walk children if refinement is needed
+    if needs_refinement {
         if let Some(children) = &tile_info.children {
             for child in children {
                 let new_tiles = process_tileset(
@@ -197,6 +224,7 @@ fn process_tileset(
             }
         }
     }
+
     Ok(tiles)
 }
 
