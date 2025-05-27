@@ -5,7 +5,7 @@ use winit::{
     window::WindowBuilder,
 };
 
-use abetterworld::SphereRenderer;
+use abetterworld::{InputEvent, Key, SphereRenderer};
 use std::sync::Arc;
 
 struct State<'window> {
@@ -100,8 +100,9 @@ impl<'window> State<'window> {
         }
     }
 
-    fn input(&mut self, _event: &winit::event::WindowEvent) -> bool {
-        false
+    fn input(&mut self, event: InputEvent) {
+        // No dynamic updates for now.
+        self.sphere_renderer.input(event);
     }
 
     fn update(&mut self) {
@@ -159,6 +160,31 @@ impl<'window> State<'window> {
     }
 }
 
+fn map_keycode(physical_key: &PhysicalKey) -> Option<Key> {
+    match physical_key {
+        PhysicalKey::Code(KeyCode::KeyW) => Some(Key::W),
+        PhysicalKey::Code(KeyCode::KeyA) => Some(Key::A),
+        PhysicalKey::Code(KeyCode::KeyS) => Some(Key::S),
+        PhysicalKey::Code(KeyCode::KeyD) => Some(Key::D),
+
+        PhysicalKey::Code(KeyCode::Equal) => Some(Key::ZoomIn),
+        PhysicalKey::Code(KeyCode::PageDown) => Some(Key::ZoomIn),
+
+        PhysicalKey::Code(KeyCode::PageUp) => Some(Key::ZoomOut),
+        PhysicalKey::Code(KeyCode::Minus) => Some(Key::ZoomOut),
+
+        PhysicalKey::Code(KeyCode::ArrowUp) => Some(Key::ArrowUp),
+        PhysicalKey::Code(KeyCode::ArrowDown) => Some(Key::ArrowDown),
+        PhysicalKey::Code(KeyCode::ArrowLeft) => Some(Key::ArrowLeft),
+        PhysicalKey::Code(KeyCode::ArrowRight) => Some(Key::ArrowRight),
+        PhysicalKey::Code(KeyCode::Escape) => Some(Key::Escape),
+        PhysicalKey::Code(KeyCode::ShiftLeft | KeyCode::ShiftRight) => Some(Key::Shift),
+        PhysicalKey::Code(KeyCode::ControlLeft | KeyCode::ControlRight) => Some(Key::Ctrl),
+        PhysicalKey::Code(KeyCode::AltLeft | KeyCode::AltRight) => Some(Key::Alt),
+        _ => None,
+    }
+}
+
 fn main() {
     env_logger::init();
     let event_loop = EventLoop::new().unwrap();
@@ -195,6 +221,22 @@ fn main() {
                     ..
                 } => {
                     target.exit();
+                }
+                WindowEvent::KeyboardInput {
+                    event:
+                        winit::event::KeyEvent {
+                            physical_key,
+                            state: key_state,
+                            ..
+                        },
+                    ..
+                } => {
+                    if let Some(key) = map_keycode(physical_key) {
+                        match key_state {
+                            ElementState::Pressed => state.input(InputEvent::KeyPressed(key)),
+                            ElementState::Released => state.input(InputEvent::KeyReleased(key)),
+                        }
+                    }
                 }
                 _ => {}
             },
