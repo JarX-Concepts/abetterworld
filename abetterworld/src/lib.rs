@@ -1,4 +1,8 @@
-use std::{error::Error, process::exit};
+use std::{
+    error::Error,
+    process::exit,
+    sync::{Arc, RwLock},
+};
 
 use cgmath::{Deg, Point3, Vector3};
 mod camera;
@@ -9,11 +13,13 @@ mod cache;
 use cache::TILESET_CACHE;
 mod content;
 use content::{DebugVertex, Vertex};
+use pager::{start_load_worker_pool, start_update_in_range_loop};
 use serde::de;
-use tiles::TileContent;
+use threadpool::ThreadPool;
 use wgpu::util::DeviceExt;
 mod importer;
 mod input;
+mod pager;
 
 pub struct UniformDataBlob {
     pub data: Vec<u8>,
@@ -30,12 +36,12 @@ pub struct SphereRenderer {
     transforms: UniformDataBlob,
     camera_uniform_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
-    camera: Camera,
-    debug_camera: Camera,
+    camera: Arc<RwLock<Camera>>,
+    debug_camera: Arc<RwLock<Camera>>,
     aligned_uniform_size: usize,
     depth_view: wgpu::TextureView,
     texture_bind_group_layout: wgpu::BindGroupLayout,
-    content: TileContent,
+    content: Arc<RwLock<pager::TileContent>>,
     input_state: input::InputState,
 }
 
@@ -280,7 +286,7 @@ impl SphereRenderer {
                 strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw,
                 cull_mode: Some(wgpu::Face::Back),
-                polygon_mode: wgpu::PolygonMode::Fill,
+                polygon_mode: wgpu::PolygonMode::Line,
                 unclipped_depth: false,
                 conservative: false,
             },
@@ -304,9 +310,16 @@ impl SphereRenderer {
             source: wgpu::ShaderSource::Wgsl(include_str!("debug_shader.wgsl").into()),
         });
 
+        let debug_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Render Pipeline Layout"),
+                bind_group_layouts: &[&camera_bind_group_layout],
+                push_constant_ranges: &[],
+            });
+
         let debug_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Debug Pipeline"),
-            layout: Some(&pipeline_layout),
+            layout: Some(&debug_pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &debug_shader,
                 entry_point: Some("vs_main"),
@@ -348,6 +361,14 @@ impl SphereRenderer {
             multiview: None,
         });
 
+        let tile_content = Arc::new(RwLock::new(pager::TileContent::new().unwrap()));
+        let camera_source = Arc::new(RwLock::new(camera));
+        let debug_camera_source = Arc::new(RwLock::new(debug_camera));
+        let pool = ThreadPool::new(8); // adjust based on system
+
+        start_update_in_range_loop(tile_content.clone(), debug_camera_source.clone());
+        start_load_worker_pool(tile_content.clone(), pool);
+
         Self {
             pipeline,
             debug_pipeline,
@@ -361,12 +382,12 @@ impl SphereRenderer {
             },
             camera_uniform_buffer,
             camera_bind_group,
-            camera,
-            debug_camera,
+            camera: camera_source,
+            debug_camera: debug_camera_source,
             aligned_uniform_size,
             depth_view,
             texture_bind_group_layout,
-            content: TileContent::new().unwrap(),
+            content: tile_content,
             input_state: input::InputState::new(),
         }
     }
@@ -381,7 +402,7 @@ impl SphereRenderer {
         queue: &wgpu::Queue,
         device: &wgpu::Device,
     ) {
-        let camera_vp = self.camera.uniform();
+        let camera_vp = self.camera.read().unwrap().uniform();
         queue.write_buffer(
             &self.camera_uniform_buffer,
             0,
@@ -389,49 +410,55 @@ impl SphereRenderer {
         );
         render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
 
-        if (self.content.latest_render.is_empty()) {
-            println!("No content to render");
-            return;
-        }
+        {
+            let tile_content_inst = self.content.read().unwrap();
+            if !tile_content_inst.latest_render.is_empty() {
+                render_pass.set_pipeline(&self.pipeline);
 
-        render_pass.set_pipeline(&self.pipeline);
+                let mut counter = 0;
+                queue.write_buffer(&self.transforms.uniform_buffer, 0, &self.transforms.data);
 
-        let mut counter = 0;
-        queue.write_buffer(&self.transforms.uniform_buffer, 0, &self.transforms.data);
+                for tile in &tile_content_inst.latest_render {
+                    for (i, node) in tile.nodes.iter().enumerate() {
+                        render_pass.set_bind_group(
+                            1,
+                            &self.transforms.uniform_bind_group,
+                            &[counter * self.aligned_uniform_size as u32],
+                        );
+                        counter += 1;
 
-        for tile in &self.content.latest_render {
-            for (i, node) in tile.nodes.iter().enumerate() {
-                render_pass.set_bind_group(
-                    1,
-                    &self.transforms.uniform_bind_group,
-                    &[counter * self.aligned_uniform_size as u32],
-                );
-                counter += 1;
+                        for mesh_index in node.mesh_indices.iter() {
+                            if (*mesh_index as usize) >= tile.meshes.len() {
+                                //println!("Mesh index out of bounds: {}", mesh_index);
+                                continue;
+                            }
+                            let mesh = &tile.meshes[*mesh_index];
 
-                for mesh_index in node.mesh_indices.iter() {
-                    if (*mesh_index as usize) >= tile.meshes.len() {
-                        //println!("Mesh index out of bounds: {}", mesh_index);
-                        continue;
-                    }
-                    let mesh = &tile.meshes[*mesh_index];
+                            // Set the vertex and index buffer for this mesh
+                            render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                            render_pass.set_index_buffer(
+                                mesh.index_buffer.slice(..),
+                                wgpu::IndexFormat::Uint32,
+                            );
 
-                    // Set the vertex and index buffer for this mesh
-                    render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                    render_pass
-                        .set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                            // Set the correct material/texture bind group
+                            if let Some(material_index) = mesh.material_index {
+                                let material = &tile.materials[material_index];
+                                if let Some(texture_index) = material.base_color_texture_index {
+                                    let texture_resource = &tile.textures[texture_index];
+                                    // You must have created the bind_group for this texture previously!
+                                    render_pass.set_bind_group(
+                                        2,
+                                        &texture_resource.bind_group,
+                                        &[],
+                                    );
+                                }
+                            }
 
-                    // Set the correct material/texture bind group
-                    if let Some(material_index) = mesh.material_index {
-                        let material = &tile.materials[material_index];
-                        if let Some(texture_index) = material.base_color_texture_index {
-                            let texture_resource = &tile.textures[texture_index];
-                            // You must have created the bind_group for this texture previously!
-                            render_pass.set_bind_group(2, &texture_resource.bind_group, &[]);
+                            // Draw call for this mesh
+                            render_pass.draw_indexed(0..mesh.num_indices, 0, 0..1);
                         }
                     }
-
-                    // Draw call for this mesh
-                    render_pass.draw_indexed(0..mesh.num_indices, 0, 0..1);
                 }
             }
         }
@@ -445,7 +472,7 @@ impl SphereRenderer {
         queue: &wgpu::Queue,
         device: &wgpu::Device,
     ) {
-        let corners = self.debug_camera.frustum_corners();
+        let corners = self.debug_camera.read().unwrap().frustum_corners();
         let frustum_vertices: Vec<[f32; 3]> = corners
             .iter()
             .map(|p| [p.x as f32, p.y as f32, p.z as f32])
@@ -491,23 +518,15 @@ impl SphereRenderer {
     ) -> Result<(), Box<dyn Error>> {
         //self.debug_camera.yaw(Deg(2.0));
         //self.camera.zoom(5000.0);
-        self.camera.update(None);
+        self.camera.write().unwrap().update(None);
+        self.debug_camera.write().unwrap().update(Some(20000.0));
 
-        self.debug_camera.update(Some(20000.0));
-
-        if self.content.latest_render.is_empty() {
-            self.content.update_in_range(&self.debug_camera)?;
-            let state = self.content.update_loaded();
-            if state.is_err() {
-                eprintln!("Error updating content: {:?}", state.err());
-                exit(1);
-            }
-            self.content
-                .update_render(device, queue, &self.texture_bind_group_layout)?;
-        }
+        // Just do it once for now...
+        let mut tile_content_inst = self.content.write().unwrap();
+        tile_content_inst.update_render(device, queue, &self.texture_bind_group_layout)?;
 
         let mut counter = 0;
-        for tile in &self.content.latest_render {
+        for tile in &tile_content_inst.latest_render {
             for (i, node) in tile.nodes.iter().enumerate() {
                 let matrix_bytes = bytemuck::bytes_of(&node.matrix);
 
@@ -524,6 +543,7 @@ impl SphereRenderer {
     }
 
     pub fn input(&mut self, event: InputEvent) {
-        self.input_state.process_input(&mut self.camera, event);
+        self.input_state
+            .process_input(&mut self.camera.write().unwrap(), event);
     }
 }

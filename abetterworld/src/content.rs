@@ -1,5 +1,6 @@
 use crate::{camera::Uniforms, ffi::draco_wrapper::OwnedDecodedMesh};
 
+#[derive(Debug, Clone)]
 pub struct ContentInRange {
     pub uri: String,
     pub session: String,
@@ -12,6 +13,10 @@ pub struct ContentLoaded {
     pub textures: Vec<Texture>,
     pub materials: Vec<Material>,
 }
+
+// SAFETY: ContentLoaded only contains pointers that are managed elsewhere and are safe to send/share between threads.
+unsafe impl Send for ContentLoaded {}
+unsafe impl Sync for ContentLoaded {}
 
 pub struct ContentRender {
     pub uri: String,

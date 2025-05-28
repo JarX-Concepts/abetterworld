@@ -112,6 +112,7 @@ impl Uniforms {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct Camera {
     // intrinsic
     fovy: Deg<f64>,
