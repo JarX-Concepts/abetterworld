@@ -7,19 +7,25 @@ use image::GenericImageView;
 use serde_json::Value;
 use std::io::{Cursor, Read};
 
-pub fn parse_glb(glb: &[u8]) -> Result<(Value, Vec<u8>), Box<dyn std::error::Error>> {
+pub fn parse_glb(glb: &[u8]) -> Result<(Value, Vec<u8>), Box<std::io::Error>> {
     let mut cursor = Cursor::new(glb);
 
     // GLB header
     let mut magic = [0; 4];
     cursor.read_exact(&mut magic)?;
     if &magic != b"glTF" {
-        return Err("Invalid magic header".into());
+        return Err(Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Invalid magic header",
+        )));
     }
 
     let version = cursor.read_u32::<LittleEndian>()?;
     if version != 2 {
-        return Err("Only GLB v2 is supported".into());
+        return Err(Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Only GLB v2 is supported",
+        )));
     }
 
     let _length = cursor.read_u32::<LittleEndian>()?;
@@ -28,18 +34,25 @@ pub fn parse_glb(glb: &[u8]) -> Result<(Value, Vec<u8>), Box<dyn std::error::Err
     let json_len = cursor.read_u32::<LittleEndian>()?;
     let json_type = cursor.read_u32::<LittleEndian>()?;
     if json_type != 0x4E4F534A {
-        return Err("Expected JSON chunk".into());
+        return Err(Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Expected JSON chunk",
+        )));
     }
 
     let mut json_buf = vec![0u8; json_len as usize];
     cursor.read_exact(&mut json_buf)?;
-    let json: Value = serde_json::from_slice(&json_buf)?;
+    let json: Value = serde_json::from_slice(&json_buf)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
 
     // Binary chunk
     let bin_len = cursor.read_u32::<LittleEndian>()?;
     let bin_type = cursor.read_u32::<LittleEndian>()?;
     if bin_type != 0x004E4942 {
-        return Err("Expected BIN chunk".into());
+        return Err(Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Expected BIN chunk",
+        )));
     }
 
     let mut bin_buf = vec![0u8; bin_len as usize];

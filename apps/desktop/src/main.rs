@@ -106,7 +106,6 @@ impl<'window> State<'window> {
     }
 
     fn update(&mut self) {
-        // No dynamic updates for now.
         self.sphere_renderer.update(&self.device, &self.queue);
     }
 
