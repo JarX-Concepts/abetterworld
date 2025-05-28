@@ -50,12 +50,24 @@ pub fn start_update_in_range_loop(
                     session: None,
                 };
 
-                let in_range = import_tileset(&camera, &connection).await?;
+                let mut in_range = import_tileset(&camera, &connection).await?;
+                in_range.sort_by(|a, b| a.uri.cmp(&b.uri));
+                in_range.dedup_by(|a, b| a.uri == b.uri);
+
                 let content = tile_content.read().unwrap();
-                let mut latest = content.latest_in_range.write().unwrap();
-                *latest = in_range;
-                latest.sort_by(|a, b| a.uri.cmp(&b.uri));
-                latest.dedup_by(|a, b| a.uri == b.uri);
+
+                // Scope to ensure locks are dropped
+                let should_update = {
+                    let content = tile_content.read().unwrap();
+                    let latest = content.latest_in_range.read().unwrap();
+                    *latest != in_range
+                };
+
+                if should_update {
+                    let content = tile_content.read().unwrap();
+                    let mut latest_mut = content.latest_in_range.write().unwrap();
+                    *latest_mut = in_range;
+                }
                 Ok::<(), Box<dyn Error>>(())
             };
 
