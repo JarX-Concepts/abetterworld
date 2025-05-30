@@ -48,15 +48,13 @@ impl<'window> State<'window> {
 
         // Request the device and queue.
         let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    required_features: wgpu::Features::POLYGON_MODE_LINE,
-                    required_limits: wgpu::Limits::default(),
-                    memory_hints: Default::default(),
-                    label: None,
-                },
-                None,
-            )
+            .request_device(&wgpu::DeviceDescriptor {
+                required_features: wgpu::Features::POLYGON_MODE_LINE,
+                required_limits: wgpu::Limits::default(),
+                memory_hints: Default::default(),
+                label: None,
+                trace: wgpu::Trace::Off,
+            })
             .await
             .unwrap();
 
@@ -185,7 +183,10 @@ fn map_keycode(physical_key: &PhysicalKey) -> Option<Key> {
 }
 
 fn main() {
+    dotenv::dotenv().ok();
     env_logger::init();
+    log::info!("Starting Blue Sphere application...");
+
     let event_loop = EventLoop::new().unwrap();
     let window = Arc::new(
         WindowBuilder::new()

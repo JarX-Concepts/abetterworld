@@ -21,7 +21,11 @@ pub struct TilesetCache {
 
 impl TilesetCache {
     pub fn new() -> Self {
-        fs::create_dir_all(TILESET_CACHE_DIR).ok();
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            fs::create_dir_all(TILESET_CACHE_DIR).ok();
+        }
+
         Self {
             map: DashMap::new(),
             file_lock: Arc::new(Mutex::new(())),
@@ -35,24 +39,44 @@ impl TilesetCache {
             return Some((content_type.clone(), Bytes::from(data.clone())));
         }
 
-        // Try disk next
-        let filename = Self::disk_path_for(key);
-        if Path::new(&filename).exists() {
-            let file_lock = self.file_lock.clone();
-            let bytes = {
-                let _guard = file_lock.lock().unwrap();
-                fs::read(&filename).ok()
-            };
-            if let Some(bytes) = bytes {
-                if let Ok(entry) = serde_json::from_slice::<DiskCacheEntry>(&bytes) {
-                    self.map.insert(
-                        key.to_string(),
-                        (entry.content_type.clone(), entry.data.clone()),
-                    );
-                    return Some((entry.content_type, Bytes::from(entry.data)));
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let filename = Self::disk_path_for(key);
+            if Path::new(&filename).exists() {
+                let file_lock = self.file_lock.clone();
+                let bytes = {
+                    let _guard = file_lock.lock().unwrap();
+                    fs::read(&filename).ok()
+                };
+                if let Some(bytes) = bytes {
+                    if let Ok(entry) = serde_json::from_slice::<DiskCacheEntry>(&bytes) {
+                        self.map.insert(
+                            key.to_string(),
+                            (entry.content_type.clone(), entry.data.clone()),
+                        );
+                        return Some((entry.content_type, Bytes::from(entry.data)));
+                    }
                 }
             }
         }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            use web_sys::window;
+
+            if let Some(storage) = window().and_then(|w| w.local_storage().ok().flatten()) {
+                if let Ok(Some(json)) = storage.get_item(key) {
+                    if let Ok(entry) = serde_json::from_str::<DiskCacheEntry>(&json) {
+                        self.map.insert(
+                            key.to_string(),
+                            (entry.content_type.clone(), entry.data.clone()),
+                        );
+                        return Some((entry.content_type, Bytes::from(entry.data)));
+                    }
+                }
+            }
+        }
+
         None
     }
 
@@ -60,16 +84,29 @@ impl TilesetCache {
         self.map
             .insert(key.clone(), (content_type.clone(), bytes.to_vec()));
 
-        // Save to disk synchronously
         let entry = DiskCacheEntry {
             content_type,
             data: bytes.to_vec(),
         };
-        let filename = Self::disk_path_for(&key);
-        let bytes = serde_json::to_vec(&entry).unwrap();
-        let file_lock = self.file_lock.clone();
-        let _guard = file_lock.lock().unwrap();
-        let _ = fs::write(filename, bytes);
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let filename = Self::disk_path_for(&key);
+            let bytes = serde_json::to_vec(&entry).unwrap();
+            let file_lock = self.file_lock.clone();
+            let _guard = file_lock.lock().unwrap();
+            let _ = fs::write(filename, bytes);
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            use web_sys::window;
+
+            if let Some(storage) = window().and_then(|w| w.local_storage().ok().flatten()) {
+                let json = serde_json::to_string(&entry).unwrap();
+                let _ = storage.set_item(&key, &json);
+            }
+        }
     }
 
     fn disk_path_for(key: &str) -> String {

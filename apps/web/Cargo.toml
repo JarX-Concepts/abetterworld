@@ -1,3 +1,5 @@
+[workspace]
+
 [package]
 name = "web_app"
 version = "0.1.0"
@@ -8,30 +10,36 @@ resolver = "2"
 crate-type = ["cdylib"]
 
 [dependencies]
-wgpu = {workspace = true}
-web-sys = { version = "0.3.74", features = [
+winit = { version = "0.29", features = ["android-native-activity"] }
+wgpu = {version = "25.0.2", features = ["webgpu"]}
+web-sys = { version = "0.3", features = [
     "default",
     "Document",
     "Navigator",
     "Node",
     "NodeList",
     "HtmlCanvasElement",
+    "HtmlElement",
     "OffscreenCanvas",
     "ImageBitmap",
     "ImageBitmapRenderingContext",
     "Window",
     "WorkerGlobalScope",
     "WorkerNavigator",
+    "CssStyleDeclaration",
     # Needed by webgpu_sys
     "Event",
     "EventTarget",
+    "console"
 ] }
 pollster = "0.2"
-wasm-bindgen = "0.2.97"
-wasm-bindgen-futures = "0.4.45"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
 wasm-bindgen-test = "0.3"
 console_error_panic_hook = "0.1"
 abetterworld = { path = "../../abetterworld" }
+log = "0.4"
+console_log = "1.0"
 
-[build-dependencies]
-cc = "1.0"
+[build]
+target = "wasm32-unknown-unknown"

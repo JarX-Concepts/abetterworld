@@ -13,6 +13,7 @@ use crate::TILESET_CACHE;
 use bytes::Bytes;
 use cgmath::InnerSpace;
 use cgmath::Vector3;
+use core::num;
 use reqwest::Client;
 use serde::Deserialize;
 use std::error::Error;
@@ -160,7 +161,7 @@ fn resolve_url(base: &str, relative: &str) -> Result<String, Box<dyn Error>> {
 fn process_tileset<'a>(
     camera: &'a Camera,
     state: &'a ConnectionState,
-) -> Pin<Box<dyn Future<Output = Result<Vec<ContentInRange>, Box<dyn Error>>> + Send + 'a>> {
+) -> Pin<Box<dyn Future<Output = Result<Vec<ContentInRange>, Box<dyn Error>>> + 'a>> {
     Box::pin(async move {
         let Some(tile_info) = &state.tile else {
             return Ok(vec![]);
@@ -291,7 +292,7 @@ async fn download_content(
         return Ok((content_type, bytes));
     }
 
-    println!("Downloading content from: {}", content_url);
+    log::info!("Downloading content from: {}", content_url);
 
     let mut query_params = vec![("key", key)];
 
@@ -308,7 +309,23 @@ async fn download_content(
         .map(|s| s.to_string())
         .unwrap_or_else(|| "unknown".to_string());
 
+    let expected_len = response
+        .headers()
+        .get("content-length")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<usize>().ok());
+
     let bytes = response.bytes().await?;
+
+    if let Some(expected) = expected_len {
+        if bytes.len() < expected {
+            log::error!(
+                "Truncated content: expected {} bytes, got {}",
+                expected,
+                bytes.len()
+            );
+        }
+    }
 
     TILESET_CACHE.insert(content_url.to_string(), content_type.clone(), bytes.clone());
 
@@ -316,14 +333,22 @@ async fn download_content(
 }
 
 pub async fn load_root(client: &Client) -> Result<(String, String), Box<dyn Error>> {
-    let tileset = get_cesium_ion_url(client, CESIUM_ION_ASSET_ID, CESIUM_ION_ACCESS_TOKEN).await?;
+    let tileset = get_cesium_ion_url(client, CESIUM_ION_ASSET_ID, CESIUM_ION_ACCESS_TOKEN).await;
+
+    let tileset = match tileset {
+        Ok(ts) => ts,
+        Err(e) => {
+            log::error!("Error fetching Cesium Ion URL: {}", e);
+            return Err(e.into());
+        }
+    };
 
     // extract key and session from the url
     let key = tileset.url.split("key=").last();
     let key = match key {
         Some(k) => k,
         None => {
-            eprintln!("Error: No key found in the URL");
+            log::error!("Error: No key found in the URL");
             return Err("No key found in the URL".into());
         }
     };
@@ -343,28 +368,108 @@ pub async fn content_load(
     load: &ContentInRange,
 ) -> Result<ContentLoaded, Box<dyn Error>> {
     let (content_type, bytes) =
-        download_content(&client, &load.uri, &key, Some(&load.session)).await?;
+        match download_content(&client, &load.uri, &key, Some(&load.session)).await {
+            Ok(res) => res,
+            Err(e) => {
+                log::error!(
+                    "Failed to download content: URI: {}, Key: {}, Session: {}, Error: {}",
+                    load.uri,
+                    key,
+                    load.session,
+                    e
+                );
+                return Err(e);
+            }
+        };
 
     if content_type != "model/gltf-binary" {
+        log::error!(
+            "Unsupported content type: URI: {}, Key: {}, Session: {}, Content-Type: {}, Bytes: {:?}",
+            load.uri,
+            key,
+            load.session,
+            content_type,
+            bytes
+        );
         return Err(format!(
-            "{}, {}, Unsupported content type: {} - {:?}",
+            "Unsupported content type: URI: {}, Key: {}, Content-Type: {}, Bytes: {:?}",
             load.uri, key, content_type, bytes
         )
         .into());
     }
 
-    /*     // save to a glb file
-    let filename = format!("{}.glb", "testfile.glb");
-    std::fs::write(&filename, &bytes);
-    println!("Saved GLB to: {}", filename); */
+    let gltf = match parse_glb(&bytes.to_vec()) {
+        Ok(parsed) => parsed,
+        Err(e) => {
+            log::error!(
+                "Failed to parse GLB: URI: {}, Key: {}, Session: {}, Error: {}",
+                load.uri,
+                key,
+                load.session,
+                e
+            );
+            return Err(e.into());
+        }
+    };
 
-    let gltf = parse_glb(&bytes.to_vec())?;
     let gltf_json = gltf.0;
     let gltf_bin = gltf.1;
-    let meshes = build_meshes(&gltf_json, &gltf_bin)?;
-    let textures = parse_textures_from_gltf(&gltf_json, &gltf_bin)?;
-    let materials = build_materials(&gltf_json)?;
-    let nodes = build_nodes(&gltf_json)?;
+
+    let meshes = match build_meshes(&gltf_json, &gltf_bin) {
+        Ok(m) => m,
+        Err(e) => {
+            log::error!(
+                "Failed to build meshes: URI: {}, Key: {}, Session: {}, Error: {}",
+                load.uri,
+                key,
+                load.session,
+                e
+            );
+            return Err(e.into());
+        }
+    };
+
+    let textures = match parse_textures_from_gltf(&gltf_json, &gltf_bin) {
+        Ok(t) => t,
+        Err(e) => {
+            log::error!(
+                "Failed to parse textures: URI: {}, Key: {}, Session: {}, Error: {}",
+                load.uri,
+                key,
+                load.session,
+                e
+            );
+            return Err(e.into());
+        }
+    };
+
+    let materials = match build_materials(&gltf_json) {
+        Ok(m) => m,
+        Err(e) => {
+            log::error!(
+                "Failed to build materials: URI: {}, Key: {}, Session: {}, Error: {}",
+                load.uri,
+                key,
+                load.session,
+                e
+            );
+            return Err(e.into());
+        }
+    };
+
+    let nodes = match build_nodes(&gltf_json) {
+        Ok(n) => n,
+        Err(e) => {
+            log::error!(
+                "Failed to build nodes: URI: {}, Key: {}, Session: {}, Error: {}",
+                load.uri,
+                key,
+                load.session,
+                e
+            );
+            return Err(e.into());
+        }
+    };
 
     Ok(ContentLoaded {
         uri: load.uri.clone(),
