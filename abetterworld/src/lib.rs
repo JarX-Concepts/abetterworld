@@ -10,7 +10,7 @@ pub mod decode;
 mod tiles;
 use camera::{Camera, Uniforms};
 mod cache;
-use cache::TILESET_CACHE;
+use cache::{init_tileset_cache, TILESET_CACHE};
 mod content;
 use content::{DebugVertex, Vertex};
 use decode::init;
@@ -20,6 +20,7 @@ use wgpu::util::DeviceExt;
 mod importer;
 mod input;
 mod pager;
+mod tests;
 
 pub struct UniformDataBlob {
     pub data: Vec<u8>,
@@ -92,6 +93,7 @@ impl SphereRenderer {
         config: &wgpu::SurfaceConfiguration,
     ) -> Self {
         //download_test();
+        init_tileset_cache().await;
 
         // Load WGSL shader from file.
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {

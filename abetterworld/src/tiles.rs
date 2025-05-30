@@ -1,3 +1,4 @@
+use crate::cache::get_tileset_cache;
 use crate::content::ContentInRange;
 use crate::content::ContentLoaded;
 use crate::content::ContentRender;
@@ -288,8 +289,10 @@ async fn download_content(
     session: Option<&str>,
 ) -> Result<(String, Bytes), Box<dyn Error>> {
     // Try cache first
-    if let Some((content_type, bytes)) = TILESET_CACHE.get(content_url) {
-        return Ok((content_type, bytes));
+    if let Some(cache) = get_tileset_cache() {
+        if let Some((content_type, bytes)) = cache.get(content_url).await {
+            return Ok((content_type, bytes));
+        }
     }
 
     log::info!("Downloading content from: {}", content_url);
@@ -327,7 +330,11 @@ async fn download_content(
         }
     }
 
-    TILESET_CACHE.insert(content_url.to_string(), content_type.clone(), bytes.clone());
+    if let Some(cache) = get_tileset_cache() {
+        cache
+            .insert(content_url.to_string(), content_type.clone(), bytes.clone())
+            .await;
+    }
 
     Ok((content_type, bytes))
 }
