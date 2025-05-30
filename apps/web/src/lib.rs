@@ -1,15 +1,27 @@
-use abetterworld::SphereRenderer;
+use abetterworld::{InputEvent, Key, MouseButton, SphereRenderer};
 use std::sync::Arc;
 use wasm_bindgen::prelude::*;
+use winit::platform::web::WindowExtWebSys;
 use winit::{
     event::{ElementState, Event, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     keyboard::{KeyCode, PhysicalKey},
     window::WindowBuilder,
 };
-
-#[cfg(target_arch = "wasm32")]
 use {wasm_bindgen::JsCast, web_sys};
+
+fn setup_console_log() {
+    use std::sync::Once;
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        // Redirect `println!` and `eprintln!`
+        console_log::init_with_level(log::Level::Trace).expect("error initializing log");
+        // Also show panic messages in console
+        console_error_panic_hook::set_once();
+
+        log::info!("Console logging initialized");
+    });
+}
 
 struct State<'window> {
     surface: wgpu::Surface<'window>,
@@ -25,7 +37,6 @@ impl<'window> State<'window> {
         // Get the initial size from the window - ensure it's non-zero
         let mut size = window.inner_size();
 
-        #[cfg(target_arch = "wasm32")]
         web_sys::console::log_1(
             &format!(
                 "Initial window size in State::new: {}x{}",
@@ -37,7 +48,6 @@ impl<'window> State<'window> {
         // Ensure size is not zero (important for WebGPU)
         if size.width == 0 || size.height == 0 {
             size = winit::dpi::PhysicalSize::new(800, 600);
-            #[cfg(target_arch = "wasm32")]
             web_sys::console::log_1(&"Using default size (800x600) in State::new".into());
         }
 
@@ -67,15 +77,13 @@ impl<'window> State<'window> {
 
         // Request the device and queue.
         let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    required_features: wgpu::Features::empty(),
-                    required_limits: wgpu::Limits::default(),
-                    label: None,
-                    memory_hints: Default::default(),
-                },
-                None,
-            )
+            .request_device(&wgpu::DeviceDescriptor {
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::default(),
+                label: None,
+                memory_hints: Default::default(),
+                trace: wgpu::Trace::Off,
+            })
             .await
             .unwrap();
 
@@ -116,7 +124,6 @@ impl<'window> State<'window> {
     }
 
     fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
-        #[cfg(target_arch = "wasm32")]
         web_sys::console::log_1(
             &format!("Resizing to: {}x{}", new_size.width, new_size.height).into(),
         );
@@ -129,7 +136,6 @@ impl<'window> State<'window> {
         self.config.width = width;
         self.config.height = height;
 
-        #[cfg(target_arch = "wasm32")]
         web_sys::console::log_1(
             &format!(
                 "Config updated to: {}x{}",
@@ -141,8 +147,13 @@ impl<'window> State<'window> {
         self.surface.configure(&self.device, &self.config);
     }
 
+    fn input(&mut self, event: InputEvent) {
+        // No dynamic updates for now.
+        self.sphere_renderer.input(event);
+    }
+
     fn update(&mut self) {
-        self.sphere_renderer.update(&self.device, &self.queue);
+        self.sphere_renderer.update(&mut &self.device, &self.queue);
     }
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
@@ -172,7 +183,15 @@ impl<'window> State<'window> {
                         store: wgpu::StoreOp::Store,
                     },
                 })],
-                depth_stencil_attachment: None,
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: self.sphere_renderer.get_depth_view(),
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0), // far plane
+                        store: wgpu::StoreOp::Discard,
+                    }),
+                    stencil_ops: None,
+                }),
+
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
@@ -189,6 +208,10 @@ impl<'window> State<'window> {
 
 #[wasm_bindgen(start)]
 pub async fn start() -> Result<(), JsValue> {
+    setup_console_log();
+
+    println!("Starting Blue Sphere WASM...");
+
     // Set up better panic messages for debugging.
     console_error_panic_hook::set_once();
 
@@ -202,41 +225,36 @@ pub async fn start() -> Result<(), JsValue> {
         .build(&event_loop)
         .unwrap();
 
-    // On wasm, attach the canvas to the document body.
-    #[cfg(target_arch = "wasm32")]
-    {
-        use winit::platform::web::WindowExtWebSys;
-        let canvas = window.canvas().expect("Failed to get canvas");
-        canvas.set_id("canvas");
+    let canvas = window.canvas().expect("Failed to get canvas");
+    canvas.set_id("canvas");
 
-        // Set explicit canvas size
-        canvas.set_width(800);
-        canvas.set_height(600);
+    // Set explicit canvas size
+    canvas.set_width(800);
+    canvas.set_height(600);
 
-        let document = web_sys::window().unwrap().document().unwrap();
-        document.body().unwrap().append_child(&canvas).unwrap();
+    let document = web_sys::window().unwrap().document().unwrap();
+    document.body().unwrap().append_child(&canvas).unwrap();
 
-        // Get a reference to the canvas after it's been appended
-        let canvas = document
-            .get_element_by_id("canvas")
-            .unwrap()
-            .dyn_into::<web_sys::HtmlCanvasElement>()
-            .unwrap();
+    // Get a reference to the canvas after it's been appended
+    let canvas = document
+        .get_element_by_id("canvas")
+        .unwrap()
+        .dyn_into::<web_sys::HtmlCanvasElement>()
+        .unwrap();
 
-        // Add some basic styling to the canvas
-        canvas.style().set_property("display", "block").unwrap();
-        canvas.style().set_property("margin", "auto").unwrap();
+    // Add some basic styling to the canvas
+    canvas.style().set_property("display", "block").unwrap();
+    canvas.style().set_property("margin", "auto").unwrap();
 
-        // Force the dimensions to be applied and give browser a moment to update
-        let size_str = format!("{}px", 800);
-        canvas.style().set_property("width", &size_str).unwrap();
-        canvas.style().set_property("height", &size_str).unwrap();
+    // Force the dimensions to be applied and give browser a moment to update
+    let size_str = format!("{}px", 800);
+    canvas.style().set_property("width", &size_str).unwrap();
+    canvas.style().set_property("height", &size_str).unwrap();
 
-        // Log the actual canvas size for debugging
-        web_sys::console::log_1(
-            &format!("Canvas dimensions: {}x{}", canvas.width(), canvas.height()).into(),
-        );
-    }
+    // Log the actual canvas size for debugging
+    web_sys::console::log_1(
+        &format!("Canvas dimensions: {}x{}", canvas.width(), canvas.height()).into(),
+    );
 
     let window = Arc::new(window);
     let window_clone = Arc::clone(&window);
@@ -250,7 +268,6 @@ pub async fn start() -> Result<(), JsValue> {
         web_sys::console::log_1(&"Using fallback window size (800x600)".into());
     }
 
-    #[cfg(target_arch = "wasm32")]
     web_sys::console::log_1(
         &format!(
             "Size for WebGPU initialization: {}x{}",
@@ -265,7 +282,6 @@ pub async fn start() -> Result<(), JsValue> {
     // Make sure to resize with our explicitly set dimensions
     state.resize(size);
 
-    #[cfg(target_arch = "wasm32")]
     web_sys::console::log_1(
         &format!(
             "After resize: {}x{}",
@@ -283,10 +299,10 @@ pub async fn start() -> Result<(), JsValue> {
             } if window_id == window_clone.id() => match event {
                 WindowEvent::CloseRequested => target.exit(),
                 WindowEvent::Resized(physical_size) => {
-                    state.resize(*physical_size);
+                    //state.resize(*physical_size);
                 }
                 WindowEvent::ScaleFactorChanged { .. } => {
-                    state.resize(window_clone.inner_size());
+                    //state.resize(window_clone.inner_size());
                 }
                 WindowEvent::KeyboardInput {
                     event:
@@ -298,6 +314,42 @@ pub async fn start() -> Result<(), JsValue> {
                     ..
                 } => {
                     target.exit();
+                }
+                WindowEvent::MouseInput {
+                    state: button_state,
+                    button,
+                    ..
+                } => {
+                    let mapped_button = match button {
+                        winit::event::MouseButton::Left => Some(MouseButton::Left),
+                        winit::event::MouseButton::Right => Some(MouseButton::Right),
+                        winit::event::MouseButton::Middle => Some(MouseButton::Middle),
+                        _ => None,
+                    };
+
+                    if let Some(btn) = mapped_button {
+                        match button_state {
+                            ElementState::Pressed => {
+                                state.input(InputEvent::MouseButtonPressed(btn))
+                            }
+                            ElementState::Released => {
+                                state.input(InputEvent::MouseButtonReleased(btn))
+                            }
+                        }
+                    }
+                }
+
+                WindowEvent::CursorMoved { position, .. } => {
+                    let (x, y) = (position.x as f32, position.y as f32);
+                    state.input(InputEvent::MouseMoved(x, y));
+                }
+
+                WindowEvent::MouseWheel { delta, .. } => {
+                    let scroll_delta = match delta {
+                        winit::event::MouseScrollDelta::LineDelta(_, y) => *y as f32,
+                        winit::event::MouseScrollDelta::PixelDelta(pos) => pos.y as f32,
+                    };
+                    state.input(InputEvent::MouseScrolled(scroll_delta));
                 }
                 _ => {}
             },

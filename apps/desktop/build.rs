@@ -4,7 +4,7 @@ fn main() {
 
     cc::Build::new()
         .cpp(true)
-        .file("../../abetterworld/src/ffi/draco_wrapper.cc")
+        .file("../../abetterworld/src/decode/native.cc")
         .include(draco_src) // for draco/compression/*.h
         .include(draco_build) // for generated headers like draco_features.h
         .compile("draco_wrapper");

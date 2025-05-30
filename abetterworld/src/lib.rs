@@ -6,16 +6,16 @@ use std::{
 
 use cgmath::{Deg, Point3, Vector3};
 mod camera;
-pub mod ffi;
+pub mod decode;
 mod tiles;
 use camera::{Camera, Uniforms};
 mod cache;
 use cache::TILESET_CACHE;
 mod content;
 use content::{DebugVertex, Vertex};
-use pager::{start_load_worker_pool, start_update_in_range_loop};
+use decode::init;
+use pager::start_background_tasks;
 use serde::de;
-use threadpool::ThreadPool;
 use wgpu::util::DeviceExt;
 mod importer;
 mod input;
@@ -110,7 +110,7 @@ impl SphereRenderer {
         let y = -4575.306 * 1000.0;
         let z = 3584.86 * 1000.0;
 
-        let eye = Point3::new(x1, z1, -y1);
+        let eye = Point3::new(0.0, distance, distance);
         let target = Point3::new(0.0, 0.0, 0.0);
         let up = Vector3::unit_y();
         let camera = Camera::new(Deg(45.0), 1.0, eye, target, up);
@@ -142,8 +142,16 @@ impl SphereRenderer {
                 ],
             });
 
-        let max_objects = 1024;
+        let max_objects = 512;
         let alignment = device.limits().min_uniform_buffer_offset_alignment as usize;
+
+        log::info!(
+            "Uniform buffer alignment: {}, size: {}, max objects: {}",
+            alignment,
+            std::mem::size_of::<Uniforms>(),
+            max_objects
+        );
+
         let uniform_size = std::mem::size_of::<Uniforms>();
 
         fn align_to(value: usize, alignment: usize) -> usize {
@@ -160,7 +168,7 @@ impl SphereRenderer {
             mapped_at_creation: false,
         });
 
-        let mut buffer_data = vec![0u8; buffer_size];
+        let buffer_data = vec![0u8; buffer_size];
 
         // Create bind group layout and bind group for the uniform.
         let uniform_bind_group_layout =
@@ -286,7 +294,7 @@ impl SphereRenderer {
                 strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw,
                 cull_mode: Some(wgpu::Face::Back),
-                polygon_mode: wgpu::PolygonMode::Line,
+                polygon_mode: wgpu::PolygonMode::Fill,
                 unclipped_depth: false,
                 conservative: false,
             },
@@ -364,10 +372,12 @@ impl SphereRenderer {
         let tile_content = Arc::new(RwLock::new(pager::TileContent::new().unwrap()));
         let camera_source = Arc::new(RwLock::new(camera));
         let debug_camera_source = Arc::new(RwLock::new(debug_camera));
-        let pool = ThreadPool::new(8); // adjust based on system
+        //        let pool = ThreadPool::new(8); // adjust based on system
 
-        start_update_in_range_loop(tile_content.clone(), debug_camera_source.clone());
-        start_load_worker_pool(tile_content.clone(), pool);
+        //start_update_in_range_loop(tile_content.clone(), debug_camera_source.clone());
+        //start_load_worker_pool(tile_content.clone(), pool);
+        init();
+        start_background_tasks(tile_content.clone(), debug_camera_source.clone());
 
         Self {
             pipeline,
@@ -457,13 +467,14 @@ impl SphereRenderer {
 
                             // Draw call for this mesh
                             render_pass.draw_indexed(0..mesh.num_indices, 0, 0..1);
+                            //render_pass.draw(0..3, 0..1);
                         }
                     }
                 }
             }
         }
 
-        self.draw_debug_camera(render_pass, queue, device);
+        //self.draw_debug_camera(render_pass, queue, device);
     }
 
     pub fn draw_debug_camera(

@@ -1,4 +1,4 @@
-use crate::{camera::Uniforms, ffi::draco_wrapper::OwnedDecodedMesh};
+use crate::{camera::Uniforms, decode::OwnedDecodedMesh};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ContentInRange {

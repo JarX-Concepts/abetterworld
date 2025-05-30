@@ -17,8 +17,7 @@ target/
 #.idea/
 .DS_Store
 
-/tilesets/**
+**/tilesets/**
 
-pkg/**
-
-dist/**
+**/pkg/**
+**/dist/**
