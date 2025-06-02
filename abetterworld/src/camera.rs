@@ -217,18 +217,6 @@ impl Camera {
             (closest_point - cam_pos).magnitude().max(diagonal * 0.01)
         };
 
-        log::info!(
-            "bounding_volume: {:?}, camera world pos: {:?}",
-            bounding_volume,
-            cam_pos
-        );
-        log::info!("Obb: {:?}, closest point: {:?}", obb, closest_point);
-        log::info!(
-            "Offset Camera position: {:?}, distance: {:.2}m",
-            cam_pos,
-            dist
-        );
-        log::info!("Are we within {}m: {:?}", self.far, dist <= self.far);
         if dist > self.far {
             return false; // far away, no need to refine
         }
