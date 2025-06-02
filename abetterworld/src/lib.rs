@@ -8,17 +8,21 @@ use cgmath::{Deg, Point3, Vector3};
 mod camera;
 pub mod decode;
 mod tiles;
-use camera::{Camera, Uniforms};
+use camera::Camera;
 mod cache;
 use cache::{init_tileset_cache, TILESET_CACHE};
 mod content;
 use content::{DebugVertex, Vertex};
+use coord_utils::{geodetic_to_ecef_y_up, geodetic_to_ecef_z_up};
 use decode::init;
+use matrix::Uniforms;
 use pager::start_background_tasks;
 use serde::de;
 use wgpu::util::DeviceExt;
+mod coord_utils;
 mod importer;
 mod input;
+mod matrix;
 mod pager;
 mod tests;
 
@@ -117,9 +121,10 @@ impl SphereRenderer {
         let up = Vector3::unit_y();
         let camera = Camera::new(Deg(45.0), 1.0, eye, target, up);
 
-        let debug_eye = Point3::new(x, z, -y);
-        let debug_camera = Camera::new(Deg(45.0), 1.0, debug_eye, target, up);
-        println!("camera: {:?}", camera.uniform());
+        let debug_eye = geodetic_to_ecef_z_up(34.4208, -119.6982, 200.0);
+        let debug_eye_pt: Point3<f64> = Point3::new(debug_eye.0, debug_eye.1, debug_eye.2);
+        let mut debug_camera = Camera::new(Deg(45.0), 1.0, debug_eye_pt, target, up);
+        debug_camera.update(Some(20000.0));
 
         let texture_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -296,7 +301,7 @@ impl SphereRenderer {
                 strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw,
                 cull_mode: Some(wgpu::Face::Back),
-                polygon_mode: wgpu::PolygonMode::Fill,
+                polygon_mode: wgpu::PolygonMode::Line,
                 unclipped_depth: false,
                 conservative: false,
             },

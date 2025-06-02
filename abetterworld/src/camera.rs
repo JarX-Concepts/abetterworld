@@ -4,113 +4,9 @@ use cgmath::{
     SquareMatrix, Vector2, Vector3, Vector4, Zero,
 };
 
-use crate::tiles::BoundingVolume;
+use crate::{matrix::Uniforms, tiles::BoundingVolume};
 
 const EARTH_RADIUS_M: f64 = 6_371_000.0;
-
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Pod, Zeroable)]
-pub struct Uniforms {
-    pub mat: [[f32; 4]; 4], // 4x4 matrix in f32, with fractional translation
-    pub offset: [f32; 3],   // integer world offset
-    pub _padding: f32,      // padding for alignment
-}
-
-impl Uniforms {
-    pub fn build_from_gltf(mat64: Matrix4<f64>) -> Self {
-        // Extract translation vector from the 4th column (elements [3][0..2])
-        let translation = [mat64[3][0], mat64[3][1], mat64[3][2]];
-
-        // Calculate integer offset by flooring each component
-        let offset_i64 = [
-            translation[0].floor(),
-            translation[1].floor(),
-            translation[2].floor(),
-        ];
-
-        // Create fractional translation remainder by subtracting offset
-        let fractional_translation = [
-            translation[0] - offset_i64[0],
-            translation[1] - offset_i64[1],
-            translation[2] - offset_i64[2],
-        ];
-
-        // Create a new f32 array by casting each element
-        let mut mat_f32 = [[0.0f32; 4]; 4];
-
-        mat_f32[3][0] = fractional_translation[0] as f32;
-        mat_f32[3][1] = fractional_translation[1] as f32;
-        mat_f32[3][2] = fractional_translation[2] as f32;
-        mat_f32[3][3] = mat64[3][3] as f32;
-
-        for row in 0..3 {
-            for col in 0..4 {
-                mat_f32[row][col] = mat64[row][col] as f32;
-            }
-        }
-
-        // Convert integer offset to f32
-        let offset_f32 = [
-            offset_i64[0] as f32,
-            offset_i64[1] as f32,
-            offset_i64[2] as f32,
-        ];
-
-        Self {
-            mat: mat_f32,
-            offset: offset_f32,
-            _padding: 0.0,
-        }
-    }
-
-    /// Build a split-offset UBO from eye/target/up + proj.
-    pub fn from_eye_target(
-        proj: Matrix4<f64>,
-        eye: Point3<f64>,
-        target: Point3<f64>,
-        up: Vector3<f64>,
-    ) -> Self {
-        // 1) Reconstruct full view and invert to get world-space camera pos:
-        let view = Matrix4::look_at_rh(eye, target, up);
-        let view_inv = view.invert().expect("view must be invertible");
-        let cam_world: Vector3<f64> = view_inv.w.truncate();
-
-        // 2) Compute world offset + fractional part:
-        let world_offset = cam_world.map(f64::floor);
-        let frac_world = cam_world - world_offset;
-
-        // 3) Rebuild a fractional view by shifting eye & target down by world_offset:
-        let eye_frac = Point3::from_vec(frac_world);
-        let target_frac = Point3::new(
-            target.x - world_offset.x,
-            target.y - world_offset.y,
-            target.z - world_offset.z,
-        );
-        let view_frac = Matrix4::look_at_rh(eye_frac, target_frac, up);
-
-        // 4) Combine with projection in f32:
-        let proj32 = proj.cast::<f32>().unwrap();
-        let view32 = view_frac.cast::<f32>().unwrap();
-        let vp32 = proj32 * view32;
-
-        Uniforms {
-            mat: vp32.into(),
-            offset: [
-                world_offset.x as f32,
-                world_offset.y as f32,
-                world_offset.z as f32,
-            ],
-            _padding: 0.0,
-        }
-    }
-
-    pub fn project_point_test(&self, point: Vector3<f32>) {
-        let offset_point =
-            (point - Vector3::new(self.offset[0], self.offset[1], self.offset[2])).extend(1.0);
-        let projected_point_f32 = Matrix4::from(self.mat) * offset_point;
-        println!("projected_point_f32: {:?}", projected_point_f32);
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct Camera {
@@ -264,7 +160,7 @@ impl Camera {
             self.uniform.offset[1] as f64,
             self.uniform.offset[2] as f64,
         );
-        let obb = bv.to_obb_y_up_with_offset(offset_vec);
+        let obb = bv.to_obb();
 
         // For each plane, do OBB vs. plane test
         let center = Vector3::new(obb.center.x, obb.center.y, obb.center.z);
@@ -305,19 +201,37 @@ impl Camera {
             return false;
         } */
 
-        // 2. Compute distance to box center (in world space)
-        let offset_vec = Vector3::new(
-            self.uniform.offset[0] as f64,
-            self.uniform.offset[1] as f64,
-            self.uniform.offset[2] as f64,
-        );
-        let obb = bounding_volume.to_obb_y_up_with_offset(offset_vec);
-        let cam_pos = self.cam_world - offset_vec;
+        if !geometric_error.is_finite() || geometric_error > 1e20 {
+            return true; // Always refine root/sentinel
+        }
+
+        let obb = bounding_volume.to_obb();
+        let cam_pos = self.cam_world;
         let closest_point = obb.closest_point(cam_pos);
 
-        let diagonal = obb.half_axes.iter().map(|a| a.magnitude()).sum::<f64>() * 2.0;
-        let min_dist = diagonal * 0.01; // 1% of tile diagonal
-        let dist = (closest_point - cam_pos).magnitude().max(min_dist);
+        let is_inside = (closest_point - cam_pos).magnitude() < f64::EPSILON;
+        let dist = if is_inside {
+            0.0
+        } else {
+            let diagonal = obb.half_axes.iter().map(|a| a.magnitude()).sum::<f64>() * 2.0;
+            (closest_point - cam_pos).magnitude().max(diagonal * 0.01)
+        };
+
+        log::info!(
+            "bounding_volume: {:?}, camera world pos: {:?}",
+            bounding_volume,
+            cam_pos
+        );
+        log::info!("Obb: {:?}, closest point: {:?}", obb, closest_point);
+        log::info!(
+            "Offset Camera position: {:?}, distance: {:.2}m",
+            cam_pos,
+            dist
+        );
+        log::info!("Are we within {}m: {:?}", self.far, dist <= self.far);
+        if dist > self.far {
+            return false; // far away, no need to refine
+        }
 
         // 3. Compute vertical FOV (in radians)
         let vertical_fov = self.fovy.0.to_radians();

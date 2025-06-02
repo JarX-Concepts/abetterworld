@@ -1,4 +1,4 @@
-use crate::{camera::Uniforms, decode::OwnedDecodedMesh};
+use crate::{decode::OwnedDecodedMesh, matrix::Uniforms};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ContentInRange {
