@@ -1,6 +1,6 @@
-use crate::camera::Uniforms;
 use crate::content::{Material, Node, Texture, TextureResource};
 use crate::decode::{decode, OwnedDecodedMesh};
+use crate::matrix::Uniforms;
 use byteorder::{LittleEndian, ReadBytesExt};
 use cgmath::{Matrix4, One, Quaternion, Vector3, Vector4};
 use image::GenericImageView;
@@ -406,7 +406,7 @@ pub fn build_nodes(json: &Value) -> Result<Vec<Node>, std::io::Error> {
             };
 
             nodes.push(Node {
-                matrix: Uniforms::build_from_gltf(matrix),
+                matrix: Uniforms::build_from_3dtileset(matrix),
                 mesh_indices,
             });
         }

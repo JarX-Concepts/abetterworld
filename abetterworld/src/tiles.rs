@@ -13,6 +13,8 @@ use crate::Camera;
 use crate::TILESET_CACHE;
 use bytes::Bytes;
 use cgmath::InnerSpace;
+use cgmath::Matrix3;
+use cgmath::SquareMatrix;
 use cgmath::Vector3;
 use core::num;
 use reqwest::Client;
@@ -26,6 +28,9 @@ use wgpu::util::DeviceExt;
 
 const CESIUM_ION_ACCESS_TOKEN: &str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJkMzMxNGZlYi1iYzcxLTQzMjItOGU0Mi0yYjA3Y2ZmMDRiNWMiLCJpZCI6MTI2NTQwLCJpYXQiOjE2Nzc1MzYyOTl9.2S8ESSboEWY4nxbdGJ9vMgdh9pO2pz42L-PV4KwUlK0";
 const CESIUM_ION_ASSET_ID: u32 = 2275207; // Replace with your asset ID
+
+const GOOGLE_API_KEY: &str = "AIzaSyDrSNqujmAmhhZtenz6MEofEuITd3z0JM0";
+const GOOGLE_API_URL: &str = "https://tile.googleapis.com/v1/3dtiles/root.json";
 
 #[derive(Debug, Deserialize)]
 struct CesiumEndpointResponse {
@@ -54,6 +59,7 @@ pub struct BoundingVolume {
     bounding_box: [f64; 12],
 }
 
+#[derive(Debug, Clone)]
 pub struct OrientedBoundingBox {
     pub center: Vector3<f64>,
     pub half_axes: [Vector3<f64>; 3], // U, V, W
@@ -61,37 +67,44 @@ pub struct OrientedBoundingBox {
 
 impl BoundingVolume {
     /// Converts the bounding volume from Z-up to Y-up, and applies a position offset.
-    pub fn to_obb_y_up_with_offset(&self, offset: Vector3<f64>) -> OrientedBoundingBox {
+    pub fn to_obb(&self) -> OrientedBoundingBox {
         let b = &self.bounding_box;
-        // Center with Y-up and apply offset
-        let center = Vector3::new(b[0], b[2], -b[1]) - offset;
-        // Half-axes with Y-up (axes don't get offset, just reoriented)
+
+        let center = Vector3::new(b[0], b[1], b[2]);
         let half_axes = [
-            Vector3::new(b[3], b[5], -b[4]),
-            Vector3::new(b[6], b[8], -b[7]),
-            Vector3::new(b[9], b[11], -b[10]),
+            Vector3::new(b[3], b[4], b[5]),
+            Vector3::new(b[6], b[7], b[8]),
+            Vector3::new(b[9], b[10], b[11]),
         ];
+
         OrientedBoundingBox { center, half_axes }
     }
 }
 
 impl OrientedBoundingBox {
     pub fn closest_point(&self, point: Vector3<f64>) -> Vector3<f64> {
-        let mut closest = self.center;
+        let basis = Matrix3::from_cols(self.half_axes[0], self.half_axes[1], self.half_axes[2]);
 
-        for axis in &self.half_axes {
-            let dir = axis.normalize();
-            let half_len = axis.magnitude();
+        let Some(inv_basis) = basis.invert() else {
+            log::warn!("OBB basis matrix is not invertible");
+            return self.center;
+        };
 
-            // Project point onto axis
-            let v = point - self.center;
-            let dist = v.dot(dir).clamp(-half_len, half_len);
+        let local = inv_basis * (point - self.center);
 
-            // Move along axis by clamped projection
-            closest += dir * dist;
+        // Point is inside the box if all local coords are within [-1, 1]
+        if local.x.abs() <= 1.0 && local.y.abs() <= 1.0 && local.z.abs() <= 1.0 {
+            log::info!("✔ Camera is inside this bounding box");
+            return point;
         }
 
-        closest
+        let clamped = Vector3::new(
+            local.x.clamp(-1.0, 1.0),
+            local.y.clamp(-1.0, 1.0),
+            local.z.clamp(-1.0, 1.0),
+        );
+
+        self.center + basis * clamped
     }
 }
 
@@ -101,6 +114,7 @@ pub struct GltfTile {
     bounding_volume: BoundingVolume,
     #[serde(rename = "geometricError")]
     geometric_error: f64,
+    refine: Option<String>,
     content: Option<GltfTileContent>,
     children: Option<Vec<GltfTile>>,
 }
@@ -129,22 +143,23 @@ async fn get_cesium_ion_url(
     asset_id: u32,
     access_token: &str,
 ) -> Result<CesiumEndpointResponse, Box<dyn Error>> {
-    let request_url = format!("https://api.cesium.com/v1/assets/{}/endpoint", asset_id);
+    /*     let request_url = format!("https://api.cesium.com/v1/assets/{}/endpoint", asset_id);
 
-    let response = client
-        .get(&request_url)
-        .bearer_auth(access_token)
-        .send()
-        .await?;
+       let response = client
+           .get(&request_url)
+           .bearer_auth(access_token)
+           .send()
+           .await?;
 
-    // Print the raw response for debugging
-    let raw_text = response.text().await?;
+       // Print the raw response for debugging
+       let raw_text = response.text().await?;
 
-    let parsed: CesiumApiResponse = serde_json::from_str(&raw_text)?;
+       let parsed: CesiumApiResponse = serde_json::from_str(&raw_text)?;
+    */
+    // combine GOOGLE_API_URL with the GOOGLE_API_KEY
+    let tile_url = format!("{}?key={}", GOOGLE_API_URL, GOOGLE_API_KEY);
 
-    Ok(CesiumEndpointResponse {
-        url: parsed.options.url,
-    })
+    Ok(CesiumEndpointResponse { url: tile_url })
 }
 
 fn resolve_url(base: &str, relative: &str) -> Result<String, Box<dyn Error>> {
@@ -173,8 +188,8 @@ fn process_tileset<'a>(
         let needs_refinement = camera.needs_refinement(
             &tile_info.bounding_volume,
             tile_info.geometric_error,
-            1024.0,
-            100.0,
+            1024.0, // screen height in pixels
+            100.0,  // SSE threshold
         );
 
         fn is_nested_tileset(uri: &str) -> bool {
@@ -191,13 +206,15 @@ fn process_tileset<'a>(
             let tile_url = resolve_url(&state.tileset_url, &content.uri)?;
 
             let is_nested = is_nested_tileset(&tile_url);
+
             if is_nested && needs_refinement {
+                // Handle nested tileset
                 let mut session_update = state.session.clone().unwrap_or_default();
                 if let Some((_, new_session)) = tile_url.split_once("session=") {
                     session_update = new_session.to_string();
                 }
 
-                return import_tileset(
+                let nested_result = import_tileset(
                     camera,
                     &ConnectionState {
                         connection: state.connection.clone(),
@@ -206,10 +223,16 @@ fn process_tileset<'a>(
                         tile: None,
                     },
                 )
-                .await;
+                .await?;
+
+                tiles.extend(nested_result);
             }
 
-            if tile_url.ends_with(".glb") && (!needs_refinement || tile_info.children.is_none()) {
+            let refine_mode = tile_info.refine.as_deref().unwrap_or("REPLACE");
+
+            if tile_url.ends_with(".glb")
+                && (refine_mode == "ADD" || tile_info.children.is_none() || !needs_refinement)
+            {
                 if let Some(session) = &state.session {
                     tiles.push(ContentInRange {
                         uri: tile_url,
@@ -223,17 +246,18 @@ fn process_tileset<'a>(
         if needs_refinement {
             if let Some(children) = &tile_info.children {
                 for child in children {
-                    let new_tiles = process_tileset(
+                    let child_tiles = process_tileset(
                         camera,
                         &ConnectionState {
                             connection: state.connection.clone(),
                             tileset_url: state.tileset_url.clone(),
-                            tile: Some(child.clone()),
+                            tile: Some(child.clone()), // consider Arc<Tile> to avoid clone
                             session: state.session.clone(),
                         },
                     )
                     .await?;
-                    tiles.extend(new_tiles);
+
+                    tiles.extend(child_tiles);
                 }
             }
         }

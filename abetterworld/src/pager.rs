@@ -58,6 +58,7 @@ pub async fn run_update_in_range_once(
         let mut latest_mut = content.latest_in_range.write().unwrap();
         *latest_mut = in_range;
     }
+
     Ok::<(), Box<dyn Error>>(())
 }
 
