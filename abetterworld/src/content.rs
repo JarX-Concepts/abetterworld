@@ -6,6 +6,7 @@ pub struct ContentInRange {
     pub session: String,
 }
 
+#[derive(Clone)]
 pub struct ContentLoaded {
     pub uri: String,
     pub nodes: Vec<Node>,
@@ -33,6 +34,7 @@ pub struct TextureResource {
     pub bind_group: wgpu::BindGroup,
 }
 
+#[derive(Clone)]
 pub struct Texture {
     pub width: u32,
     pub height: u32,

@@ -2,7 +2,7 @@ use super::types::{DecodedMesh, OwnedDecodedMesh};
 
 impl Drop for OwnedDecodedMesh {
     fn drop(&mut self) {
-        unsafe { free_decoded_mesh(&mut self.inner) }
+        //unsafe { free_decoded_mesh(&mut self.inner) }
     }
 }
 

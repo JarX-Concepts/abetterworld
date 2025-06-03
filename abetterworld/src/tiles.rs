@@ -10,21 +10,27 @@ use crate::importer::parse_glb;
 use crate::importer::parse_textures_from_gltf;
 use crate::importer::upload_textures_to_gpu;
 use crate::Camera;
-use crate::TILESET_CACHE;
+use async_recursion::async_recursion;
 use bytes::Bytes;
-use cgmath::InnerSpace;
 use cgmath::Matrix3;
 use cgmath::SquareMatrix;
 use cgmath::Vector3;
-use core::num;
 use reqwest::Client;
 use serde::Deserialize;
 use std::error::Error;
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 use url::Url;
 use wgpu::util::DeviceExt;
+
+#[cfg(not(target_arch = "wasm32"))]
+pub trait SendSyncBounds: Send + Sync {}
+#[cfg(not(target_arch = "wasm32"))]
+impl<T: Send + Sync> SendSyncBounds for T {}
+
+#[cfg(target_arch = "wasm32")]
+pub trait SendSyncBounds {}
+#[cfg(target_arch = "wasm32")]
+impl<T> SendSyncBounds for T {}
 
 const CESIUM_ION_ACCESS_TOKEN: &str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJkMzMxNGZlYi1iYzcxLTQzMjItOGU0Mi0yYjA3Y2ZmMDRiNWMiLCJpZCI6MTI2NTQwLCJpYXQiOjE2Nzc1MzYyOTl9.2S8ESSboEWY4nxbdGJ9vMgdh9pO2pz42L-PV4KwUlK0";
 const CESIUM_ION_ASSET_ID: u32 = 2275207; // Replace with your asset ID
@@ -94,7 +100,6 @@ impl OrientedBoundingBox {
 
         // Point is inside the box if all local coords are within [-1, 1]
         if local.x.abs() <= 1.0 && local.y.abs() <= 1.0 && local.z.abs() <= 1.0 {
-            log::info!("✔ Camera is inside this bounding box");
             return point;
         }
 
@@ -174,127 +179,101 @@ fn resolve_url(base: &str, relative: &str) -> Result<String, Box<dyn Error>> {
     })
 }
 
-fn process_tileset<'a>(
-    camera: &'a Camera,
-    state: &'a ConnectionState,
-) -> Pin<Box<dyn Future<Output = Result<Vec<ContentInRange>, Box<dyn Error>>> + 'a>> {
-    Box::pin(async move {
-        let Some(tile_info) = &state.tile else {
-            return Ok(vec![]);
-        };
-
-        let mut tiles = Vec::new();
-
-        let needs_refinement = camera.needs_refinement(
-            &tile_info.bounding_volume,
-            tile_info.geometric_error,
-            1024.0, // screen height in pixels
-            100.0,  // SSE threshold
-        );
-
-        fn is_nested_tileset(uri: &str) -> bool {
-            if let Ok(parsed) = Url::parse(uri) {
-                parsed.path().ends_with(".json")
-            } else {
-                uri.split('?')
-                    .next()
-                    .map_or(false, |path| path.ends_with(".json"))
-            }
-        }
-
-        if let Some(content) = &tile_info.content {
-            let tile_url = resolve_url(&state.tileset_url, &content.uri)?;
-
-            let is_nested = is_nested_tileset(&tile_url);
-
-            if is_nested && needs_refinement {
-                // Handle nested tileset
-                let mut session_update = state.session.clone().unwrap_or_default();
-                if let Some((_, new_session)) = tile_url.split_once("session=") {
-                    session_update = new_session.to_string();
-                }
-
-                let nested_result = import_tileset(
-                    camera,
-                    &ConnectionState {
-                        connection: state.connection.clone(),
-                        session: Some(session_update),
-                        tileset_url: tile_url.clone(),
-                        tile: None,
-                    },
-                )
-                .await?;
-
-                tiles.extend(nested_result);
-            }
-
-            let refine_mode = tile_info.refine.as_deref().unwrap_or("REPLACE");
-
-            if tile_url.ends_with(".glb")
-                && (refine_mode == "ADD" || tile_info.children.is_none() || !needs_refinement)
-            {
-                if let Some(session) = &state.session {
-                    tiles.push(ContentInRange {
-                        uri: tile_url,
-                        session: session.clone(),
-                    });
-                }
-            }
-        }
-
-        // Walk children if refinement is needed
-        if needs_refinement {
-            if let Some(children) = &tile_info.children {
-                for child in children {
-                    let child_tiles = process_tileset(
-                        camera,
-                        &ConnectionState {
-                            connection: state.connection.clone(),
-                            tileset_url: state.tileset_url.clone(),
-                            tile: Some(child.clone()), // consider Arc<Tile> to avoid clone
-                            session: state.session.clone(),
-                        },
-                    )
-                    .await?;
-
-                    tiles.extend(child_tiles);
-                }
-            }
-        }
-
-        Ok(tiles)
-    })
+fn is_nested_tileset(uri: &str) -> bool {
+    Url::parse(uri)
+        .map(|url| url.path().ends_with(".json"))
+        .unwrap_or_else(|_| {
+            uri.split('?')
+                .next()
+                .map_or(false, |path| path.ends_with(".json"))
+        })
 }
 
-pub async fn import_tileset(
+fn extract_session(url: &str) -> Option<String> {
+    url.split_once("session=")
+        .map(|(_, session)| session.to_string())
+}
+
+#[async_recursion(?Send)]
+pub async fn process_tileset<F>(
     camera: &Camera,
     state: &ConnectionState,
-) -> Result<Vec<ContentInRange>, Box<dyn Error>> {
-    // Helper closure to process downloaded or cached content
-    let process_content =
-        async |content_type: &str, bytes: &Bytes| -> Result<Vec<ContentInRange>, Box<dyn Error>> {
-            match content_type {
-                "application/json" => {
-                    let tileset: GltfTileset = serde_json::from_slice(bytes)?;
-                    return process_tileset(
-                        camera,
-                        &ConnectionState {
-                            connection: state.connection.clone(),
-                            tileset_url: state.tileset_url.clone(),
-                            tile: Some(tileset.root),
-                            session: state.session.clone(),
-                        },
-                    )
-                    .await;
-                }
-                _ => Err(format!(
-                    "{}, {}, Unsupported content type: {} - {:?}",
-                    state.tileset_url, state.connection.key, content_type, bytes
-                )
-                .into()),
-            }
-        };
+    on_tile: Arc<F>,
+) -> Result<Vec<ContentInRange>, Box<dyn Error>>
+where
+    F: Fn(&ContentInRange) + SendSyncBounds + 'static,
+{
+    let Some(tile_info) = &state.tile else {
+        return Ok(vec![]);
+    };
 
+    let needs_refinement = camera.needs_refinement(
+        &tile_info.bounding_volume,
+        tile_info.geometric_error,
+        1024.0,
+        100.0,
+    );
+
+    let mut tiles = Vec::new();
+
+    if let Some(content) = &tile_info.content {
+        let tile_url = resolve_url(&state.tileset_url, &content.uri)?;
+
+        if is_nested_tileset(&tile_url) && needs_refinement {
+            let nested_state = ConnectionState {
+                connection: state.connection.clone(),
+                session: extract_session(&tile_url).or_else(|| state.session.clone()),
+                tileset_url: tile_url.clone(),
+                tile: None,
+            };
+
+            let nested = import_tileset(camera, &nested_state, Arc::clone(&on_tile)).await?;
+            tiles.extend(nested);
+        }
+
+        let refine_mode = tile_info.refine.as_deref().unwrap_or("REPLACE");
+
+        if tile_url.ends_with(".glb")
+            && (refine_mode == "ADD" || tile_info.children.is_none() || !needs_refinement)
+        {
+            if let Some(session) = &state.session {
+                let result = ContentInRange {
+                    uri: tile_url,
+                    session: session.clone(),
+                };
+                on_tile(&result);
+                tiles.push(result);
+            }
+        }
+    }
+
+    if needs_refinement {
+        if let Some(children) = &tile_info.children {
+            for child in children {
+                let child_state = ConnectionState {
+                    connection: state.connection.clone(),
+                    tileset_url: state.tileset_url.clone(),
+                    tile: Some(child.clone()),
+                    session: state.session.clone(),
+                };
+                let child_tiles =
+                    process_tileset(camera, &child_state, Arc::clone(&on_tile)).await?;
+                tiles.extend(child_tiles);
+            }
+        }
+    }
+
+    Ok(tiles)
+}
+
+pub async fn import_tileset<F>(
+    camera: &Camera,
+    state: &ConnectionState,
+    on_tile: Arc<F>,
+) -> Result<Vec<ContentInRange>, Box<dyn Error>>
+where
+    F: Fn(&ContentInRange) + SendSyncBounds + 'static,
+{
     let (content_type, bytes) = download_content(
         &state.connection.client,
         state.tileset_url.as_str(),
@@ -303,9 +282,24 @@ pub async fn import_tileset(
     )
     .await?;
 
-    process_content(&content_type, &bytes).await
+    match content_type.as_str() {
+        "application/json" => {
+            let tileset: GltfTileset = serde_json::from_slice(&bytes)?;
+            let state = ConnectionState {
+                connection: state.connection.clone(),
+                tileset_url: state.tileset_url.clone(),
+                tile: Some(tileset.root),
+                session: state.session.clone(),
+            };
+            process_tileset(camera, &state, on_tile).await
+        }
+        _ => Err(format!(
+            "Unsupported content type: {} for {} ({})",
+            content_type, state.tileset_url, state.connection.key
+        )
+        .into()),
+    }
 }
-
 async fn download_content(
     client: &Client,
     content_url: &str,
@@ -319,7 +313,7 @@ async fn download_content(
         }
     }
 
-    log::info!("Downloading content from: {}", content_url);
+    //log::info!("Downloading content from: {}", content_url);
 
     let mut query_params = vec![("key", key)];
 
@@ -391,6 +385,107 @@ pub async fn load_root(client: &Client) -> Result<(String, String), Box<dyn Erro
     let url = url.trim_end_matches('?');
 
     Ok((url.to_string(), key.to_string()))
+}
+
+pub async fn download_content_for_tile(
+    client: &Client,
+    key: &str,
+    load: &ContentInRange,
+) -> Result<(Vec<u8>, String), Box<dyn Error>> {
+    let (content_type, bytes) = download_content(client, &load.uri, key, Some(&load.session))
+        .await
+        .map_err(|e| {
+            log::error!(
+                "Failed to download content: URI: {}, Key: {}, Session: {}, Error: {}",
+                load.uri,
+                key,
+                load.session,
+                e
+            );
+            e
+        })?;
+
+    if content_type != "model/gltf-binary" {
+        log::error!(
+            "Unsupported content type: URI: {}, Key: {}, Session: {}, Content-Type: {}, Bytes: {:?}",
+            load.uri,
+            key,
+            load.session,
+            content_type,
+            bytes
+        );
+        return Err(format!(
+            "Unsupported content type: URI: {}, Content-Type: {}, Bytes: {:?}",
+            load.uri, content_type, bytes
+        )
+        .into());
+    }
+
+    Ok((bytes.to_vec(), content_type))
+}
+
+pub fn process_content_bytes(
+    uri: &str,
+    session: &str,
+    bytes: Vec<u8>,
+) -> Result<ContentLoaded, Box<dyn Error>> {
+    let (gltf_json, gltf_bin) = parse_glb(&bytes).map_err(|e| {
+        log::error!(
+            "Failed to parse GLB: URI: {}, Session: {}, Error: {}",
+            uri,
+            session,
+            e
+        );
+        e
+    })?;
+
+    let meshes = build_meshes(&gltf_json, &gltf_bin).map_err(|e| {
+        log::error!(
+            "Failed to build meshes: URI: {}, Session: {}, Error: {}",
+            uri,
+            session,
+            e
+        );
+        e
+    })?;
+
+    let textures = parse_textures_from_gltf(&gltf_json, &gltf_bin).map_err(|e| {
+        log::error!(
+            "Failed to parse textures: URI: {}, Session: {}, Error: {}",
+            uri,
+            session,
+            e
+        );
+        e
+    })?;
+
+    let materials = build_materials(&gltf_json).map_err(|e| {
+        log::error!(
+            "Failed to build materials: URI: {}, Session: {}, Error: {}",
+            uri,
+            session,
+            e
+        );
+        e
+    })?;
+
+    let nodes = build_nodes(&gltf_json).map_err(|e| {
+        log::error!(
+            "Failed to build nodes: URI: {}, Session: {}, Error: {}",
+            uri,
+            session,
+            e
+        );
+        e
+    })?;
+
+    Ok(ContentLoaded {
+        uri: uri.to_string(),
+        nodes,
+        meshes,
+        textures,
+        materials,
+    })
 }
 
 pub async fn content_load(

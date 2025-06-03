@@ -206,7 +206,7 @@ impl TilesetCache {
         {
             let insert_result = Self::insert_idb_data(self, entry).await;
             if let Err(err) = insert_result {
-                log::error!("IndexedDB insert failed: {:?}", err);
+                log::error!("IndexedDB insert failed for {:?}: {:?}", key, err);
             }
         }
     }

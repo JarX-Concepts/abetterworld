@@ -1,8 +1,13 @@
+// Optimized Tile Content System for Rust + WASM
 use reqwest::Client;
 use std::error::Error;
 use std::sync::{Arc, RwLock};
 use threadpool::ThreadPool;
+use tokio::runtime::Builder;
 use tokio::runtime::Runtime;
+
+use std::collections::HashSet;
+use tokio::sync::{Mutex, Semaphore};
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::thread;
@@ -10,418 +15,366 @@ use std::thread;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen_futures;
 
+#[cfg(target_arch = "wasm32")]
+use gloo_timers::future::TimeoutFuture;
+
+#[cfg(not(target_arch = "wasm32"))]
+use tokio::time::{sleep, Duration};
+
+async fn wait_short_delay() {
+    #[cfg(target_arch = "wasm32")]
+    TimeoutFuture::new(10).await;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    sleep(Duration::from_millis(10)).await;
+}
+
 use crate::camera::Camera;
 use crate::content::{ContentInRange, ContentLoaded, ContentRender};
 use crate::tiles::{
-    content_load, content_render, import_tileset, load_root, Connection, ConnectionState,
+    content_render, download_content_for_tile, import_tileset, load_root, process_content_bytes,
+    Connection, ConnectionState,
 };
 
 pub struct TileContent {
-    latest_in_range: Arc<RwLock<Vec<ContentInRange>>>,
-    latest_loaded: Arc<RwLock<Vec<ContentLoaded>>>,
-    pub latest_render: Vec<ContentRender>, // still on main thread
+    latest_in_range: Arc<tokio::sync::RwLock<Vec<ContentInRange>>>,
+    latest_loaded: Arc<tokio::sync::RwLock<Vec<ContentLoaded>>>,
+    pub latest_render: Arc<RwLock<Vec<ContentRender>>>, // Sync access for render thread
+}
+
+impl TileContent {
+    pub fn new() -> Result<Self, Box<dyn Error>> {
+        Ok(Self {
+            latest_in_range: Arc::new(tokio::sync::RwLock::new(Vec::new())),
+            latest_loaded: Arc::new(tokio::sync::RwLock::new(Vec::new())),
+            latest_render: Arc::new(RwLock::new(Vec::new())),
+        })
+    }
+
+    pub fn add_in_range(&self, item: &ContentInRange) {
+        let item = item.clone();
+        let lock = self.latest_in_range.clone();
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            tokio::spawn(async move {
+                if lock.read().await.iter().any(|x| x.uri == item.uri) {
+                    return;
+                }
+                let mut vec = lock.write().await;
+                vec.push(item);
+            });
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            use wasm_bindgen_futures::spawn_local;
+
+            spawn_local(async move {
+                if lock.read().await.iter().any(|x| x.uri == item.uri) {
+                    return;
+                }
+                let mut vec = lock.write().await;
+                vec.push(item);
+            });
+        }
+    }
+
+    pub fn update_render(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        layout: &wgpu::BindGroupLayout,
+    ) -> Result<(), Box<dyn Error>> {
+        let loaded = self.latest_loaded.blocking_read();
+        let mut render = self.latest_render.write().unwrap();
+
+        for item in loaded.iter() {
+            if !render.iter().any(|r| r.uri == item.uri) {
+                let new_render = content_render(device, queue, layout, item)?;
+                render.push(new_render);
+            }
+        }
+
+        render.retain(|r| loaded.iter().any(|l| l.uri == r.uri));
+        Ok(())
+    }
 }
 
 pub async fn establish_connection(client: Arc<Client>) -> Result<ConnectionState, Box<dyn Error>> {
     let (url, key) = load_root(&client).await?;
-    let connection = ConnectionState {
+    Ok(ConnectionState {
         connection: Connection {
-            client: client.clone(),
-            key,
+            client,
+            key: key.clone(),
         },
         tileset_url: url,
         tile: None,
         session: None,
-    };
-
-    return Ok(connection);
+    })
 }
 
 pub async fn run_update_in_range_once(
-    tile_content: Arc<RwLock<TileContent>>,
+    tile_content: Arc<TileContent>,
     camera: Camera,
     connection: &ConnectionState,
 ) -> Result<(), Box<dyn Error>> {
-    let mut in_range = import_tileset(&camera, &connection).await?;
+    let tile_content_clone = tile_content.clone();
+    let add_tile = Arc::new(move |tile: &ContentInRange| {
+        tile_content_clone.add_in_range(tile);
+    });
+
+    let mut in_range = import_tileset(&camera, connection, add_tile).await?;
     in_range.sort_by(|a, b| a.uri.cmp(&b.uri));
     in_range.dedup_by(|a, b| a.uri == b.uri);
-
-    // Scope to ensure locks are dropped
+    /*
     let should_update = {
-        let content = tile_content.read().unwrap();
-        let latest = content.latest_in_range.read().unwrap();
-        *latest != in_range
+        let current = tile_content.latest_in_range.read().await;
+        *current != in_range
     };
 
     if should_update {
-        let content = tile_content.read().unwrap();
-        let mut latest_mut = content.latest_in_range.write().unwrap();
-        *latest_mut = in_range;
-    }
+        let mut current = tile_content.latest_in_range.write().await;
+        *current = in_range;
+    } */
 
-    Ok::<(), Box<dyn Error>>(())
+    Ok(())
+}
+
+pub async fn content_load(
+    client: &Client,
+    key: &str,
+    load: &ContentInRange,
+) -> Result<ContentLoaded, Box<dyn Error + Send + Sync>> {
+    let (bytes, _content_type) = download_content_for_tile(client, key, load).await.unwrap();
+    Ok(process_content_bytes(&load.uri, &load.session, bytes).unwrap())
 }
 
 pub async fn content_decode(
     job_conn: &Connection,
-    loaded: Arc<RwLock<Vec<ContentLoaded>>>,
+    loaded: Arc<tokio::sync::RwLock<Vec<ContentLoaded>>>,
     tile: &ContentInRange,
 ) -> Result<(), Box<dyn Error>> {
-    if let Ok(loaded_tile) = content_load(&job_conn.client, job_conn.key.as_str(), &tile).await {
-        loaded.write().unwrap().push(loaded_tile);
-        Ok(())
-    } else {
-        log::error!("Failed to load content for tile: {}", tile.uri);
-        Err("Failed to load content".into())
+    match content_load(&job_conn.client, &job_conn.key, tile).await {
+        Ok(loaded_tile) => {
+            let mut guard = loaded.write().await;
+            guard.push(loaded_tile);
+            Ok(())
+        }
+        Err(e) => {
+            log::error!("Failed to load content for tile {}: {:?}", tile.uri, e);
+            Err("Failed to load content".into())
+        }
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub async fn run_load_worker_once(
-    tile_content: Arc<RwLock<TileContent>>,
-    key: &str,
-    pool: ThreadPool,
-) {
-    let key_owned = key.to_string();
-    let (in_range, loaded_arc) = {
-        let tc = tile_content.read().unwrap();
-        let in_range = {
-            let latest_in_range = tc.latest_in_range.read().unwrap();
-            latest_in_range.clone()
-        };
-        let loaded_arc = tc.latest_loaded.clone();
-        (in_range, loaded_arc)
-    };
-
-    for tile in in_range {
-        let loaded = loaded_arc.clone();
-        let key = key_owned.clone();
-
-        // Skip if already loaded
-        if loaded.read().unwrap().iter().any(|l| l.uri == tile.uri) {
-            continue;
-        }
-
-        pool.execute(move || {
-            // Use a runtime per worker thread
-            let local_rt = Runtime::new().expect("Worker thread failed to create Tokio runtime");
-
-            // Create a client inside this runtime
-            let client = Arc::new(Client::new());
-            let local_job_conn = Connection { client, key };
-
-            let fut = content_decode(&local_job_conn, loaded.clone(), &tile);
-
-            if let Err(e) = local_rt.block_on(fut) {
-                log::error!(
-                    "Failed to decode content for tile {}: {:?}",
-                    tile.uri.clone(),
-                    e
-                );
-            }
-        });
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-pub async fn run_load_worker_once(tile_content: Arc<RwLock<TileContent>>, connection: &Connection) {
-    let (in_range, loaded_arc) = {
-        let tc = tile_content.read().unwrap();
-        let in_range = tc.latest_in_range.read().unwrap().clone();
-        let loaded_arc = tc.latest_loaded.clone();
-        (in_range, loaded_arc)
-    };
-
-    for tile in in_range {
-        let loaded = loaded_arc.clone();
-
-        if loaded.read().unwrap().iter().any(|l| l.uri == tile.uri) {
-            continue;
-        }
-
-        let local_connection = connection.clone();
-        wasm_bindgen_futures::spawn_local(async move {
-            let _ = content_decode(&local_connection, loaded, &tile).await;
-        });
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub fn start_background_tasks(
-    tile_content: Arc<RwLock<TileContent>>,
+pub async fn start_background_tasks(
+    tile_content: Arc<TileContent>,
     camera_source: Arc<RwLock<Camera>>,
 ) -> Result<(), Box<dyn Error>> {
-    log::debug!("Establishing Connection");
-
     let client = Arc::new(Client::new());
-
-    let rt = Arc::new(
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("Failed to create Tokio runtime"),
-    );
-
-    let connection_future = establish_connection(client.clone());
-    let connection = rt.block_on(connection_future)?;
+    let connection = establish_connection(client.clone()).await?;
     let key = connection.connection.key.clone();
 
-    // Update in range thread
-    std::thread::spawn({
+    {
         let tile_content = tile_content.clone();
-        move || {
-            let rt = tokio::runtime::Runtime::new().unwrap();
-
-            let client = Arc::new(Client::new());
-            let local_job_conn = ConnectionState {
+        let camera_source = camera_source.clone();
+        let tileset_url = connection.tileset_url.clone();
+        thread::spawn(move || {
+            let rt = Runtime::new().unwrap();
+            let local_conn = ConnectionState {
                 connection: Connection {
-                    client: client.clone(),
-                    key: connection.connection.key.clone(),
+                    client: Arc::new(Client::new()),
+                    key: key.clone(),
                 },
-                tileset_url: connection.tileset_url.clone(),
+                tileset_url,
                 tile: None,
                 session: None,
             };
 
             loop {
+                //log::info!("Running update_in_range");
                 let camera = camera_source.read().unwrap().clone();
                 if let Err(e) = rt.block_on(run_update_in_range_once(
                     tile_content.clone(),
                     camera,
-                    &local_job_conn,
+                    &local_conn,
                 )) {
-                    eprintln!("update_in_range error: {:?}", e);
+                    log::error!("update_in_range error: {:?}", e);
                 }
-                std::thread::sleep(std::time::Duration::from_millis(250));
+                //log::info!("Done update_in_range");
+                thread::sleep(std::time::Duration::from_millis(30));
             }
-        }
-    });
+        });
+    }
 
-    // Load worker thread
-    std::thread::spawn({
-        move || {
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            let pool = ThreadPool::new(8);
+    {
+        let tile_content = tile_content.clone();
+        let key = connection.connection.key.clone();
+        thread::spawn(move || {
+            let rt = Arc::new(Builder::new_current_thread().enable_all().build().unwrap());
+
+            let client = Arc::new(Client::new());
+            let max_threads = 20;
+            let pool = ThreadPool::new(max_threads);
+
+            log::info!("Starting content decode thread");
+
             loop {
-                rt.block_on(run_load_worker_once(
-                    tile_content.clone(),
-                    key.as_str(),
-                    pool.clone(),
-                ));
-                std::thread::sleep(std::time::Duration::from_millis(100));
+                let (tiles, loaded) = rt.block_on(async {
+                    let tc = &tile_content;
+                    let tiles = tc.latest_in_range.read().await.clone();
+                    let loaded = tc.latest_loaded.clone();
+                    (tiles, loaded)
+                });
+
+                let loaded_vec = rt.block_on(async { loaded.read().await.clone() });
+
+                for tile in tiles {
+                    if loaded_vec.iter().any(|l| l.uri == tile.uri) {
+                        continue;
+                    }
+
+                    // do not overwhelm the thread pool
+                    while pool.queued_count() >= max_threads {
+                        wait_short_delay();
+                    }
+
+                    let loaded = loaded.clone();
+                    let key = key.clone();
+                    let client = client.clone();
+                    let rt = rt.clone();
+
+                    pool.execute(move || {
+                        let conn = Connection { client, key };
+                        let fut = async move {
+                            if let Err(e) = content_decode(&conn, loaded, &tile).await {
+                                log::error!("content_decode error for {}: {:?}", tile.uri, e);
+                            }
+                        };
+
+                        let _ = rt.block_on(fut);
+                    });
+                }
+
+                thread::sleep(std::time::Duration::from_millis(30));
             }
-        }
-    });
+        });
+    }
 
     Ok(())
 }
 
 #[cfg(target_arch = "wasm32")]
-pub fn start_background_tasks(
-    tile_content: Arc<RwLock<TileContent>>,
+pub async fn start_background_tasks(
+    tile_content: Arc<TileContent>,
     camera_source: Arc<RwLock<Camera>>,
 ) -> Result<(), Box<dyn Error>> {
-    use gloo_timers::future;
+    use futures_util::StreamExt;
+    use gloo_timers::future::IntervalStream;
     use wasm_bindgen_futures::spawn_local;
 
-    use crate::camera;
+    let client = Arc::new(Client::new());
+    let connection = establish_connection(client.clone()).await?;
+    let key = connection.connection.key.clone();
+    let tileset_url = connection.tileset_url.clone();
 
-    spawn_local(async move {
-        log::info!("Establish Connection");
-        let client = Arc::new(Client::new());
-        let connection_result = establish_connection(client.clone()).await;
-        let connection = match connection_result {
-            Ok(conn) => conn,
-            Err(e) => {
-                log::error!("Failed to establish connection: {:?}", e);
-                return;
-            }
+    // Continuous update_in_range task (runs in the background)
+    {
+        let tile_content = tile_content.clone();
+        let camera_source = camera_source.clone();
+        let local_conn = ConnectionState {
+            connection: Connection {
+                client: client.clone(),
+                key: key.clone(),
+            },
+            tileset_url: tileset_url.clone(),
+            tile: None,
+            session: None,
         };
 
-        {
-            let tile_content = tile_content.clone();
-            let connection = connection.clone();
-            let camera_source = camera_source.clone();
-            spawn_local(async move {
-                loop {
-                    let camera = camera_source.read().unwrap().clone();
-                    let tile_content = tile_content.clone();
-                    let connection = connection.clone();
-
-                    if let Err(e) =
-                        run_update_in_range_once(tile_content, camera, &connection).await
-                    {
-                        log::error!("update_in_range error: {:?}", e);
-                    }
-
-                    // Wait 250ms after the task finishes
-                    gloo_timers::future::sleep(std::time::Duration::from_millis(250)).await;
+        spawn_local(async move {
+            let mut interval = IntervalStream::new(30).fuse(); // every ~30ms
+            while interval.next().await.is_some() {
+                let camera = camera_source.read().unwrap().clone();
+                if let Err(e) =
+                    run_update_in_range_once(tile_content.clone(), camera, &local_conn).await
+                {
+                    log::error!("update_in_range error: {:?}", e);
                 }
-            });
-        }
-
-        {
-            let tile_content = tile_content.clone();
-            let connection = connection.clone();
-            spawn_local(async move {
-                loop {
-                    let camera = camera_source.read().unwrap().clone();
-                    let tile_content = tile_content.clone();
-                    let connection = connection.clone();
-
-                    run_load_worker_once(tile_content, &connection.connection).await;
-
-                    // Wait 250ms after the task finishes
-                    gloo_timers::future::sleep(std::time::Duration::from_millis(250)).await;
-                }
-            });
-        }
-    });
-
-    Ok(())
-}
-
-/* pub fn start_update_in_range_loop(
-    tile_content: Arc<RwLock<TileContent>>,
-    camera_source: Arc<RwLock<Camera>>,
-) {
-    let rt = Arc::new(
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("Failed to create Tokio runtime"),
-    );
-
-    let client = Arc::new(Client::new());
-
-    thread::spawn({
-        let rt = rt.clone();
-        let client = client.clone();
-        move || loop {
-            let camera = camera_source.read().unwrap().clone();
-            let tile_content = tile_content.clone(); // clone Arc to move inside
-
-            let fut = async {
-                let (url, key) = load_root(&client).await?;
-                let connection = ConnectionState {
-                    connection: Connection {
-                        client: client.clone(),
-                        key,
-                    },
-                    tileset_url: url,
-                    tile: None,
-                    session: None,
-                };
-
-                let mut in_range = import_tileset(&camera, &connection).await?;
-                in_range.sort_by(|a, b| a.uri.cmp(&b.uri));
-                in_range.dedup_by(|a, b| a.uri == b.uri);
-
-                let content = tile_content.read().unwrap();
-
-                // Scope to ensure locks are dropped
-                let should_update = {
-                    let content = tile_content.read().unwrap();
-                    let latest = content.latest_in_range.read().unwrap();
-                    *latest != in_range
-                };
-
-                if should_update {
-                    let content = tile_content.read().unwrap();
-                    let mut latest_mut = content.latest_in_range.write().unwrap();
-                    *latest_mut = in_range;
-                }
-                Ok::<(), Box<dyn Error>>(())
-            };
-
-            if let Err(e) = rt.block_on(fut) {
-                eprintln!("update_in_range_loop error: {:?}", e);
             }
+        });
+    }
 
-            thread::sleep(Duration::from_millis(250));
-        }
-    });
-}
+    // Continuous decode task (fully async)
+    {
+        let tile_content = tile_content.clone();
+        let key = key.clone();
+        let client = client.clone();
 
-pub fn start_load_worker_pool(tile_content: Arc<RwLock<TileContent>>, pool: ThreadPool) {
-    let client = Arc::new(Client::new());
+        let max_concurrent_decodes = 10;
+        let processing_list = Arc::new(Mutex::new(HashSet::new()));
+        let semaphore = Arc::new(Semaphore::new(max_concurrent_decodes)); // already in your code
 
-    thread::spawn({
-        move || {
-            let _rt = Runtime::new().expect("Failed to create Tokio runtime");
+        spawn_local(async move {
+            let mut interval = IntervalStream::new(30).fuse(); // ~30ms
 
-            loop {
-                let (in_range, loaded_arc) = {
-                    let tc = tile_content.read().unwrap();
-                    let in_range = {
-                        let latest_in_range = tc.latest_in_range.read().unwrap();
-                        latest_in_range.clone()
-                    };
-                    let loaded_arc = tc.latest_loaded.clone();
-                    (in_range, loaded_arc)
-                };
+            while interval.next().await.is_some() {
+                let tiles;
+                let loaded;
 
-                for tile in in_range {
-                    let loaded = loaded_arc.clone();
+                {
+                    let current = tile_content.latest_in_range.read().await;
+                    tiles = current.clone();
+                    loaded = tile_content.latest_loaded.clone();
+                }
 
-                    // Skip if already loaded
-                    if loaded.read().unwrap().iter().any(|l| l.uri == tile.uri) {
+                let loaded_vec = loaded.read().await.clone();
+
+                for tile in tiles {
+                    if loaded_vec.iter().any(|l| l.uri == tile.uri) {
                         continue;
                     }
 
-                    let job_client = client.clone();
-                    pool.execute(move || {
-                        let fut = async move {
-                            match content_load(&job_client, tile.session.as_str(), &tile).await {
-                                Ok(loaded_tile) => {
-                                    loaded.write().unwrap().push(loaded_tile);
-                                }
-                                Err(e) => {
-                                    eprintln!("load_worker error: {:?}", e);
-                                }
-                            }
-                        };
+                    // Check + mark as processing
+                    let mut list = processing_list.lock().await;
+                    if !list.insert(tile.uri.clone()) {
+                        continue; // already processing
+                    }
+                    drop(list); // release lock early
 
-                        // Use a runtime per worker thread
-                        let local_rt =
-                            Runtime::new().expect("Worker thread failed to create Tokio runtime");
-                        local_rt.block_on(fut);
+                    let permit = match semaphore.clone().try_acquire_owned() {
+                        Ok(p) => p,
+                        Err(_) => {
+                            // Rollback processing mark if skipping
+                            let mut list = processing_list.lock().await;
+                            list.remove(&tile.uri);
+                            continue;
+                        }
+                    };
+
+                    let loaded = loaded.clone();
+                    let key = key.clone();
+                    let client = client.clone();
+                    let uri = tile.uri.clone();
+                    let processing_list = processing_list.clone();
+
+                    spawn_local(async move {
+                        let conn = Connection { client, key };
+                        if let Err(e) = content_decode(&conn, loaded, &tile).await {
+                            log::error!("content_decode error for {}: {:?}", uri, e);
+                        }
+
+                        // Remove from processing list
+                        let mut list = processing_list.lock().await;
+                        list.remove(&uri);
+                        drop(permit);
                     });
                 }
-
-                thread::sleep(Duration::from_millis(100));
             }
-        }
-    });
-}
- */
-impl TileContent {
-    pub fn new() -> Result<Self, Box<dyn Error>> {
-        Ok(Self {
-            latest_in_range: Arc::new(RwLock::new(Vec::new())),
-            latest_loaded: Arc::new(RwLock::new(Vec::new())),
-            latest_render: Vec::new(),
-        })
+        });
     }
 
-    pub fn update_render(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        texture_bind_group_layout: &wgpu::BindGroupLayout,
-    ) -> Result<(), Box<dyn Error>> {
-        let loaded = self.latest_loaded.read().unwrap();
-        for l in loaded.iter() {
-            if self.latest_render.iter().any(|r| r.uri == l.uri) {
-                continue;
-            }
-            let render = content_render(device, queue, texture_bind_group_layout, l)?;
-            self.latest_render.push(render);
-        }
-
-        self.latest_render
-            .retain(|r| loaded.iter().any(|l| l.uri == r.uri));
-
-        Ok(())
-    }
+    Ok(())
 }
