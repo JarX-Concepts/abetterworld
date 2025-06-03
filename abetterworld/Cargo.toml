@@ -25,12 +25,13 @@ threadpool = "1"
 wasm-bindgen-futures = "0"
 log = "0.4"
 lru = "0.14.0"
+async-recursion = "1.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "1", features = ["full"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-tokio = { version = "1", default-features = false, features = ["macros", "rt"] }
+tokio = { version = "1", default-features = false, features = ["macros", "rt", "time"] }
 gloo-timers = { version = "0.3", features = ["futures"] }
 wasm-bindgen = "0.2"
 wasm-bindgen-test = "0.3"
@@ -39,4 +40,5 @@ idb = "0.6"
 js-sys = "0.3"
 serde-wasm-bindgen = "0.6"
 console_log = "1.0"
+futures-util = "0.3"
 

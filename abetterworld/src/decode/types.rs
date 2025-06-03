@@ -9,6 +9,7 @@ pub struct Vertex {
 }
 
 #[repr(C)]
+#[derive(Clone)]
 pub struct DecodedMesh {
     pub vertices: *mut Vertex,
     pub vertex_count: i32,
@@ -16,6 +17,7 @@ pub struct DecodedMesh {
     pub index_count: i32,
 }
 
+#[derive(Clone)]
 pub struct OwnedDecodedMesh {
     pub(crate) inner: DecodedMesh,
     pub material_index: Option<usize>,

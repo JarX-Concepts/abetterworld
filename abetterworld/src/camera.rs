@@ -218,7 +218,7 @@ impl Camera {
         };
 
         if dist > self.far {
-            return false; // far away, no need to refine
+            //return false; // far away, no need to refine
         }
 
         // 3. Compute vertical FOV (in radians)

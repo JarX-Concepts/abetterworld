@@ -22,6 +22,7 @@ checksum = "c71b1793ee61086797f5c80b6efa2b8ffa6d5dd703f118545808a7f2e27f7046"
 name = "abetterworld"
 version = "0.1.0"
 dependencies = [
+ "async-recursion",
  "bytemuck",
  "byteorder",
  "bytes",
@@ -29,6 +30,7 @@ dependencies = [
  "console_log",
  "dashmap",
  "futures",
+ "futures-util",
  "gloo-timers",
  "hex",
  "idb",
@@ -170,6 +172,17 @@ dependencies = [
  "memchr",
  "pin-project-lite",
  "tokio",
+]
+
+[[package]]
+name = "async-recursion"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3b43422f69d8ff38f95f1b2bb76517c91589a924d1559a0e935d7c8ce0274c11"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

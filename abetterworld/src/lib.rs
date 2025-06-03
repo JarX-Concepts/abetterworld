@@ -46,7 +46,7 @@ pub struct SphereRenderer {
     aligned_uniform_size: usize,
     depth_view: wgpu::TextureView,
     texture_bind_group_layout: wgpu::BindGroupLayout,
-    content: Arc<RwLock<pager::TileContent>>,
+    content: Arc<pager::TileContent>,
     input_state: input::InputState,
 }
 
@@ -123,7 +123,7 @@ impl SphereRenderer {
 
         let debug_eye = geodetic_to_ecef_z_up(34.4208, -119.6982, 200.0);
         let debug_eye_pt: Point3<f64> = Point3::new(debug_eye.0, debug_eye.1, debug_eye.2);
-        let mut debug_camera = Camera::new(Deg(45.0), 1.0, debug_eye_pt, target, up);
+        let mut debug_camera = Camera::new(Deg(45.0), 1.0, eye, target, up);
         debug_camera.update(Some(20000.0));
 
         let texture_bind_group_layout =
@@ -301,7 +301,7 @@ impl SphereRenderer {
                 strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw,
                 cull_mode: Some(wgpu::Face::Back),
-                polygon_mode: wgpu::PolygonMode::Line,
+                polygon_mode: wgpu::PolygonMode::Fill,
                 unclipped_depth: false,
                 conservative: false,
             },
@@ -376,7 +376,7 @@ impl SphereRenderer {
             multiview: None,
         });
 
-        let tile_content = Arc::new(RwLock::new(pager::TileContent::new().unwrap()));
+        let tile_content = Arc::new(pager::TileContent::new().unwrap());
         let camera_source = Arc::new(RwLock::new(camera));
         let debug_camera_source = Arc::new(RwLock::new(debug_camera));
         //        let pool = ThreadPool::new(8); // adjust based on system
@@ -384,7 +384,7 @@ impl SphereRenderer {
         //start_update_in_range_loop(tile_content.clone(), debug_camera_source.clone());
         //start_load_worker_pool(tile_content.clone(), pool);
         init();
-        start_background_tasks(tile_content.clone(), debug_camera_source.clone());
+        start_background_tasks(tile_content.clone(), debug_camera_source.clone()).await;
 
         Self {
             pipeline,
@@ -428,14 +428,14 @@ impl SphereRenderer {
         render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
 
         {
-            let tile_content_inst = self.content.read().unwrap();
-            if !tile_content_inst.latest_render.is_empty() {
+            let latest_render = self.content.latest_render.read().unwrap();
+            if !latest_render.is_empty() {
                 render_pass.set_pipeline(&self.pipeline);
 
                 let mut counter = 0;
                 queue.write_buffer(&self.transforms.uniform_buffer, 0, &self.transforms.data);
 
-                for tile in &tile_content_inst.latest_render {
+                for tile in latest_render.iter() {
                     for (i, node) in tile.nodes.iter().enumerate() {
                         render_pass.set_bind_group(
                             1,
@@ -539,12 +539,14 @@ impl SphereRenderer {
         self.camera.write().unwrap().update(None);
         self.debug_camera.write().unwrap().update(Some(20000.0));
 
-        // Just do it once for now...
-        let mut tile_content_inst = self.content.write().unwrap();
-        tile_content_inst.update_render(device, queue, &self.texture_bind_group_layout)?;
+        self.content
+            .update_render(device, queue, &self.texture_bind_group_layout)?;
 
         let mut counter = 0;
-        for tile in &tile_content_inst.latest_render {
+
+        let latest_render = self.content.latest_render.read().unwrap();
+
+        for tile in latest_render.iter() {
             for (i, node) in tile.nodes.iter().enumerate() {
                 let matrix_bytes = bytemuck::bytes_of(&node.matrix);
 
