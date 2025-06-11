@@ -29,6 +29,14 @@ async fn wait_short_delay() {
     sleep(Duration::from_millis(10)).await;
 }
 
+async fn wait_longer_delay() {
+    #[cfg(target_arch = "wasm32")]
+    TimeoutFuture::new(1000).await;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    sleep(Duration::from_millis(1000)).await;
+}
+
 use crate::camera::Camera;
 use crate::content::{ContentInRange, ContentLoaded, ContentRender};
 use crate::tiles::{
@@ -76,6 +84,8 @@ impl TileContent {
                 }
                 let mut vec = lock.write().await;
                 vec.push(item);
+
+                log::info!("Added tile to in-range");
             });
         }
     }
@@ -124,10 +134,12 @@ pub async fn run_update_in_range_once(
         tile_content_clone.add_in_range(tile);
     });
 
-    let mut in_range = import_tileset(&camera, connection, add_tile).await?;
+    import_tileset(&camera, connection, add_tile).await?;
+
+    /*
     in_range.sort_by(|a, b| a.uri.cmp(&b.uri));
     in_range.dedup_by(|a, b| a.uri == b.uri);
-    /*
+
     let should_update = {
         let current = tile_content.latest_in_range.read().await;
         *current != in_range
@@ -217,9 +229,8 @@ pub async fn start_background_tasks(
 
             let client = Arc::new(Client::new());
             let max_threads = 20;
+            let processing_list = Arc::new(Mutex::new(HashSet::new()));
             let pool = ThreadPool::new(max_threads);
-
-            log::info!("Starting content decode thread");
 
             loop {
                 let (tiles, loaded) = rt.block_on(async {
@@ -236,15 +247,24 @@ pub async fn start_background_tasks(
                         continue;
                     }
 
+                    // Check + mark as processing
+                    let mut list = rt.block_on(async { processing_list.lock().await });
+                    if !list.insert(tile.uri.clone()) {
+                        continue; // already processing
+                    }
+                    drop(list); // release lock early
+
                     // do not overwhelm the thread pool
                     while pool.queued_count() >= max_threads {
-                        wait_short_delay();
+                        rt.block_on(wait_short_delay());
                     }
 
                     let loaded = loaded.clone();
                     let key = key.clone();
                     let client = client.clone();
                     let rt = rt.clone();
+                    let uri: String = tile.uri.clone();
+                    let processing_list = processing_list.clone();
 
                     pool.execute(move || {
                         let conn = Connection { client, key };
@@ -255,10 +275,14 @@ pub async fn start_background_tasks(
                         };
 
                         let _ = rt.block_on(fut);
+
+                        // Remove from processing list
+                        let mut list = rt.block_on(async { processing_list.lock().await });
+                        list.remove(&uri);
                     });
                 }
 
-                thread::sleep(std::time::Duration::from_millis(30));
+                thread::sleep(std::time::Duration::from_millis(3));
             }
         });
     }
@@ -295,14 +319,16 @@ pub async fn start_background_tasks(
         };
 
         spawn_local(async move {
-            let mut interval = IntervalStream::new(30).fuse(); // every ~30ms
-            while interval.next().await.is_some() {
+            loop {
                 let camera = camera_source.read().unwrap().clone();
+
                 if let Err(e) =
                     run_update_in_range_once(tile_content.clone(), camera, &local_conn).await
                 {
                     log::error!("update_in_range error: {:?}", e);
                 }
+
+                wait_longer_delay().await;
             }
         });
     }
@@ -318,9 +344,9 @@ pub async fn start_background_tasks(
         let semaphore = Arc::new(Semaphore::new(max_concurrent_decodes)); // already in your code
 
         spawn_local(async move {
-            let mut interval = IntervalStream::new(30).fuse(); // ~30ms
+            loop {
+                use std::{thread::sleep, time::Duration};
 
-            while interval.next().await.is_some() {
                 let tiles;
                 let loaded;
 
@@ -350,7 +376,7 @@ pub async fn start_background_tasks(
                             // Rollback processing mark if skipping
                             let mut list = processing_list.lock().await;
                             list.remove(&tile.uri);
-                            continue;
+                            break;
                         }
                     };
 
@@ -372,6 +398,8 @@ pub async fn start_background_tasks(
                         drop(permit);
                     });
                 }
+
+                wait_longer_delay().await;
             }
         });
     }

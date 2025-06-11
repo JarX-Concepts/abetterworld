@@ -4,7 +4,7 @@ use cgmath::{
     SquareMatrix, Vector2, Vector3, Vector4, Zero,
 };
 
-use crate::{matrix::Uniforms, tiles::BoundingVolume};
+use crate::{coord_utils::geodetic_to_ecef_z_up, matrix::Uniforms, tiles::BoundingVolume};
 
 const EARTH_RADIUS_M: f64 = 6_371_000.0;
 
@@ -268,4 +268,29 @@ impl Camera {
             far_center - up * (far_height / 2.0) - right * (far_width / 2.0),
         ]
     }
+}
+
+pub fn init_camera() -> (Camera, Camera) {
+    let radius = 6_378_137.0;
+    let distance: f64 = radius * 2.0;
+
+    let x1 = -2609.581 * 1000.0;
+    let y1 = -4575.442 * 1000.0;
+    let z1 = 3584.967 * 1000.0;
+
+    let x = -2609.503 * 1000.0;
+    let y = -4575.306 * 1000.0;
+    let z = 3584.86 * 1000.0;
+
+    let eye = Point3::new(0.0, distance, distance);
+    let target = Point3::new(0.0, 0.0, 0.0);
+    let up = Vector3::unit_y();
+    let camera = Camera::new(Deg(45.0), 1.0, eye, target, up);
+
+    let debug_eye = geodetic_to_ecef_z_up(34.4208, -119.6982, 200.0);
+    let debug_eye_pt: Point3<f64> = Point3::new(debug_eye.0, debug_eye.1, debug_eye.2);
+    let mut debug_camera = Camera::new(Deg(45.0), 1.0, debug_eye_pt, target, up);
+    debug_camera.update(Some(20000.0));
+
+    (camera, debug_camera)
 }

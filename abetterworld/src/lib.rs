@@ -1,29 +1,29 @@
 use std::{
     error::Error,
-    process::exit,
     sync::{Arc, RwLock},
 };
 
-use cgmath::{Deg, Point3, Vector3};
 mod camera;
 pub mod decode;
 mod tiles;
 use camera::Camera;
 mod cache;
-use cache::{init_tileset_cache, TILESET_CACHE};
+use cache::init_tileset_cache;
 mod content;
-use content::{DebugVertex, Vertex};
-use coord_utils::{geodetic_to_ecef_y_up, geodetic_to_ecef_z_up};
 use decode::init;
-use matrix::Uniforms;
 use pager::start_background_tasks;
-use serde::de;
 use wgpu::util::DeviceExt;
+
+use crate::{
+    camera::init_camera,
+    rendering::{build_debug_pipeline, build_depth_buffer, build_pipeline, RenderPipeline},
+};
 mod coord_utils;
 mod importer;
 mod input;
 mod matrix;
 mod pager;
+mod rendering;
 mod tests;
 
 pub struct UniformDataBlob {
@@ -36,16 +36,11 @@ pub struct UniformDataBlob {
 }
 
 pub struct SphereRenderer {
-    pipeline: wgpu::RenderPipeline,
+    pipeline: RenderPipeline,
     debug_pipeline: wgpu::RenderPipeline,
-    transforms: UniformDataBlob,
-    camera_uniform_buffer: wgpu::Buffer,
-    camera_bind_group: wgpu::BindGroup,
     camera: Arc<RwLock<Camera>>,
     debug_camera: Arc<RwLock<Camera>>,
-    aligned_uniform_size: usize,
     depth_view: wgpu::TextureView,
-    texture_bind_group_layout: wgpu::BindGroupLayout,
     content: Arc<pager::TileContent>,
     input_state: input::InputState,
 }
@@ -99,311 +94,26 @@ impl SphereRenderer {
         //download_test();
         init_tileset_cache().await;
 
-        // Load WGSL shader from file.
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Sphere Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
-        });
+        let (camera, debug_camera) = init_camera();
 
-        let radius = 6_378_137.0;
-        let distance: f64 = radius * 2.0;
-
-        let x1 = -2609.581 * 1000.0;
-        let y1 = -4575.442 * 1000.0;
-        let z1 = 3584.967 * 1000.0;
-
-        let x = -2609.503 * 1000.0;
-        let y = -4575.306 * 1000.0;
-        let z = 3584.86 * 1000.0;
-
-        let eye = Point3::new(0.0, distance, distance);
-        let target = Point3::new(0.0, 0.0, 0.0);
-        let up = Vector3::unit_y();
-        let camera = Camera::new(Deg(45.0), 1.0, eye, target, up);
-
-        let debug_eye = geodetic_to_ecef_z_up(34.4208, -119.6982, 200.0);
-        let debug_eye_pt: Point3<f64> = Point3::new(debug_eye.0, debug_eye.1, debug_eye.2);
-        let mut debug_camera = Camera::new(Deg(45.0), 1.0, eye, target, up);
-        debug_camera.update(Some(20000.0));
-
-        let texture_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Texture Bind Group Layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-            });
-
-        let max_objects = 512;
-        let alignment = device.limits().min_uniform_buffer_offset_alignment as usize;
-
-        log::info!(
-            "Uniform buffer alignment: {}, size: {}, max objects: {}",
-            alignment,
-            std::mem::size_of::<Uniforms>(),
-            max_objects
-        );
-
-        let uniform_size = std::mem::size_of::<Uniforms>();
-
-        fn align_to(value: usize, alignment: usize) -> usize {
-            (value + alignment - 1) / alignment * alignment
-        }
-        let aligned_uniform_size = align_to(uniform_size, alignment);
-
-        let buffer_size = aligned_uniform_size * max_objects;
-
-        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Dynamic Uniform Buffer"),
-            size: buffer_size as wgpu::BufferAddress,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let buffer_data = vec![0u8; buffer_size];
-
-        // Create bind group layout and bind group for the uniform.
-        let uniform_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Uniform Bind Group Layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: true,
-                        min_binding_size: Some(
-                            std::num::NonZeroU64::new(aligned_uniform_size as u64).unwrap(),
-                        ),
-                    },
-                    count: None,
-                }],
-            });
-
-        let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Uniform Bind Group"),
-            layout: &uniform_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: &uniform_buffer,
-                    offset: 0,
-                    size: Some(std::num::NonZeroU64::new(aligned_uniform_size as u64).unwrap()),
-                }),
-            }],
-        });
-
-        // Size of one matrix
-        let camera_uniform_size = std::mem::size_of::<Uniforms>() as wgpu::BufferAddress;
-
-        // Create uniform buffer for camera VP matrix
-        let camera_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Camera Uniform Buffer"),
-            size: camera_uniform_size,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let camera_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Camera Bind Group Layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: Some(
-                            std::num::NonZeroU64::new(camera_uniform_size).unwrap(),
-                        ),
-                    },
-                    count: None,
-                }],
-            });
-
-        let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Camera Bind Group"),
-            layout: &camera_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: camera_uniform_buffer.as_entire_binding(),
-            }],
-        });
-
-        // Create pipeline layout.
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Render Pipeline Layout"),
-            bind_group_layouts: &[
-                &camera_bind_group_layout,
-                &uniform_bind_group_layout,
-                &texture_bind_group_layout,
-            ],
-            push_constant_ranges: &[],
-        });
-
-        let depth_size = wgpu::Extent3d {
-            width: config.width,
-            height: config.height,
-            depth_or_array_layers: 1,
-        };
-
-        let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Depth Texture"),
-            size: depth_size,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Depth24Plus, // or Depth32Float
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[wgpu::TextureFormat::Depth24Plus],
-        });
-
-        let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        // Create the render pipeline.
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Render Pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[Vertex::desc()],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: config.format,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            cache: None,
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
-                polygon_mode: wgpu::PolygonMode::Fill,
-                unclipped_depth: false,
-                conservative: false,
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth24Plus, // match your texture
-                depth_write_enabled: true,                // write to the depth buffer
-                depth_compare: wgpu::CompareFunction::LessEqual, // typical for 3D
-                stencil: wgpu::StencilState::default(),   // usually default
-                bias: wgpu::DepthBiasState::default(),    // optional slope‐bias
-            }),
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            multiview: None,
-        });
-
-        let debug_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Sphere Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("debug_shader.wgsl").into()),
-        });
-
-        let debug_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[&camera_bind_group_layout],
-                push_constant_ranges: &[],
-            });
-
-        let debug_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Debug Pipeline"),
-            layout: Some(&debug_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &debug_shader,
-                entry_point: Some("vs_main"),
-                buffers: &[DebugVertex::desc()],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &debug_shader,
-                entry_point: Some("main_fs"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: config.format,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            cache: None,
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::LineList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None,
-                polygon_mode: wgpu::PolygonMode::Fill,
-                unclipped_depth: false,
-                conservative: false,
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth24Plus, // match your texture
-                depth_write_enabled: false,               // write to the depth buffer
-                depth_compare: wgpu::CompareFunction::Less, // typical for 3D
-                stencil: wgpu::StencilState::default(),   // usually default
-                bias: wgpu::DepthBiasState::default(),    // optional slope‐bias
-            }),
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            multiview: None,
-        });
+        let pipeline = build_pipeline(device, config);
+        let debug_pipeline =
+            build_debug_pipeline(device, config, &pipeline.camera_bind_group_layout);
+        let depth = build_depth_buffer(device, config);
 
         let tile_content = Arc::new(pager::TileContent::new().unwrap());
         let camera_source = Arc::new(RwLock::new(camera));
         let debug_camera_source = Arc::new(RwLock::new(debug_camera));
-        //        let pool = ThreadPool::new(8); // adjust based on system
 
-        //start_update_in_range_loop(tile_content.clone(), debug_camera_source.clone());
-        //start_load_worker_pool(tile_content.clone(), pool);
         init();
         start_background_tasks(tile_content.clone(), debug_camera_source.clone()).await;
 
         Self {
             pipeline,
             debug_pipeline,
-            transforms: UniformDataBlob {
-                data: buffer_data,
-                size: buffer_size,
-                aligned_uniform_size: aligned_uniform_size,
-                max_objects,
-                uniform_buffer: uniform_buffer,
-                uniform_bind_group: uniform_bind_group,
-            },
-            camera_uniform_buffer,
-            camera_bind_group,
             camera: camera_source,
             debug_camera: debug_camera_source,
-            aligned_uniform_size,
-            depth_view,
-            texture_bind_group_layout,
+            depth_view: depth.view,
             content: tile_content,
             input_state: input::InputState::new(),
         }
@@ -421,26 +131,30 @@ impl SphereRenderer {
     ) {
         let camera_vp = self.camera.read().unwrap().uniform();
         queue.write_buffer(
-            &self.camera_uniform_buffer,
+            &self.pipeline.camera_uniform_buffer,
             0,
             bytemuck::bytes_of(&camera_vp),
         );
-        render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+        render_pass.set_bind_group(0, &self.pipeline.camera_bind_group, &[]);
 
         {
             let latest_render = self.content.latest_render.read().unwrap();
             if !latest_render.is_empty() {
-                render_pass.set_pipeline(&self.pipeline);
+                render_pass.set_pipeline(&self.pipeline.pipeline);
 
                 let mut counter = 0;
-                queue.write_buffer(&self.transforms.uniform_buffer, 0, &self.transforms.data);
+                queue.write_buffer(
+                    &self.pipeline.transforms.uniform_buffer,
+                    0,
+                    &self.pipeline.transforms.data,
+                );
 
                 for tile in latest_render.iter() {
                     for (i, node) in tile.nodes.iter().enumerate() {
                         render_pass.set_bind_group(
                             1,
-                            &self.transforms.uniform_bind_group,
-                            &[counter * self.aligned_uniform_size as u32],
+                            &self.pipeline.transforms.uniform_bind_group,
+                            &[counter * self.pipeline.transforms.aligned_uniform_size as u32],
                         );
                         counter += 1;
 
@@ -540,7 +254,7 @@ impl SphereRenderer {
         self.debug_camera.write().unwrap().update(Some(20000.0));
 
         self.content
-            .update_render(device, queue, &self.texture_bind_group_layout)?;
+            .update_render(device, queue, &self.pipeline.texture_bind_group_layout)?;
 
         let mut counter = 0;
 
@@ -550,10 +264,10 @@ impl SphereRenderer {
             for (i, node) in tile.nodes.iter().enumerate() {
                 let matrix_bytes = bytemuck::bytes_of(&node.matrix);
 
-                let start = counter * self.aligned_uniform_size;
+                let start = counter * self.pipeline.transforms.aligned_uniform_size;
                 let end = start + matrix_bytes.len();
 
-                self.transforms.data[start..end].copy_from_slice(matrix_bytes);
+                self.pipeline.transforms.data[start..end].copy_from_slice(matrix_bytes);
 
                 counter += 1;
             }
