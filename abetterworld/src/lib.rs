@@ -16,7 +16,10 @@ use wgpu::util::DeviceExt;
 
 use crate::{
     camera::init_camera,
-    rendering::{build_debug_pipeline, build_depth_buffer, build_pipeline, RenderPipeline},
+    rendering::{
+        build_debug_pipeline, build_depth_buffer, build_frustum_render, build_pipeline,
+        FrustumRender, RenderPipeline,
+    },
 };
 mod coord_utils;
 mod importer;
@@ -43,6 +46,7 @@ pub struct SphereRenderer {
     depth_view: wgpu::TextureView,
     content: Arc<pager::TileContent>,
     input_state: input::InputState,
+    frustum_render: FrustumRender,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -100,6 +104,7 @@ impl SphereRenderer {
         let debug_pipeline =
             build_debug_pipeline(device, config, &pipeline.camera_bind_group_layout);
         let depth = build_depth_buffer(device, config);
+        let frustum_render = build_frustum_render(device);
 
         let tile_content = Arc::new(pager::TileContent::new().unwrap());
         let camera_source = Arc::new(RwLock::new(camera));
@@ -116,6 +121,7 @@ impl SphereRenderer {
             depth_view: depth.view,
             content: tile_content,
             input_state: input::InputState::new(),
+            frustum_render,
         }
     }
 
@@ -195,7 +201,7 @@ impl SphereRenderer {
             }
         }
 
-        //self.draw_debug_camera(render_pass, queue, device);
+        self.draw_debug_camera(render_pass, queue, device);
     }
 
     pub fn draw_debug_camera(
@@ -205,42 +211,24 @@ impl SphereRenderer {
         device: &wgpu::Device,
     ) {
         let corners = self.debug_camera.read().unwrap().frustum_corners();
-        let frustum_vertices: Vec<[f32; 3]> = corners
+        let new_frustum_vertices: Vec<[f32; 3]> = corners
             .iter()
             .map(|p| [p.x as f32, p.y as f32, p.z as f32])
             .collect();
 
-        const FRUSTUM_EDGES: [(u16, u16); 12] = [
-            (0, 1),
-            (1, 2),
-            (2, 3),
-            (3, 0),
-            (4, 5),
-            (5, 6),
-            (6, 7),
-            (7, 4),
-            (0, 4),
-            (1, 5),
-            (2, 6),
-            (3, 7),
-        ];
-        let frustum_indices: Vec<u16> = FRUSTUM_EDGES.iter().flat_map(|&(a, b)| [a, b]).collect();
-
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Frustum Vertices"),
-            contents: bytemuck::cast_slice(&frustum_vertices),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Frustum Indices"),
-            contents: bytemuck::cast_slice(&frustum_indices),
-            usage: wgpu::BufferUsages::INDEX,
-        });
+        queue.write_buffer(
+            &self.frustum_render.vertex_buffer,
+            0,
+            bytemuck::cast_slice(&new_frustum_vertices),
+        );
 
         render_pass.set_pipeline(&self.debug_pipeline);
-        render_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
-        render_pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-        render_pass.draw_indexed(0..frustum_indices.len() as u32, 0, 0..1);
+        render_pass.set_vertex_buffer(0, self.frustum_render.vertex_buffer.slice(..));
+        render_pass.set_index_buffer(
+            self.frustum_render.index_buffer.slice(..),
+            wgpu::IndexFormat::Uint16,
+        );
+        render_pass.draw_indexed(0..36, 0, 0..1);
     }
 
     pub fn update(

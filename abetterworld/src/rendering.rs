@@ -1,3 +1,5 @@
+use wgpu::util::DeviceExt;
+
 use crate::{
     content::{DebugVertex, Vertex},
     matrix::Uniforms,
@@ -277,14 +279,15 @@ pub fn build_debug_pipeline(
             entry_point: Some("main_fs"),
             targets: &[Some(wgpu::ColorTargetState {
                 format: config.format,
-                blend: Some(wgpu::BlendState::REPLACE),
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                 write_mask: wgpu::ColorWrites::ALL,
             })],
             compilation_options: Default::default(),
         }),
+
         cache: None,
         primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::LineList,
+            topology: wgpu::PrimitiveTopology::TriangleList,
             strip_index_format: None,
             front_face: wgpu::FrontFace::Ccw,
             cull_mode: None,
@@ -308,4 +311,40 @@ pub fn build_debug_pipeline(
     });
 
     debug_pipeline
+}
+
+pub struct FrustumRender {
+    pub vertex_buffer: wgpu::Buffer,
+    pub index_buffer: wgpu::Buffer,
+}
+
+pub fn build_frustum_render(device: &wgpu::Device) -> FrustumRender {
+    const FRUSTUM_TRI_INDICES: [u16; 36] = [
+        // Near
+        0, 1, 2, 2, 3, 0, // Far
+        4, 5, 6, 6, 7, 4, // Left
+        0, 3, 7, 7, 4, 0, // Right
+        1, 5, 6, 6, 2, 1, // Top
+        0, 4, 5, 5, 1, 0, // Bottom
+        3, 2, 6, 6, 7, 3,
+    ];
+    let frustum_indices: Vec<u16> = FRUSTUM_TRI_INDICES.iter().flat_map(|&i| [i]).collect();
+
+    let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("Frustum Vertices"),
+        size: (8 * std::mem::size_of::<Vertex>()) as u64,
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
+    let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Frustum Indices"),
+        contents: bytemuck::cast_slice(&frustum_indices),
+        usage: wgpu::BufferUsages::INDEX,
+    });
+
+    FrustumRender {
+        vertex_buffer,
+        index_buffer,
+    }
 }

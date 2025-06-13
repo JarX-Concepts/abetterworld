@@ -38,8 +38,14 @@ struct VertexOutput {
 fn vs_main(input: VertexInput) -> VertexOutput {
     var output: VertexOutput;
 
+    let pos_z_up = vec3<f32>(
+        input.position.x,
+        -input.position.z,
+        input.position.y,
+    );
+
     // First apply both offsets to get relative positions
-    let pos_world = input.position - (camera.offset - node.offset);
+    let pos_world = pos_z_up - (camera.offset - node.offset);
     
     // Apply node transform matrix
     let pos_node = node.mat * vec4<f32>(pos_world, 1.0);
