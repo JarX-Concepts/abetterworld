@@ -31,5 +31,5 @@ fn vs_main(input: VertexInput) -> VertexOutput {
 // Fragment shader: solid color (e.g., yellow)
 @fragment
 fn main_fs() -> @location(0) vec4<f32> {
-    return vec4<f32>(1.0, 1.0, 0.2, 1.0); // yellowish
+    return vec4<f32>(1.0, 1.0, 0.2, 0.24); // yellowish
 }

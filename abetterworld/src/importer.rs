@@ -378,8 +378,8 @@ pub fn build_nodes(json: &Value) -> Result<Vec<Node>, std::io::Error> {
 
                     let t = Matrix4::from_translation(Vector3::new(
                         translation[0],
+                        -translation[2],
                         translation[1],
-                        translation[2],
                     ));
                     let r = Matrix4::from(Quaternion::new(
                         rotation[3],
@@ -406,7 +406,7 @@ pub fn build_nodes(json: &Value) -> Result<Vec<Node>, std::io::Error> {
             };
 
             nodes.push(Node {
-                matrix: Uniforms::build_from_3dtileset(matrix),
+                matrix: Uniforms::build_from_gltf(matrix),
                 mesh_indices,
             });
         }

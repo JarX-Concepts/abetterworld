@@ -1,5 +1,5 @@
 use bytemuck::{Pod, Zeroable};
-use cgmath::{EuclideanSpace, Matrix, Matrix4, Point3, SquareMatrix, Vector3, Vector4};
+use cgmath::{EuclideanSpace, Matrix, Matrix3, Matrix4, Point3, SquareMatrix, Vector3, Vector4};
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
@@ -10,7 +10,7 @@ pub struct Uniforms {
 }
 
 impl Uniforms {
-    pub fn build_from_3dtileset(mat64: Matrix4<f64>) -> Self {
+    pub fn build_from_gltf(mat64: Matrix4<f64>) -> Self {
         // Extract translation vector from the 4th column (elements [3][0..2])
         let translation = [mat64[3][0], mat64[3][1], mat64[3][2]];
 
