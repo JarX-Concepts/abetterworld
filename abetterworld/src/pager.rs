@@ -159,7 +159,7 @@ pub async fn content_load(
     load: &ContentInRange,
 ) -> Result<ContentLoaded, Box<dyn Error + Send + Sync>> {
     let (bytes, _content_type) = download_content_for_tile(client, key, load).await.unwrap();
-    Ok(process_content_bytes(&load.uri, &load.session, bytes).unwrap())
+    Ok(process_content_bytes(&load, &load.session, bytes).unwrap())
 }
 
 pub async fn content_decode(

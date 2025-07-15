@@ -2,17 +2,14 @@ use wgpu::util::DeviceExt;
 
 use crate::{
     content::{DebugVertex, Vertex},
-    matrix::Uniforms,
+    matrix::{uniform_size, Uniforms},
     UniformDataBlob,
 };
 
 pub struct RenderPipeline {
     pub pipeline: wgpu::RenderPipeline,
-    pub camera_bind_group: wgpu::BindGroup,
-    pub camera_uniform_buffer: wgpu::Buffer,
-    pub camera_bind_group_layout: wgpu::BindGroupLayout,
     pub transforms: UniformDataBlob,
-    pub texture_bind_group_layout: wgpu::BindGroupLayout,
+    pub texture_bind_group_layout: Option<wgpu::BindGroupLayout>,
 }
 
 pub fn build_pipeline(
@@ -44,21 +41,7 @@ pub fn build_pipeline(
 
     let max_objects = 600;
     let alignment = device.limits().min_uniform_buffer_offset_alignment as usize;
-
-    log::info!(
-        "Uniform buffer alignment: {}, size: {}, max objects: {}",
-        alignment,
-        std::mem::size_of::<Uniforms>(),
-        max_objects
-    );
-
-    let uniform_size = std::mem::size_of::<Uniforms>();
-
-    fn align_to(value: usize, alignment: usize) -> usize {
-        (value + alignment - 1) / alignment * alignment
-    }
-    let aligned_uniform_size = align_to(uniform_size, alignment);
-
+    let aligned_uniform_size = uniform_size(alignment);
     let buffer_size = aligned_uniform_size * max_objects;
 
     let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -99,6 +82,7 @@ pub fn build_pipeline(
         }],
     });
 
+    /*
     // Size of one matrix
     let camera_uniform_size = std::mem::size_of::<Uniforms>() as wgpu::BufferAddress;
 
@@ -133,15 +117,12 @@ pub fn build_pipeline(
             resource: camera_uniform_buffer.as_entire_binding(),
         }],
     });
+    */
 
     // Create pipeline layout.
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("Render Pipeline Layout"),
-        bind_group_layouts: &[
-            &camera_bind_group_layout,
-            &uniform_bind_group_layout,
-            &texture_bind_group_layout,
-        ],
+        bind_group_layouts: &[&uniform_bind_group_layout, &texture_bind_group_layout],
         push_constant_ranges: &[],
     });
 
@@ -200,10 +181,7 @@ pub fn build_pipeline(
 
     RenderPipeline {
         pipeline,
-        camera_bind_group,
-        camera_uniform_buffer,
-        camera_bind_group_layout,
-        texture_bind_group_layout,
+        texture_bind_group_layout: Some(texture_bind_group_layout),
         transforms: UniformDataBlob {
             data: buffer_data,
             size: buffer_size,
@@ -252,11 +230,45 @@ pub fn build_depth_buffer(
 pub fn build_debug_pipeline(
     device: &wgpu::Device,
     config: &wgpu::SurfaceConfiguration,
-    camera_bind_group_layout: &wgpu::BindGroupLayout,
-) -> wgpu::RenderPipeline {
+) -> RenderPipeline {
     let debug_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("Sphere Shader"),
         source: wgpu::ShaderSource::Wgsl(include_str!("debug_shader.wgsl").into()),
+    });
+
+    // Size of one matrix
+    let camera_uniform_size = std::mem::size_of::<Uniforms>() as wgpu::BufferAddress;
+
+    // Create uniform buffer for camera VP matrix
+    let camera_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("Camera Uniform Buffer"),
+        size: camera_uniform_size,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
+    let camera_bind_group_layout =
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Camera Bind Group Layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: Some(std::num::NonZeroU64::new(camera_uniform_size).unwrap()),
+                },
+                count: None,
+            }],
+        });
+
+    let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("Camera Bind Group"),
+        layout: &camera_bind_group_layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: camera_uniform_buffer.as_entire_binding(),
+        }],
     });
 
     let debug_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -310,7 +322,21 @@ pub fn build_debug_pipeline(
         multiview: None,
     });
 
-    debug_pipeline
+    let alignment = device.limits().min_uniform_buffer_offset_alignment as usize;
+    let aligned_uniform_size = uniform_size(alignment);
+
+    RenderPipeline {
+        pipeline: debug_pipeline,
+        texture_bind_group_layout: None,
+        transforms: UniformDataBlob {
+            data: vec![0u8; aligned_uniform_size],
+            size: aligned_uniform_size * 1,
+            aligned_uniform_size: aligned_uniform_size,
+            max_objects: 1,
+            uniform_buffer: camera_uniform_buffer,
+            uniform_bind_group: camera_bind_group,
+        },
+    }
 }
 
 pub struct FrustumRender {

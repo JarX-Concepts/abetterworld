@@ -1,8 +1,7 @@
 use crate::content::{Material, Node, Texture, TextureResource};
 use crate::decode::{decode, OwnedDecodedMesh};
-use crate::matrix::Uniforms;
 use byteorder::{LittleEndian, ReadBytesExt};
-use cgmath::{Matrix4, One, Quaternion, Vector3, Vector4};
+use cgmath::{Deg, Matrix4, One, Quaternion, Vector3, Vector4};
 use image::GenericImageView;
 use log::{debug, error};
 use serde_json::Value;
@@ -319,6 +318,8 @@ pub fn build_materials(json: &Value) -> Result<Vec<Material>, std::io::Error> {
 
 pub fn build_nodes(json: &Value) -> Result<Vec<Node>, std::io::Error> {
     let mut nodes = Vec::new();
+    let y_up_to_z_up = Matrix4::from_angle_x(Deg(-90.0));
+    let rotate_around_z = Matrix4::from_angle_y(Deg(180.0));
 
     if let Some(nodes_json) = json.get("nodes").and_then(|v| v.as_array()) {
         for node_json in nodes_json {
@@ -378,8 +379,8 @@ pub fn build_nodes(json: &Value) -> Result<Vec<Node>, std::io::Error> {
 
                     let t = Matrix4::from_translation(Vector3::new(
                         translation[0],
-                        -translation[2],
                         translation[1],
+                        translation[2],
                     ));
                     let r = Matrix4::from(Quaternion::new(
                         rotation[3],
@@ -405,8 +406,9 @@ pub fn build_nodes(json: &Value) -> Result<Vec<Node>, std::io::Error> {
                 vec![]
             };
 
+            let matrix = rotate_around_z * y_up_to_z_up * matrix;
             nodes.push(Node {
-                matrix: Uniforms::build_from_gltf(matrix),
+                transform: matrix,
                 mesh_indices,
             });
         }

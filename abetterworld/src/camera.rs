@@ -1,10 +1,15 @@
 use bytemuck::{Pod, Zeroable};
 use cgmath::{
-    Deg, EuclideanSpace, InnerSpace, Matrix4, Point3, Quaternion, Rotation, Rotation3,
+    Deg, EuclideanSpace, InnerSpace, Matrix, Matrix4, Point3, Quaternion, Rotation, Rotation3,
     SquareMatrix, Vector2, Vector3, Vector4, Zero,
 };
 
-use crate::{coord_utils::geodetic_to_ecef_z_up, matrix::Uniforms, tiles::BoundingVolume};
+use crate::{
+    camera,
+    coord_utils::geodetic_to_ecef_z_up,
+    matrix::{decompose_matrix64_to_uniform, Uniforms},
+    tiles::{BoundingVolume, OrientedBoundingBox},
+};
 
 const EARTH_RADIUS_M: f64 = 6_371_000.0;
 
@@ -36,19 +41,19 @@ impl Camera {
         target: Point3<f64>,
         up: Vector3<f64>,
     ) -> Self {
-        let mut cam = Camera {
+        let cam = Camera {
             fovy,
             aspect,
             eye,
             target,
             up: up.normalize(),
-            uniform: Uniforms::from_eye_target(Matrix4::identity(), eye, target, up), // dummy
+            uniform: Uniforms::default(),
             planes: [(Vector4::zero(), Vector3::zero(), 0.0); 6],
-            cam_world: Vector3::zero(),
+            cam_world: eye.to_vec(),
             near: 0.0,
             far: 0.0,
         };
-        cam.update(None);
+
         cam
     }
 
@@ -95,12 +100,13 @@ impl Camera {
     }
 
     fn extract_frustum_planes(mat: &Matrix4<f64>) -> [(Vector4<f64>, Vector3<f64>, f64); 6] {
-        let m = mat;
+        let m = mat.transpose();
+
         let rows = [
-            m.x, // row 0
-            m.y, // row 1
-            m.z, // row 2
-            m.w, // row 3
+            m.row(0).to_owned(),
+            m.row(1).to_owned(),
+            m.row(2).to_owned(),
+            m.row(3).to_owned(),
         ];
 
         let mut planes = [(Vector4::zero(), Vector3::zero(), 0.0); 6];
@@ -120,9 +126,9 @@ impl Camera {
 
         // Normalize planes and extract (normal, d)
         for plane in &mut planes {
-            let n = Vector3::new(plane.0.x, plane.0.y, plane.0.z);
-            let len = n.magnitude();
-            plane.1 = n / len;
+            let normal = Vector3::new(plane.0.x, plane.0.y, plane.0.z);
+            let len = normal.magnitude();
+            plane.1 = normal / len;
             plane.2 = plane.0.w / len;
         }
 
@@ -130,23 +136,33 @@ impl Camera {
     }
 
     /// internal: recompute cam_world and UBO
-    pub fn update(&mut self, far: Option<f64>) {
-        // recompute world‐space camera position
-        let view = Matrix4::look_at_rh(self.eye, self.target, self.up);
-        let view_inv = view.invert().expect("view must invert");
-        self.cam_world = view_inv.w.truncate();
-
+    pub fn update(&mut self, far: Option<f64>) -> Matrix4<f64> {
         // set near/far as before
+        self.cam_world = self.eye.to_vec();
         let d = self.cam_world.magnitude();
         self.near = (d - (EARTH_RADIUS_M * 2.0)).max(1.0);
         self.far = far.unwrap_or(d);
+
         let proj64 = cgmath::perspective(self.fovy, self.aspect, self.near, self.far);
+        let model_view_mat = Matrix4::look_at_rh(self.eye, self.target, self.up);
+        let proj_view = proj64 * model_view_mat;
+        self.planes = Self::extract_frustum_planes(&proj_view);
+        self.uniform = decompose_matrix64_to_uniform(&proj_view);
 
-        // rebuild the split-offset UBO
-        self.uniform = Uniforms::from_eye_target(proj64, self.eye, self.target, self.up);
+        /*         println!("Camera world position: {:?}", self.cam_world);
+        println!("Camera eye position: {:?}", self.eye);
+        println!("Camera target position: {:?}", self.target);
+        println!("Camera up vector: {:?}", self.up);
+        println!("Camera ProjView Matrix: {:?}", proj_view);
+        println!("Camera aspect ratio: {}", self.aspect);
+        println!("Camera field of view (fovy): {:?}", self.fovy);
+        println!("Camera near plane: {}", self.near);
+        println!("Camera far plane: {}", self.far);
+        println!("Camera planes: {:?}", self.planes);
 
-        let mat_f64 = Matrix4::from(self.uniform.mat).cast::<f64>().unwrap();
-        self.planes = Self::extract_frustum_planes(&mat_f64);
+        std::process::exit(0); */
+
+        return proj_view;
     }
 
     /// expose the latest UBO
@@ -154,38 +170,53 @@ impl Camera {
         self.uniform
     }
 
+    pub fn print_frustum_planes(&self) {
+        println!("Frustum planes:");
+        let labels = ["Left", "Right", "Bottom", "Top", "Near", "Far"];
+        for (i, plane) in self.planes.iter().enumerate() {
+            println!(
+                "Plane {} ({}): offset= {:?}, normal = {:?}, d = {:?}",
+                i, labels[i], plane.0, plane.1, plane.2,
+            );
+        }
+    }
+
     pub fn is_bounding_volume_visible(&self, bv: &BoundingVolume) -> bool {
-        let offset_vec = Vector3::new(
-            self.uniform.offset[0] as f64,
-            self.uniform.offset[1] as f64,
-            self.uniform.offset[2] as f64,
-        );
-        let obb = bv.to_obb();
+        let aabb = bv.to_aabb();
 
-        // For each plane, do OBB vs. plane test
-        let center = Vector3::new(obb.center.x, obb.center.y, obb.center.z);
-        let half_axes: [Vector3<f64>; 3] = [
-            Vector3::new(obb.half_axes[0].x, obb.half_axes[0].y, obb.half_axes[0].z),
-            Vector3::new(obb.half_axes[1].x, obb.half_axes[1].y, obb.half_axes[1].z),
-            Vector3::new(obb.half_axes[2].x, obb.half_axes[2].y, obb.half_axes[2].z),
-        ];
+        // Apply camera offset to the whole box
+        //aabb.min -= offset;
+        //aabb.max -= offset;Í
 
-        for &(_eqn, n, d) in &self.planes {
-            // Project box center onto plane normal
-            let dist = n.dot(center) + d;
+        for &(_, normal, d) in &self.planes {
+            // p-vertex: most positive vertex in direction of normal
+            let p = Vector3::new(
+                if normal.x >= 0.0 {
+                    aabb.max.x
+                } else {
+                    aabb.min.x
+                },
+                if normal.y >= 0.0 {
+                    aabb.max.y
+                } else {
+                    aabb.min.y
+                },
+                if normal.z >= 0.0 {
+                    aabb.max.z
+                } else {
+                    aabb.min.z
+                },
+            );
 
-            // Compute effective radius (extents) along plane normal
-            let r = half_axes[0].magnitude() * n.dot(half_axes[0].normalize()).abs()
-                + half_axes[1].magnitude() * n.dot(half_axes[1].normalize()).abs()
-                + half_axes[2].magnitude() * n.dot(half_axes[2].normalize()).abs();
-
-            if dist + r < 0.0 {
-                // Completely outside this plane, so culled
+            if normal.dot(p) + d < 0.0 {
+                //println!("False");
                 return false;
             }
         }
 
-        // Passed all planes
+        println!("Bounding Volume: {:?}", aabb);
+        println!("True");
+
         true
     }
 
@@ -274,7 +305,7 @@ pub fn init_camera() -> (Camera, Camera) {
     let radius = 6_378_137.0;
     let distance: f64 = radius * 2.0;
 
-    let eye = Point3::new(0.0, distance, 0.0);
+    let eye = Point3::new(distance, 100.0, 100.0);
     let target = Point3::new(0.0, 0.0, 0.0);
     let up = Vector3::unit_z();
     let camera = Camera::new(Deg(45.0), 1.0, eye, target, up);
