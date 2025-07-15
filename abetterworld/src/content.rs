@@ -1,14 +1,18 @@
-use crate::{decode::OwnedDecodedMesh, matrix::Uniforms};
+use cgmath::Matrix4;
+
+use crate::{decode::OwnedDecodedMesh, matrix::Uniforms, tiles::BoundingVolume};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ContentInRange {
     pub uri: String,
     pub session: String,
+    pub volume: BoundingVolume,
 }
 
 #[derive(Clone)]
 pub struct ContentLoaded {
     pub uri: String,
+    pub volume: BoundingVolume,
     pub nodes: Vec<Node>,
     pub meshes: Vec<OwnedDecodedMesh>,
     pub textures: Vec<Texture>,
@@ -21,6 +25,7 @@ unsafe impl Sync for ContentLoaded {}
 
 pub struct ContentRender {
     pub uri: String,
+    pub volume: BoundingVolume,
     pub nodes: Vec<Node>,
     pub meshes: Vec<Mesh>,
     pub textures: Vec<TextureResource>,
@@ -44,7 +49,7 @@ pub struct Texture {
 
 #[derive(Clone)]
 pub struct Node {
-    pub matrix: Uniforms,
+    pub transform: Matrix4<f64>,
     pub mesh_indices: Vec<usize>,
 }
 

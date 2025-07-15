@@ -1,4 +1,5 @@
 {
   "rust-analyzer.debug.buildBeforeRestart": false,
-  "rust-analyzer.cargo.target": "wasm32-unknown-unknown"
+  "rust-analyzer.cargo.target": "wasm32-unknown-unknown",
+  "editor.inlayHints.enabled": "offUnlessPressed"
 }

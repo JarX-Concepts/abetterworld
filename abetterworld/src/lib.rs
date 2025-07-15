@@ -10,6 +10,7 @@ use camera::Camera;
 mod cache;
 use cache::init_tileset_cache;
 mod content;
+use cgmath::{Matrix4, SquareMatrix, Vector3};
 use decode::init;
 use pager::start_background_tasks;
 use wgpu::util::DeviceExt;
@@ -40,7 +41,7 @@ pub struct UniformDataBlob {
 
 pub struct SphereRenderer {
     pipeline: RenderPipeline,
-    debug_pipeline: wgpu::RenderPipeline,
+    debug_pipeline: RenderPipeline,
     camera: Arc<RwLock<Camera>>,
     debug_camera: Arc<RwLock<Camera>>,
     depth_view: wgpu::TextureView,
@@ -101,8 +102,7 @@ impl SphereRenderer {
         let (camera, debug_camera) = init_camera();
 
         let pipeline = build_pipeline(device, config);
-        let debug_pipeline =
-            build_debug_pipeline(device, config, &pipeline.camera_bind_group_layout);
+        let debug_pipeline = build_debug_pipeline(device, config);
         let depth = build_depth_buffer(device, config);
         let frustum_render = build_frustum_render(device);
 
@@ -110,8 +110,8 @@ impl SphereRenderer {
         let camera_source = Arc::new(RwLock::new(camera));
         let debug_camera_source = Arc::new(RwLock::new(debug_camera));
 
-        init();
-        start_background_tasks(tile_content.clone(), debug_camera_source.clone()).await;
+        let _ = init();
+        let _ = start_background_tasks(tile_content.clone(), debug_camera_source.clone()).await;
 
         Self {
             pipeline,
@@ -135,14 +135,6 @@ impl SphereRenderer {
         queue: &wgpu::Queue,
         device: &wgpu::Device,
     ) {
-        let camera_vp = self.camera.read().unwrap().uniform();
-        queue.write_buffer(
-            &self.pipeline.camera_uniform_buffer,
-            0,
-            bytemuck::bytes_of(&camera_vp),
-        );
-        render_pass.set_bind_group(0, &self.pipeline.camera_bind_group, &[]);
-
         {
             let latest_render = self.content.latest_render.read().unwrap();
             if !latest_render.is_empty() {
@@ -155,10 +147,21 @@ impl SphereRenderer {
                     &self.pipeline.transforms.data,
                 );
 
+                let debug_cam_read = self.debug_camera.read().unwrap();
+
+                println!("Start Frame Render");
+                debug_cam_read.print_frustum_planes();
                 for tile in latest_render.iter() {
+                    let render_it = true; // debug_cam_read.is_bounding_volume_visible(&tile.volume);
+
+                    if !render_it {
+                        counter += tile.nodes.len() as u32;
+                        continue;
+                    }
+
                     for (i, node) in tile.nodes.iter().enumerate() {
                         render_pass.set_bind_group(
-                            1,
+                            0,
                             &self.pipeline.transforms.uniform_bind_group,
                             &[counter * self.pipeline.transforms.aligned_uniform_size as u32],
                         );
@@ -185,7 +188,7 @@ impl SphereRenderer {
                                     let texture_resource = &tile.textures[texture_index];
                                     // You must have created the bind_group for this texture previously!
                                     render_pass.set_bind_group(
-                                        2,
+                                        1,
                                         &texture_resource.bind_group,
                                         &[],
                                     );
@@ -198,6 +201,8 @@ impl SphereRenderer {
                         }
                     }
                 }
+                println!("End Frame Render");
+                //std::process::exit(0);
             }
         }
 
@@ -222,7 +227,16 @@ impl SphereRenderer {
             bytemuck::cast_slice(&new_frustum_vertices),
         );
 
-        render_pass.set_pipeline(&self.debug_pipeline);
+        render_pass.set_pipeline(&self.debug_pipeline.pipeline);
+
+        let camera_vp = self.camera.read().unwrap().uniform();
+        queue.write_buffer(
+            &self.debug_pipeline.transforms.uniform_buffer,
+            0,
+            bytemuck::bytes_of(&camera_vp),
+        );
+        render_pass.set_bind_group(0, &self.debug_pipeline.transforms.uniform_bind_group, &[]);
+
         render_pass.set_vertex_buffer(0, self.frustum_render.vertex_buffer.slice(..));
         render_pass.set_index_buffer(
             self.frustum_render.index_buffer.slice(..),
@@ -238,11 +252,17 @@ impl SphereRenderer {
     ) -> Result<(), Box<dyn Error>> {
         //self.debug_camera.yaw(Deg(2.0));
         //self.camera.zoom(5000.0);
-        self.camera.write().unwrap().update(None);
+        let projected_cam = if let Ok(mut camera) = self.camera.write() {
+            camera.update(None)
+        } else {
+            Matrix4::identity()
+        };
+
         self.debug_camera.write().unwrap().update(Some(20000.0));
 
-        self.content
-            .update_render(device, queue, &self.pipeline.texture_bind_group_layout)?;
+        if let Some(layout) = self.pipeline.texture_bind_group_layout.as_ref() {
+            self.content.update_render(device, queue, layout)?;
+        }
 
         let mut counter = 0;
 
@@ -250,7 +270,21 @@ impl SphereRenderer {
 
         for tile in latest_render.iter() {
             for (i, node) in tile.nodes.iter().enumerate() {
-                let matrix_bytes = bytemuck::bytes_of(&node.matrix);
+                let projected = projected_cam * node.transform;
+                let uniformed = matrix::decompose_matrix64_to_uniform(&projected);
+                let matrix_bytes = bytemuck::bytes_of(&uniformed);
+
+                /*                 let radius = 6_378_137.0;
+                let distance: f64 = radius * 2.0;
+                let eye = Vector3::new(0.0, distance, 0.0);
+                let projected_eye = projected_cam * Matrix4::from_translation(eye);
+
+                println!("projected_eye: {:?}", projected_eye); */
+
+                println!(
+                    "Node {}: Transform: {:?}, Cam: {:?}, Projected: {:?}, Unformed: {:?}",
+                    i, node.transform, projected_cam, projected, uniformed
+                );
 
                 let start = counter * self.pipeline.transforms.aligned_uniform_size;
                 let end = start + matrix_bytes.len();

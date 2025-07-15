@@ -1,5 +1,5 @@
 use bytemuck::{Pod, Zeroable};
-use cgmath::{EuclideanSpace, Matrix, Matrix3, Matrix4, Point3, SquareMatrix, Vector3, Vector4};
+use cgmath::{Matrix4, SquareMatrix, Vector3};
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
@@ -10,134 +10,83 @@ pub struct Uniforms {
 }
 
 impl Uniforms {
-    pub fn build_from_gltf(mat64: Matrix4<f64>) -> Self {
-        // Extract translation vector from the 4th column (elements [3][0..2])
-        let translation = [mat64[3][0], mat64[3][1], mat64[3][2]];
-
-        // Calculate integer offset by flooring each component
-        let offset_i64 = [
-            translation[0].floor(),
-            translation[1].floor(),
-            translation[2].floor(),
-        ];
-
-        // Create fractional translation remainder by subtracting offset
-        let fractional_translation = [
-            translation[0] - offset_i64[0],
-            translation[1] - offset_i64[1],
-            translation[2] - offset_i64[2],
-        ];
-
-        // Create a new f32 array by casting each element
-        let mut mat_f32 = [[0.0f32; 4]; 4];
-
-        mat_f32[3][0] = fractional_translation[0] as f32;
-        mat_f32[3][1] = fractional_translation[1] as f32;
-        mat_f32[3][2] = fractional_translation[2] as f32;
-        mat_f32[3][3] = mat64[3][3] as f32;
-
-        for row in 0..3 {
-            for col in 0..4 {
-                mat_f32[row][col] = mat64[row][col] as f32;
-            }
-        }
-
-        // Convert integer offset to f32
-        let offset_f32 = [
-            offset_i64[0] as f32,
-            offset_i64[1] as f32,
-            offset_i64[2] as f32,
-        ];
-
+    // default constructor for convenience
+    pub fn default() -> Self {
         Self {
-            mat: mat_f32,
-            offset: offset_f32,
+            mat: [[0.0; 4]; 4],
+            offset: [0.0; 3],
             _padding: 0.0,
         }
-    }
-
-    /// Build a split-offset UBO from eye/target/up + proj.
-    pub fn from_eye_target(
-        proj: Matrix4<f64>,
-        eye: Point3<f64>,
-        target: Point3<f64>,
-        up: Vector3<f64>,
-    ) -> Self {
-        // 1) Reconstruct full view and invert to get world-space camera pos:
-        let view = Matrix4::look_at_rh(eye, target, up);
-        let view_inv = view.invert().expect("view must be invertible");
-        let cam_world: Vector3<f64> = view_inv.w.truncate();
-
-        // 2) Compute world offset + fractional part:
-        let world_offset = cam_world.map(f64::floor);
-        let frac_world = cam_world - world_offset;
-
-        // 3) Rebuild a fractional view by shifting eye & target down by world_offset:
-        let eye_frac = Point3::from_vec(frac_world);
-        let target_frac = Point3::new(
-            target.x - world_offset.x,
-            target.y - world_offset.y,
-            target.z - world_offset.z,
-        );
-        let view_frac = Matrix4::look_at_rh(eye_frac, target_frac, up);
-
-        // 4) Combine with projection in f32:
-        let proj32 = proj.cast::<f32>().unwrap();
-        let view32 = view_frac.cast::<f32>().unwrap();
-        let vp32 = proj32 * view32;
-
-        Uniforms {
-            mat: vp32.into(),
-            offset: [
-                world_offset.x as f32,
-                world_offset.y as f32,
-                world_offset.z as f32,
-            ],
-            _padding: 0.0,
-        }
-    }
-
-    pub fn project_point_test(&self, point: Vector3<f32>) {
-        let offset_point =
-            (point - Vector3::new(self.offset[0], self.offset[1], self.offset[2])).extend(1.0);
-        let projected_point_f32 = Matrix4::from(self.mat) * offset_point;
-        println!("projected_point_f32: {:?}", projected_point_f32);
     }
 }
 
-/// Converts a 4x4 ECEF transformation matrix from Z-up to Y-up.
-pub fn z_up_to_y_up(mat: Matrix4<f64>) -> Matrix4<f64> {
-    let mut rows = [
-        mat.row(0).clone(),
-        mat.row(1).clone(),
-        mat.row(2).clone(),
-        mat.row(3).clone(),
+pub fn uniform_size(min_uniform_buffer_offset_alignment: usize) -> usize {
+    let uniform_size = std::mem::size_of::<Uniforms>();
+
+    fn align_to(value: usize, alignment: usize) -> usize {
+        (value + alignment - 1) / alignment * alignment
+    }
+    align_to(uniform_size, min_uniform_buffer_offset_alignment)
+}
+
+/// Convert f64 Matrix4 to Uniforms (offset + f32 transform matrix)
+pub fn decompose_matrix64_to_uniform(mat: &Matrix4<f64>) -> Uniforms {
+    let translation = Vector3::new(mat.w.x, mat.w.y, mat.w.z);
+    //let offset = translation.map(|v| v as f32);
+    let offset = Vector3::new(0.0, 0.0, 0.0);
+
+    // Subtract the coarse offset from the translation
+    let offset_as_f64 = Vector3::new(offset.x as f64, offset.y as f64, offset.z as f64);
+    let remainder_translation = translation - offset_as_f64;
+
+    // Convert the whole matrix to f32
+    let mat32 = [
+        [
+            mat.x.x as f32,
+            mat.x.y as f32,
+            mat.x.z as f32,
+            mat.x.w as f32,
+        ],
+        [
+            mat.y.x as f32,
+            mat.y.y as f32,
+            mat.y.z as f32,
+            mat.y.w as f32,
+        ],
+        [
+            mat.z.x as f32,
+            mat.z.y as f32,
+            mat.z.z as f32,
+            mat.z.w as f32,
+        ],
+        [
+            mat.w.x as f32,
+            mat.w.y as f32,
+            mat.w.z as f32,
+            mat.w.w as f32,
+        ],
     ];
 
-    // Swap Y and Z axes (row-wise): row 1 ↔ row 2
-    rows.swap(1, 2);
+    Uniforms {
+        mat: mat32,
+        offset: [offset.x, offset.y, offset.z],
+        _padding: 0.0,
+    }
+}
 
-    // Also swap translation components (4th column)
-    let mut translation = Vector4::new(rows[0].w, rows[1].w, rows[2].w, rows[3].w);
-    translation = Vector4::new(translation.x, translation.z, translation.y, translation.w);
+/// Convert Uniforms back to Matrix4<f64>
+pub fn recompose_uniform_to_matrix64(uniforms: &Uniforms) -> Matrix4<f64> {
+    let mut mat64 = Matrix4::<f64>::identity();
+    for i in 0..4 {
+        for j in 0..4 {
+            mat64[i][j] = uniforms.mat[i][j] as f64;
+        }
+    }
 
-    // Build new matrix
-    Matrix4::new(
-        rows[0].x,
-        rows[0].y,
-        rows[0].z,
-        translation.x,
-        rows[1].x,
-        rows[1].y,
-        rows[1].z,
-        translation.y,
-        rows[2].x,
-        rows[2].y,
-        rows[2].z,
-        translation.z,
-        rows[3].x,
-        rows[3].y,
-        rows[3].z,
-        translation.w,
-    )
+    // Recompose the high-precision offset into translation (w row)
+    mat64.w.x += uniforms.offset[0] as f64;
+    mat64.w.y += uniforms.offset[1] as f64;
+    mat64.w.z += uniforms.offset[2] as f64;
+
+    mat64
 }

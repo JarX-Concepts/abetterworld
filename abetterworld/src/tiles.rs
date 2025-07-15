@@ -59,20 +59,25 @@ struct GltfTileset {
     root: GltfTile,
 }
 
-#[derive(Debug, Deserialize, Clone, Copy)]
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq)]
 pub struct BoundingVolume {
     #[serde(rename = "box")]
     bounding_box: [f64; 12],
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BoundingBox {
+    pub min: Vector3<f64>,
+    pub max: Vector3<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct OrientedBoundingBox {
     pub center: Vector3<f64>,
     pub half_axes: [Vector3<f64>; 3], // U, V, W
 }
 
 impl BoundingVolume {
-    /// Converts the bounding volume from Z-up to Y-up, and applies a position offset.
     pub fn to_obb(&self) -> OrientedBoundingBox {
         let b = &self.bounding_box;
 
@@ -84,6 +89,28 @@ impl BoundingVolume {
         ];
 
         OrientedBoundingBox { center, half_axes }
+    }
+
+    /// Convert this bounding volume to a conservative AABB
+    pub fn to_aabb(&self) -> BoundingBox {
+        let b = &self.bounding_box;
+
+        let center = Vector3::new(b[0], b[1], b[2]);
+        let u = Vector3::new(b[3], b[4], b[5]);
+        let v = Vector3::new(b[6], b[7], b[8]);
+        let w = Vector3::new(b[9], b[10], b[11]);
+
+        // AABB extents from absolute values of axes
+        let extent = Vector3::new(
+            u.x.abs() + v.x.abs() + w.x.abs(),
+            u.y.abs() + v.y.abs() + w.y.abs(),
+            u.z.abs() + v.z.abs() + w.z.abs(),
+        );
+
+        BoundingBox {
+            min: center - extent,
+            max: center + extent,
+        }
     }
 }
 
@@ -240,6 +267,7 @@ where
                 let result = ContentInRange {
                     uri: tile_url,
                     session: session.clone(),
+                    volume: tile_info.bounding_volume.clone(),
                 };
                 on_tile(&result);
                 tiles.push(result);
@@ -425,14 +453,14 @@ pub async fn download_content_for_tile(
 }
 
 pub fn process_content_bytes(
-    uri: &str,
+    load: &ContentInRange,
     session: &str,
     bytes: Vec<u8>,
 ) -> Result<ContentLoaded, Box<dyn Error>> {
     let (gltf_json, gltf_bin) = parse_glb(&bytes).map_err(|e| {
         log::error!(
             "Failed to parse GLB: URI: {}, Session: {}, Error: {}",
-            uri,
+            load.uri,
             session,
             e
         );
@@ -442,7 +470,7 @@ pub fn process_content_bytes(
     let meshes = build_meshes(&gltf_json, &gltf_bin).map_err(|e| {
         log::error!(
             "Failed to build meshes: URI: {}, Session: {}, Error: {}",
-            uri,
+            load.uri,
             session,
             e
         );
@@ -452,7 +480,7 @@ pub fn process_content_bytes(
     let textures = parse_textures_from_gltf(&gltf_json, &gltf_bin).map_err(|e| {
         log::error!(
             "Failed to parse textures: URI: {}, Session: {}, Error: {}",
-            uri,
+            load.uri,
             session,
             e
         );
@@ -462,7 +490,7 @@ pub fn process_content_bytes(
     let materials = build_materials(&gltf_json).map_err(|e| {
         log::error!(
             "Failed to build materials: URI: {}, Session: {}, Error: {}",
-            uri,
+            load.uri,
             session,
             e
         );
@@ -472,7 +500,7 @@ pub fn process_content_bytes(
     let nodes = build_nodes(&gltf_json).map_err(|e| {
         log::error!(
             "Failed to build nodes: URI: {}, Session: {}, Error: {}",
-            uri,
+            load.uri,
             session,
             e
         );
@@ -480,7 +508,8 @@ pub fn process_content_bytes(
     })?;
 
     Ok(ContentLoaded {
-        uri: uri.to_string(),
+        uri: load.uri.to_string(),
+        volume: load.volume.clone(),
         nodes,
         meshes,
         textures,
@@ -599,6 +628,7 @@ pub async fn content_load(
 
     Ok(ContentLoaded {
         uri: load.uri.clone(),
+        volume: load.volume.clone(),
         nodes,
         meshes,
         textures,
@@ -639,6 +669,7 @@ pub fn content_render(
 
     Ok(ContentRender {
         uri: content.uri.clone(),
+        volume: content.volume.clone(),
         nodes: content.nodes.clone(),
         meshes: return_meshes,
         textures: textures,

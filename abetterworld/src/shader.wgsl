@@ -4,18 +4,14 @@ struct Uniform {
     padding: f32,            // padding (4 bytes) to align to 16 bytes
 };
 
-// Camera uniform buffer (view-projection matrix)
-@group(0) @binding(0)
-var<uniform> camera: Uniform;
-
 // Node (model) uniform buffer (model matrix)
-@group(1) @binding(0)
+@group(0) @binding(0)
 var<uniform> node: Uniform;
 
 // Texture and sampler remain in group 2
-@group(2) @binding(0)
+@group(1) @binding(0)
 var my_texture: texture_2d<f32>;
-@group(2) @binding(1)
+@group(1) @binding(1)
 var my_sampler: sampler;
 
 struct VertexInput {
@@ -38,20 +34,13 @@ struct VertexOutput {
 fn vs_main(input: VertexInput) -> VertexOutput {
     var output: VertexOutput;
 
-    let pos_z_up = vec3<f32>(
-        input.position.x,
-        -input.position.z,
-        input.position.y,
-    );
+    // Apply per-object offset to the vertex position
+    let local_position = input.position + node.offset;
 
-    // First apply both offsets to get relative positions
-    let pos_world = pos_z_up - (camera.offset - node.offset);
-    
-    // Apply node transform matrix
-    let pos_node = node.mat * vec4<f32>(pos_world, 1.0);
-    
-    // Finally transform by camera matrix to get clip space position
-    output.position = camera.mat * pos_node;
+    // Transform by the full model-view matrix to get clip-space position
+    let world_position = node.mat * vec4<f32>(input.position, 1.0);
+
+    output.position = world_position;
 
     output.color = input.color;
     output.normal = input.normal;
