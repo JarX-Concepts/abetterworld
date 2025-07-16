@@ -38,7 +38,7 @@ fn vs_main(input: VertexInput) -> VertexOutput {
     let local_position = input.position + node.offset;
 
     // Transform by the full model-view matrix to get clip-space position
-    let world_position = node.mat * vec4<f32>(input.position, 1.0);
+    let world_position = node.mat * vec4<f32>(local_position, 1.0);
 
     output.position = world_position;
 

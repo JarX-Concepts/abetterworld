@@ -310,7 +310,7 @@ pub fn build_debug_pipeline(
         depth_stencil: Some(wgpu::DepthStencilState {
             format: wgpu::TextureFormat::Depth24Plus, // match your texture
             depth_write_enabled: false,               // write to the depth buffer
-            depth_compare: wgpu::CompareFunction::Less, // typical for 3D
+            depth_compare: wgpu::CompareFunction::LessEqual, // typical for 3D
             stencil: wgpu::StencilState::default(),   // usually default
             bias: wgpu::DepthBiasState::default(),    // optional slope‐bias
         }),

@@ -149,8 +149,6 @@ impl SphereRenderer {
 
                 let debug_cam_read = self.debug_camera.read().unwrap();
 
-                println!("Start Frame Render");
-                debug_cam_read.print_frustum_planes();
                 for tile in latest_render.iter() {
                     let render_it = true; // debug_cam_read.is_bounding_volume_visible(&tile.volume);
 
@@ -201,8 +199,6 @@ impl SphereRenderer {
                         }
                     }
                 }
-                println!("End Frame Render");
-                //std::process::exit(0);
             }
         }
 
@@ -215,6 +211,16 @@ impl SphereRenderer {
         queue: &wgpu::Queue,
         device: &wgpu::Device,
     ) {
+        let camera_vp = self.camera.read().unwrap().uniform();
+        queue.write_buffer(
+            &self.debug_pipeline.transforms.uniform_buffer,
+            0,
+            bytemuck::bytes_of(&camera_vp),
+        );
+
+        render_pass.set_bind_group(0, &self.debug_pipeline.transforms.uniform_bind_group, &[]);
+        render_pass.set_pipeline(&self.debug_pipeline.pipeline);
+
         let corners = self.debug_camera.read().unwrap().frustum_corners();
         let new_frustum_vertices: Vec<[f32; 3]> = corners
             .iter()
@@ -227,16 +233,7 @@ impl SphereRenderer {
             bytemuck::cast_slice(&new_frustum_vertices),
         );
 
-        render_pass.set_pipeline(&self.debug_pipeline.pipeline);
-
-        let camera_vp = self.camera.read().unwrap().uniform();
-        queue.write_buffer(
-            &self.debug_pipeline.transforms.uniform_buffer,
-            0,
-            bytemuck::bytes_of(&camera_vp),
-        );
-        render_pass.set_bind_group(0, &self.debug_pipeline.transforms.uniform_bind_group, &[]);
-
+        println!("Frustum vertices: {:?}", new_frustum_vertices);
         render_pass.set_vertex_buffer(0, self.frustum_render.vertex_buffer.slice(..));
         render_pass.set_index_buffer(
             self.frustum_render.index_buffer.slice(..),
@@ -281,10 +278,10 @@ impl SphereRenderer {
 
                 println!("projected_eye: {:?}", projected_eye); */
 
-                println!(
+                /*                 println!(
                     "Node {}: Transform: {:?}, Cam: {:?}, Projected: {:?}, Unformed: {:?}",
                     i, node.transform, projected_cam, projected, uniformed
-                );
+                ); */
 
                 let start = counter * self.pipeline.transforms.aligned_uniform_size;
                 let end = start + matrix_bytes.len();
