@@ -288,7 +288,7 @@ pub fn build_debug_pipeline(
         },
         fragment: Some(wgpu::FragmentState {
             module: &debug_shader,
-            entry_point: Some("main_fs"),
+            entry_point: Some("fs_main"),
             targets: &[Some(wgpu::ColorTargetState {
                 format: config.format,
                 blend: Some(wgpu::BlendState::ALPHA_BLENDING),
@@ -341,14 +341,15 @@ pub fn build_debug_pipeline(
 
 pub struct FrustumRender {
     pub vertex_buffer: wgpu::Buffer,
-    pub index_buffer: wgpu::Buffer,
+    pub volume_buffer: wgpu::Buffer,
+    pub frustum_buffer: wgpu::Buffer,
 }
 
 pub const MAX_VOLUMES: u64 = 512;
 pub const SIZE_OF_VOLUME: u64 = 8 * std::mem::size_of::<DebugVertex>() as u64;
 
 pub fn build_frustum_render(device: &wgpu::Device) -> FrustumRender {
-    /*     const FRUSTUM_TRI_INDICES: [u16; 36] = [
+    const FRUSTUM_TRI_INDICES: [u16; 36] = [
         // Near
         0, 1, 2, 2, 3, 0, // Far
         4, 5, 6, 6, 7, 4, // Left
@@ -356,9 +357,9 @@ pub fn build_frustum_render(device: &wgpu::Device) -> FrustumRender {
         1, 5, 6, 6, 2, 1, // Top
         0, 4, 5, 5, 1, 0, // Bottom
         3, 2, 6, 6, 7, 3,
-    ]; */
+    ];
 
-    const FRUSTUM_TRI_INDICES: [u16; 36] = [
+    const VOLUME_TRI_INDICES: [u16; 36] = [
         // Near face (0-3)
         0, 1, 2, 2, 3, 0, // Far face (4-7)
         4, 5, 6, 6, 7, 4, // Left face (0,3,7,4)
@@ -368,6 +369,7 @@ pub fn build_frustum_render(device: &wgpu::Device) -> FrustumRender {
         0, 4, 5, 5, 1, 0,
     ];
 
+    let volume_indices: Vec<u16> = VOLUME_TRI_INDICES.iter().flat_map(|&i| [i]).collect();
     let frustum_indices: Vec<u16> = FRUSTUM_TRI_INDICES.iter().flat_map(|&i| [i]).collect();
 
     let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -377,7 +379,13 @@ pub fn build_frustum_render(device: &wgpu::Device) -> FrustumRender {
         mapped_at_creation: false,
     });
 
-    let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+    let volume_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Volume Indices"),
+        contents: bytemuck::cast_slice(&volume_indices),
+        usage: wgpu::BufferUsages::INDEX,
+    });
+
+    let frustum_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Frustum Indices"),
         contents: bytemuck::cast_slice(&frustum_indices),
         usage: wgpu::BufferUsages::INDEX,
@@ -385,6 +393,7 @@ pub fn build_frustum_render(device: &wgpu::Device) -> FrustumRender {
 
     FrustumRender {
         vertex_buffer,
-        index_buffer,
+        volume_buffer,
+        frustum_buffer,
     }
 }

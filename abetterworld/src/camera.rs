@@ -102,7 +102,7 @@ impl Camera {
     }
 
     fn extract_frustum_planes(mat: &Matrix4<f64>) -> [(Vector4<f64>, Vector3<f64>, f64); 6] {
-        let m = mat.transpose();
+        let m = mat; //mat.transpose();
 
         let rows = [
             m.row(0).to_owned(),
@@ -133,6 +133,8 @@ impl Camera {
             plane.1 = normal / len;
             plane.2 = plane.0.w / len;
         }
+
+        //println!("Planes: {:?}", planes);
 
         planes
     }
@@ -302,10 +304,10 @@ pub fn init_camera() -> (Camera, Camera) {
     let up = Vector3::unit_z();
     let camera = Camera::new(Deg(45.0), 1.0, eye, target, up);
 
-    let debug_eye = geodetic_to_ecef_z_up(34.4208, -119.6982, 200.0);
+    let debug_eye = geodetic_to_ecef_z_up(34.4208, -119.6982, 2000.0);
     let debug_eye_pt: Point3<f64> = Point3::new(debug_eye.0, debug_eye.1, debug_eye.2);
     let mut debug_camera = Camera::new(Deg(45.0), 1.0, debug_eye_pt, target, up);
-    debug_camera.update(Some(20000.0));
+    debug_camera.update(Some(75000.0));
 
     (camera, debug_camera)
 }

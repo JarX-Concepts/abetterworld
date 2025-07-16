@@ -1,6 +1,6 @@
+use crate::{decode::OwnedDecodedMesh, tiles::BoundingVolume};
 use cgmath::Matrix4;
-
-use crate::{decode::OwnedDecodedMesh, matrix::Uniforms, tiles::BoundingVolume};
+use std::mem;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ContentInRange {
@@ -78,6 +78,7 @@ pub struct Tile {
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct DebugVertex {
     pub position: [f32; 3],
+    pub color: [f32; 4],
 }
 
 impl DebugVertex {
@@ -85,11 +86,19 @@ impl DebugVertex {
         wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<DebugVertex>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &[wgpu::VertexAttribute {
-                offset: 0,
-                shader_location: 0,
-                format: wgpu::VertexFormat::Float32x3,
-            }],
+            attributes: &[
+                wgpu::VertexAttribute {
+                    offset: 0,
+                    shader_location: 0,
+                    format: wgpu::VertexFormat::Float32x3,
+                },
+                // Colors
+                wgpu::VertexAttribute {
+                    offset: mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
+                    shader_location: 1,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+            ],
         }
     }
 }
@@ -106,7 +115,6 @@ pub struct Vertex {
 
 impl Vertex {
     pub fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
-        use std::mem;
         wgpu::VertexBufferLayout {
             array_stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,

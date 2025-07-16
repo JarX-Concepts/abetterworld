@@ -10,7 +10,7 @@ use camera::Camera;
 mod cache;
 use cache::init_tileset_cache;
 mod content;
-use cgmath::{Matrix4, SquareMatrix};
+use cgmath::{Deg, Matrix4, SquareMatrix};
 use decode::init;
 use pager::start_background_tasks;
 
@@ -150,7 +150,7 @@ impl SphereRenderer {
             let debug_cam_read = self.debug_camera.read().unwrap();
 
             for tile in latest_render.iter() {
-                let render_it = true; // debug_cam_read.is_bounding_volume_visible(&tile.volume);
+                let render_it = true; //debug_cam_read.is_bounding_volume_visible(&tile.volume);
 
                 if !render_it {
                     counter += tile.nodes.len() as u32;
@@ -196,8 +196,8 @@ impl SphereRenderer {
             }
         }
 
+        self.draw_debug_camera(render_pass, queue);
         self.draw_all_tile_volumes(render_pass, queue, latest_render);
-        //self.draw_debug_camera(render_pass, queue);
     }
 
     fn draw_all_tile_volumes(
@@ -216,12 +216,13 @@ impl SphereRenderer {
         render_pass.set_bind_group(0, &self.debug_pipeline.transforms.uniform_bind_group, &[]);
         render_pass.set_pipeline(&self.debug_pipeline.pipeline);
         render_pass.set_index_buffer(
-            self.frustum_render.index_buffer.slice(..),
+            self.frustum_render.volume_buffer.slice(..),
             wgpu::IndexFormat::Uint16,
         );
         render_pass.set_vertex_buffer(0, self.frustum_render.vertex_buffer.slice(..));
 
-        let mut volume_counter = 0;
+        // start past the debug camera
+        let mut volume_counter = 1;
         for _tile in latest_render.iter() {
             if volume_counter >= MAX_VOLUMES {
                 eprintln!("Hit maximum number of volumes");
@@ -233,7 +234,9 @@ impl SphereRenderer {
     }
 
     pub fn draw_debug_camera(&self, render_pass: &mut wgpu::RenderPass<'_>, queue: &wgpu::Queue) {
-        let camera_vp = self.camera.read().unwrap().uniform();
+        let mut camera_vp = self.camera.read().unwrap().uniform();
+        camera_vp.free_space = 0.5;
+
         queue.write_buffer(
             &self.debug_pipeline.transforms.uniform_buffer,
             0,
@@ -244,9 +247,12 @@ impl SphereRenderer {
         render_pass.set_pipeline(&self.debug_pipeline.pipeline);
 
         let corners = self.debug_camera.read().unwrap().frustum_corners();
-        let new_frustum_vertices: Vec<[f32; 3]> = corners
+        let new_frustum_vertices: Vec<DebugVertex> = corners
             .iter()
-            .map(|p| [p.x as f32, p.y as f32, p.z as f32])
+            .map(|p| DebugVertex {
+                position: [p.x as f32, p.y as f32, p.z as f32],
+                color: [1.0, 0.0, 0.0, 1.0],
+            })
             .collect();
 
         queue.write_buffer(
@@ -255,11 +261,9 @@ impl SphereRenderer {
             bytemuck::cast_slice(&new_frustum_vertices),
         );
 
-        println!("Debug Camera vertices: {:?}", new_frustum_vertices);
-
         render_pass.set_vertex_buffer(0, self.frustum_render.vertex_buffer.slice(..));
         render_pass.set_index_buffer(
-            self.frustum_render.index_buffer.slice(..),
+            self.frustum_render.frustum_buffer.slice(..),
             wgpu::IndexFormat::Uint16,
         );
         render_pass.draw_indexed(0..36, 0, 0..1);
@@ -270,7 +274,9 @@ impl SphereRenderer {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) -> Result<(), Box<dyn Error>> {
-        //self.debug_camera.yaw(Deg(2.0));
+        self.debug_camera.write().unwrap().yaw(Deg(0.05));
+        self.debug_camera.write().unwrap().zoom(-500.0);
+
         //self.camera.zoom(5000.0);
         let projected_cam = if let Ok(mut camera) = self.camera.write() {
             camera.update(None)
@@ -278,7 +284,7 @@ impl SphereRenderer {
             Matrix4::identity()
         };
 
-        self.debug_camera.write().unwrap().update(Some(20000.0));
+        self.debug_camera.write().unwrap().update(None);
 
         if let Some(layout) = self.pipeline.texture_bind_group_layout.as_ref() {
             self.content.update_render(device, queue, layout)?;
@@ -287,7 +293,9 @@ impl SphereRenderer {
         let mut counter = 0;
 
         let latest_render = self.content.latest_render.read().unwrap();
-        let mut volume_counter = 0;
+
+        // start past the debug camera
+        let mut volume_counter = 1;
 
         for tile in latest_render.iter() {
             let corners = tile.volume.corners();
@@ -295,6 +303,7 @@ impl SphereRenderer {
                 .iter()
                 .map(|p| DebugVertex {
                     position: [p.x as f32, p.y as f32, p.z as f32],
+                    color: [1.0, 1.0, 0.25, 1.0],
                 })
                 .collect();
 

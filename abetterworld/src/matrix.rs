@@ -6,7 +6,7 @@ use cgmath::{Matrix4, SquareMatrix, Vector3};
 pub struct Uniforms {
     pub mat: [[f32; 4]; 4], // 4x4 matrix in f32, with fractional translation
     pub offset: [f32; 3],   // integer world offset
-    pub _padding: f32,      // padding for alignment
+    pub free_space: f32,    // padding for alignment
 }
 
 impl Uniforms {
@@ -15,7 +15,7 @@ impl Uniforms {
         Self {
             mat: [[0.0; 4]; 4],
             offset: [0.0; 3],
-            _padding: 0.0,
+            free_space: 0.0,
         }
     }
 }
@@ -70,7 +70,7 @@ pub fn decompose_matrix64_to_uniform(mat: &Matrix4<f64>) -> Uniforms {
     Uniforms {
         mat: mat32,
         offset: [offset.x, offset.y, offset.z],
-        _padding: 0.0,
+        free_space: 0.0,
     }
 }
 
