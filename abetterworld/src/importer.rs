@@ -318,7 +318,7 @@ pub fn build_materials(json: &Value) -> Result<Vec<Material>, std::io::Error> {
 
 pub fn build_nodes(json: &Value) -> Result<Vec<Node>, std::io::Error> {
     let mut nodes = Vec::new();
-    let y_up_to_z_up = Matrix4::from_angle_x(Deg(-90.0));
+    let y_up_to_z_up = Matrix4::from_angle_x(Deg(90.0));
     let rotate_around_z = Matrix4::from_angle_y(Deg(180.0));
 
     if let Some(nodes_json) = json.get("nodes").and_then(|v| v.as_array()) {
@@ -406,7 +406,7 @@ pub fn build_nodes(json: &Value) -> Result<Vec<Node>, std::io::Error> {
                 vec![]
             };
 
-            let matrix = rotate_around_z * y_up_to_z_up * matrix;
+            let matrix = y_up_to_z_up * matrix;
             nodes.push(Node {
                 transform: matrix,
                 mesh_indices,

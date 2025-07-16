@@ -262,6 +262,70 @@ impl Camera {
         sse > sse_threshold
     }
 
+    pub fn earth_bounds_corners() -> [Point3<f64>; 8] {
+        const A: f64 = 6378137.0; // semi-major axis (X, Y)
+        const B: f64 = 6356752.314245; // semi-minor axis (Z)
+
+        [
+            // Near top-left
+            Point3::new(-A, -A, B),
+            // Near top-right
+            Point3::new(A, -A, B),
+            // Near bottom-right
+            Point3::new(A, A, B),
+            // Near bottom-left
+            Point3::new(-A, A, B),
+            // Far top-left
+            Point3::new(-A, -A, -B),
+            // Far top-right
+            Point3::new(A, -A, -B),
+            // Far bottom-right
+            Point3::new(A, A, -B),
+            // Far bottom-left
+            Point3::new(-A, A, -B),
+        ]
+    }
+
+    pub fn us_bounds_ecef() -> [Point3<f64>; 8] {
+        let min_x = -5100000.0;
+        let max_x = -1400000.0;
+        let min_y = -4000000.0;
+        let max_y = 2500000.0;
+        let min_z = 3700000.0;
+        let max_z = 5100000.0;
+
+        [
+            Point3::new(min_x, min_y, max_z), // Top-left near
+            Point3::new(max_x, min_y, max_z), // Top-right near
+            Point3::new(max_x, max_y, max_z), // Bottom-right near
+            Point3::new(min_x, max_y, max_z), // Bottom-left near
+            Point3::new(min_x, min_y, min_z), // Top-left far
+            Point3::new(max_x, min_y, min_z), // Top-right far
+            Point3::new(max_x, max_y, min_z), // Bottom-right far
+            Point3::new(min_x, max_y, min_z), // Bottom-left far
+        ]
+    }
+
+    pub fn california_bounds_ecef() -> [Point3<f64>; 8] {
+        let min_x = -4400000.0;
+        let max_x = -3700000.0;
+        let min_y = -1000000.0;
+        let max_y = 500000.0;
+        let min_z = 3900000.0;
+        let max_z = 4500000.0;
+
+        [
+            Point3::new(min_x, min_y, max_z), // Top-left near
+            Point3::new(max_x, min_y, max_z), // Top-right near
+            Point3::new(max_x, max_y, max_z), // Bottom-right near
+            Point3::new(min_x, max_y, max_z), // Bottom-left near
+            Point3::new(min_x, min_y, min_z), // Top-left far
+            Point3::new(max_x, min_y, min_z), // Top-right far
+            Point3::new(max_x, max_y, min_z), // Bottom-right far
+            Point3::new(min_x, max_y, min_z), // Bottom-left far
+        ]
+    }
+
     pub fn frustum_corners(&self) -> [Point3<f64>; 8] {
         let fovy_rad = self.fovy.0.to_radians();
         let view_dir = (self.target - self.eye).normalize();
@@ -279,24 +343,23 @@ impl Camera {
         let near_center = self.eye + view_dir * self.near;
         let far_center = self.eye + view_dir * self.far;
 
-        // 8 corners: [near_tl, near_tr, near_br, near_bl, far_tl, far_tr, far_br, far_bl]
+        // Corner offsets
+        let near_up = up * (near_height / 2.0);
+        let near_right = right * (near_width / 2.0);
+        let far_up = up * (far_height / 2.0);
+        let far_right = right * (far_width / 2.0);
+
         [
-            // Near top-left
-            near_center + up * (near_height / 2.0) - right * (near_width / 2.0),
-            // Near top-right
-            near_center + up * (near_height / 2.0) + right * (near_width / 2.0),
-            // Near bottom-right
-            near_center - up * (near_height / 2.0) + right * (near_width / 2.0),
-            // Near bottom-left
-            near_center - up * (near_height / 2.0) - right * (near_width / 2.0),
-            // Far top-left
-            far_center + up * (far_height / 2.0) - right * (far_width / 2.0),
-            // Far top-right
-            far_center + up * (far_height / 2.0) + right * (far_width / 2.0),
-            // Far bottom-right
-            far_center - up * (far_height / 2.0) + right * (far_width / 2.0),
-            // Far bottom-left
-            far_center - up * (far_height / 2.0) - right * (far_width / 2.0),
+            // Near plane (counter-clockwise from top-left when looking down -view_dir)
+            near_center + near_up - near_right, // 0: near top-left
+            near_center + near_up + near_right, // 1: near top-right
+            near_center - near_up + near_right, // 2: near bottom-right
+            near_center - near_up - near_right, // 3: near bottom-left
+            // Far plane (counter-clockwise from top-left when looking down -view_dir)
+            far_center + far_up - far_right, // 4: far top-left
+            far_center + far_up + far_right, // 5: far top-right
+            far_center - far_up + far_right, // 6: far bottom-right
+            far_center - far_up - far_right, // 7: far bottom-left
         ]
     }
 }
