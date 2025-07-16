@@ -303,14 +303,14 @@ pub fn build_debug_pipeline(
             strip_index_format: None,
             front_face: wgpu::FrontFace::Ccw,
             cull_mode: None,
-            polygon_mode: wgpu::PolygonMode::Fill,
+            polygon_mode: wgpu::PolygonMode::Line,
             unclipped_depth: false,
             conservative: false,
         },
         depth_stencil: Some(wgpu::DepthStencilState {
             format: wgpu::TextureFormat::Depth24Plus, // match your texture
             depth_write_enabled: false,               // write to the depth buffer
-            depth_compare: wgpu::CompareFunction::LessEqual, // typical for 3D
+            depth_compare: wgpu::CompareFunction::Less, // typical for 3D
             stencil: wgpu::StencilState::default(),   // usually default
             bias: wgpu::DepthBiasState::default(),    // optional slope‐bias
         }),
@@ -344,8 +344,11 @@ pub struct FrustumRender {
     pub index_buffer: wgpu::Buffer,
 }
 
+pub const MAX_VOLUMES: u64 = 512;
+pub const SIZE_OF_VOLUME: u64 = 8 * std::mem::size_of::<DebugVertex>() as u64;
+
 pub fn build_frustum_render(device: &wgpu::Device) -> FrustumRender {
-    const FRUSTUM_TRI_INDICES: [u16; 36] = [
+    /*     const FRUSTUM_TRI_INDICES: [u16; 36] = [
         // Near
         0, 1, 2, 2, 3, 0, // Far
         4, 5, 6, 6, 7, 4, // Left
@@ -353,12 +356,23 @@ pub fn build_frustum_render(device: &wgpu::Device) -> FrustumRender {
         1, 5, 6, 6, 2, 1, // Top
         0, 4, 5, 5, 1, 0, // Bottom
         3, 2, 6, 6, 7, 3,
+    ]; */
+
+    const FRUSTUM_TRI_INDICES: [u16; 36] = [
+        // Near face (0-3)
+        0, 1, 2, 2, 3, 0, // Far face (4-7)
+        4, 5, 6, 6, 7, 4, // Left face (0,3,7,4)
+        0, 3, 7, 7, 4, 0, // Right face (1,5,6,6,2,1)
+        1, 5, 6, 6, 2, 1, // Top face (3,2,6,6,7,3)
+        3, 2, 6, 6, 7, 3, // Bottom face (0,4,5,5,1,0)
+        0, 4, 5, 5, 1, 0,
     ];
+
     let frustum_indices: Vec<u16> = FRUSTUM_TRI_INDICES.iter().flat_map(|&i| [i]).collect();
 
     let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("Frustum Vertices"),
-        size: (8 * std::mem::size_of::<Vertex>()) as u64,
+        size: MAX_VOLUMES * SIZE_OF_VOLUME,
         usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
