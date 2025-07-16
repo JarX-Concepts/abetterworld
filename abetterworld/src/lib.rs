@@ -1,6 +1,6 @@
 use std::{
     error::Error,
-    sync::{Arc, RwLock},
+    sync::{Arc, RwLock, RwLockReadGuard},
 };
 
 mod camera;
@@ -10,17 +10,18 @@ use camera::Camera;
 mod cache;
 use cache::init_tileset_cache;
 mod content;
-use cgmath::{Matrix4, SquareMatrix, Vector3};
+use cgmath::{Matrix4, SquareMatrix};
 use decode::init;
 use pager::start_background_tasks;
-use wgpu::util::DeviceExt;
 
 use crate::{
     camera::init_camera,
+    content::{ContentRender, DebugVertex},
     rendering::{
         build_debug_pipeline, build_depth_buffer, build_frustum_render, build_pipeline,
-        FrustumRender, RenderPipeline,
+        FrustumRender, RenderPipeline, MAX_VOLUMES, SIZE_OF_VOLUME,
     },
+    tiles::BoundingVolume,
 };
 mod coord_utils;
 mod importer;
@@ -135,82 +136,103 @@ impl SphereRenderer {
         queue: &wgpu::Queue,
         device: &wgpu::Device,
     ) {
-        {
-            let latest_render = self.content.latest_render.read().unwrap();
-            if !latest_render.is_empty() {
-                render_pass.set_pipeline(&self.pipeline.pipeline);
+        let latest_render = self.content.latest_render.read().unwrap();
+        if !latest_render.is_empty() {
+            render_pass.set_pipeline(&self.pipeline.pipeline);
 
-                let mut counter = 0;
-                queue.write_buffer(
-                    &self.pipeline.transforms.uniform_buffer,
-                    0,
-                    &self.pipeline.transforms.data,
-                );
+            let mut counter = 0;
+            queue.write_buffer(
+                &self.pipeline.transforms.uniform_buffer,
+                0,
+                &self.pipeline.transforms.data,
+            );
 
-                let debug_cam_read = self.debug_camera.read().unwrap();
+            let debug_cam_read = self.debug_camera.read().unwrap();
 
-                for tile in latest_render.iter() {
-                    let render_it = true; // debug_cam_read.is_bounding_volume_visible(&tile.volume);
+            for tile in latest_render.iter() {
+                let render_it = true; // debug_cam_read.is_bounding_volume_visible(&tile.volume);
 
-                    if !render_it {
-                        counter += tile.nodes.len() as u32;
-                        continue;
-                    }
+                if !render_it {
+                    counter += tile.nodes.len() as u32;
+                    continue;
+                }
 
-                    for (i, node) in tile.nodes.iter().enumerate() {
-                        render_pass.set_bind_group(
-                            0,
-                            &self.pipeline.transforms.uniform_bind_group,
-                            &[counter * self.pipeline.transforms.aligned_uniform_size as u32],
-                        );
-                        counter += 1;
+                for (i, node) in tile.nodes.iter().enumerate() {
+                    render_pass.set_bind_group(
+                        0,
+                        &self.pipeline.transforms.uniform_bind_group,
+                        &[counter * self.pipeline.transforms.aligned_uniform_size as u32],
+                    );
+                    counter += 1;
 
-                        for mesh_index in node.mesh_indices.iter() {
-                            if (*mesh_index as usize) >= tile.meshes.len() {
-                                //println!("Mesh index out of bounds: {}", mesh_index);
-                                continue;
-                            }
-                            let mesh = &tile.meshes[*mesh_index];
-
-                            // Set the vertex and index buffer for this mesh
-                            render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                            render_pass.set_index_buffer(
-                                mesh.index_buffer.slice(..),
-                                wgpu::IndexFormat::Uint32,
-                            );
-
-                            // Set the correct material/texture bind group
-                            if let Some(material_index) = mesh.material_index {
-                                let material = &tile.materials[material_index];
-                                if let Some(texture_index) = material.base_color_texture_index {
-                                    let texture_resource = &tile.textures[texture_index];
-                                    // You must have created the bind_group for this texture previously!
-                                    render_pass.set_bind_group(
-                                        1,
-                                        &texture_resource.bind_group,
-                                        &[],
-                                    );
-                                }
-                            }
-
-                            // Draw call for this mesh
-                            render_pass.draw_indexed(0..mesh.num_indices, 0, 0..1);
-                            //render_pass.draw(0..3, 0..1);
+                    for mesh_index in node.mesh_indices.iter() {
+                        if (*mesh_index as usize) >= tile.meshes.len() {
+                            //println!("Mesh index out of bounds: {}", mesh_index);
+                            continue;
                         }
+                        let mesh = &tile.meshes[*mesh_index];
+
+                        // Set the vertex and index buffer for this mesh
+                        render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                        render_pass.set_index_buffer(
+                            mesh.index_buffer.slice(..),
+                            wgpu::IndexFormat::Uint32,
+                        );
+
+                        // Set the correct material/texture bind group
+                        if let Some(material_index) = mesh.material_index {
+                            let material = &tile.materials[material_index];
+                            if let Some(texture_index) = material.base_color_texture_index {
+                                let texture_resource = &tile.textures[texture_index];
+                                // You must have created the bind_group for this texture previously!
+                                render_pass.set_bind_group(1, &texture_resource.bind_group, &[]);
+                            }
+                        }
+
+                        // Draw call for this mesh
+                        render_pass.draw_indexed(0..mesh.num_indices, 0, 0..1);
                     }
                 }
             }
         }
 
-        self.draw_debug_camera(render_pass, queue, device);
+        self.draw_all_tile_volumes(render_pass, queue, latest_render);
+        //self.draw_debug_camera(render_pass, queue);
     }
 
-    pub fn draw_debug_camera(
-        &mut self,
+    fn draw_all_tile_volumes(
+        &self,
         render_pass: &mut wgpu::RenderPass<'_>,
         queue: &wgpu::Queue,
-        device: &wgpu::Device,
+        latest_render: RwLockReadGuard<'_, Vec<ContentRender>>,
     ) {
+        let camera_vp = self.camera.read().unwrap().uniform();
+        queue.write_buffer(
+            &self.debug_pipeline.transforms.uniform_buffer,
+            0,
+            bytemuck::bytes_of(&camera_vp),
+        );
+
+        render_pass.set_bind_group(0, &self.debug_pipeline.transforms.uniform_bind_group, &[]);
+        render_pass.set_pipeline(&self.debug_pipeline.pipeline);
+        render_pass.set_index_buffer(
+            self.frustum_render.index_buffer.slice(..),
+            wgpu::IndexFormat::Uint16,
+        );
+        render_pass.set_vertex_buffer(0, self.frustum_render.vertex_buffer.slice(..));
+
+        let mut volume_counter = 0;
+        for _tile in latest_render.iter() {
+            if volume_counter >= MAX_VOLUMES {
+                eprintln!("Hit maximum number of volumes");
+            } else {
+                render_pass.draw_indexed(0..36, volume_counter as i32 * 8, 0..1);
+            }
+            volume_counter += 1;
+        }
+    }
+
+    pub fn draw_debug_camera(&self, render_pass: &mut wgpu::RenderPass<'_>, queue: &wgpu::Queue) {
         let camera_vp = self.camera.read().unwrap().uniform();
         queue.write_buffer(
             &self.debug_pipeline.transforms.uniform_buffer,
@@ -233,7 +255,8 @@ impl SphereRenderer {
             bytemuck::cast_slice(&new_frustum_vertices),
         );
 
-        println!("Frustum vertices: {:?}", new_frustum_vertices);
+        println!("Debug Camera vertices: {:?}", new_frustum_vertices);
+
         render_pass.set_vertex_buffer(0, self.frustum_render.vertex_buffer.slice(..));
         render_pass.set_index_buffer(
             self.frustum_render.index_buffer.slice(..),
@@ -264,9 +287,29 @@ impl SphereRenderer {
         let mut counter = 0;
 
         let latest_render = self.content.latest_render.read().unwrap();
+        let mut volume_counter = 0;
 
         for tile in latest_render.iter() {
-            for (i, node) in tile.nodes.iter().enumerate() {
+            let corners = tile.volume.corners();
+            let new_frustum_vertices: Vec<DebugVertex> = corners
+                .iter()
+                .map(|p| DebugVertex {
+                    position: [p.x as f32, p.y as f32, p.z as f32],
+                })
+                .collect();
+
+            if volume_counter >= MAX_VOLUMES {
+                eprintln!("Hit maximum number of volumes");
+            } else {
+                queue.write_buffer(
+                    &self.frustum_render.vertex_buffer,
+                    volume_counter * SIZE_OF_VOLUME,
+                    bytemuck::cast_slice(&new_frustum_vertices),
+                );
+                volume_counter += 1;
+            }
+
+            for (_i, node) in tile.nodes.iter().enumerate() {
                 let projected = projected_cam * node.transform;
                 let uniformed = matrix::decompose_matrix64_to_uniform(&projected);
                 let matrix_bytes = bytemuck::bytes_of(&uniformed);

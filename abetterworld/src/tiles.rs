@@ -15,6 +15,7 @@ use bytes::Bytes;
 use cgmath::Matrix3;
 use cgmath::SquareMatrix;
 use cgmath::Vector3;
+use cgmath::Zero;
 use reqwest::Client;
 use serde::Deserialize;
 use std::error::Error;
@@ -111,6 +112,25 @@ impl BoundingVolume {
             min: center - extent,
             max: center + extent,
         }
+    }
+
+    pub fn corners(&self) -> [Vector3<f64>; 8] {
+        let obb = self.to_obb();
+        let center = obb.center;
+        let half_axes = obb.half_axes;
+
+        let mut corners = [Vector3::zero(); 8];
+        for i in 0..2 {
+            for j in 0..2 {
+                for k in 0..2 {
+                    corners[i * 4 + j * 2 + k] = center
+                        + half_axes[0] * (if i == 0 { -1.0 } else { 1.0 })
+                        + half_axes[1] * (if j == 0 { -1.0 } else { 1.0 })
+                        + half_axes[2] * (if k == 0 { -1.0 } else { 1.0 });
+                }
+            }
+        }
+        corners
     }
 }
 

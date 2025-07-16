@@ -31,6 +31,7 @@ pub struct Camera {
     uniform: Uniforms,
     cam_world: Vector3<f64>,
     planes: [(Vector4<f64>, Vector3<f64>, f64); 6],
+    proj_view_matrix: Matrix4<f64>,
 }
 
 impl Camera {
@@ -52,6 +53,7 @@ impl Camera {
             cam_world: eye.to_vec(),
             near: 0.0,
             far: 0.0,
+            proj_view_matrix: Matrix4::identity(),
         };
 
         cam
@@ -145,29 +147,20 @@ impl Camera {
 
         let proj64 = cgmath::perspective(self.fovy, self.aspect, self.near, self.far);
         let model_view_mat = Matrix4::look_at_rh(self.eye, self.target, self.up);
-        let proj_view = proj64 * model_view_mat;
-        self.planes = Self::extract_frustum_planes(&proj_view);
-        self.uniform = decompose_matrix64_to_uniform(&proj_view);
+        self.proj_view_matrix = proj64 * model_view_mat;
+        self.planes = Self::extract_frustum_planes(&self.proj_view_matrix);
+        self.uniform = decompose_matrix64_to_uniform(&self.proj_view_matrix);
 
-        /*         println!("Camera world position: {:?}", self.cam_world);
-        println!("Camera eye position: {:?}", self.eye);
-        println!("Camera target position: {:?}", self.target);
-        println!("Camera up vector: {:?}", self.up);
-        println!("Camera ProjView Matrix: {:?}", proj_view);
-        println!("Camera aspect ratio: {}", self.aspect);
-        println!("Camera field of view (fovy): {:?}", self.fovy);
-        println!("Camera near plane: {}", self.near);
-        println!("Camera far plane: {}", self.far);
-        println!("Camera planes: {:?}", self.planes);
-
-        std::process::exit(0); */
-
-        return proj_view;
+        self.proj_view_matrix
     }
 
     /// expose the latest UBO
     pub fn uniform(&self) -> Uniforms {
         self.uniform
+    }
+
+    pub fn proj_view(&self) -> Matrix4<f64> {
+        self.proj_view_matrix
     }
 
     pub fn print_frustum_planes(&self) {
@@ -260,70 +253,6 @@ impl Camera {
 
         // 5. Needs refinement?
         sse > sse_threshold
-    }
-
-    pub fn earth_bounds_corners() -> [Point3<f64>; 8] {
-        const A: f64 = 6378137.0; // semi-major axis (X, Y)
-        const B: f64 = 6356752.314245; // semi-minor axis (Z)
-
-        [
-            // Near top-left
-            Point3::new(-A, -A, B),
-            // Near top-right
-            Point3::new(A, -A, B),
-            // Near bottom-right
-            Point3::new(A, A, B),
-            // Near bottom-left
-            Point3::new(-A, A, B),
-            // Far top-left
-            Point3::new(-A, -A, -B),
-            // Far top-right
-            Point3::new(A, -A, -B),
-            // Far bottom-right
-            Point3::new(A, A, -B),
-            // Far bottom-left
-            Point3::new(-A, A, -B),
-        ]
-    }
-
-    pub fn us_bounds_ecef() -> [Point3<f64>; 8] {
-        let min_x = -5100000.0;
-        let max_x = -1400000.0;
-        let min_y = -4000000.0;
-        let max_y = 2500000.0;
-        let min_z = 3700000.0;
-        let max_z = 5100000.0;
-
-        [
-            Point3::new(min_x, min_y, max_z), // Top-left near
-            Point3::new(max_x, min_y, max_z), // Top-right near
-            Point3::new(max_x, max_y, max_z), // Bottom-right near
-            Point3::new(min_x, max_y, max_z), // Bottom-left near
-            Point3::new(min_x, min_y, min_z), // Top-left far
-            Point3::new(max_x, min_y, min_z), // Top-right far
-            Point3::new(max_x, max_y, min_z), // Bottom-right far
-            Point3::new(min_x, max_y, min_z), // Bottom-left far
-        ]
-    }
-
-    pub fn california_bounds_ecef() -> [Point3<f64>; 8] {
-        let min_x = -4400000.0;
-        let max_x = -3700000.0;
-        let min_y = -1000000.0;
-        let max_y = 500000.0;
-        let min_z = 3900000.0;
-        let max_z = 4500000.0;
-
-        [
-            Point3::new(min_x, min_y, max_z), // Top-left near
-            Point3::new(max_x, min_y, max_z), // Top-right near
-            Point3::new(max_x, max_y, max_z), // Bottom-right near
-            Point3::new(min_x, max_y, max_z), // Bottom-left near
-            Point3::new(min_x, min_y, min_z), // Top-left far
-            Point3::new(max_x, min_y, min_z), // Top-right far
-            Point3::new(max_x, max_y, min_z), // Bottom-right far
-            Point3::new(min_x, max_y, min_z), // Bottom-left far
-        ]
     }
 
     pub fn frustum_corners(&self) -> [Point3<f64>; 8] {
