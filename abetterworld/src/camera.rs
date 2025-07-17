@@ -304,10 +304,10 @@ pub fn init_camera() -> (Camera, Camera) {
     let up = Vector3::unit_z();
     let camera = Camera::new(Deg(45.0), 1.0, eye, target, up);
 
-    let debug_eye = geodetic_to_ecef_z_up(34.4208, -119.6982, 2000.0);
+    let debug_eye = geodetic_to_ecef_z_up(34.4208, -119.6982, 200.0);
     let debug_eye_pt: Point3<f64> = Point3::new(debug_eye.0, debug_eye.1, debug_eye.2);
     let mut debug_camera = Camera::new(Deg(45.0), 1.0, debug_eye_pt, target, up);
-    debug_camera.update(Some(75000.0));
+    debug_camera.update(Some(20000.0));
 
     (camera, debug_camera)
 }

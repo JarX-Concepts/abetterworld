@@ -17,6 +17,7 @@ use pager::start_background_tasks;
 use crate::{
     camera::init_camera,
     content::{ContentRender, DebugVertex},
+    pager::run_sync_iteration,
     rendering::{
         build_debug_pipeline, build_depth_buffer, build_frustum_render, build_pipeline,
         FrustumRender, RenderPipeline, MAX_VOLUMES, SIZE_OF_VOLUME,
@@ -113,6 +114,7 @@ impl SphereRenderer {
 
         let _ = init();
         let _ = start_background_tasks(tile_content.clone(), debug_camera_source.clone()).await;
+        //let _ = run_sync_iteration(tile_content.clone(), debug_camera_source.clone()).await;
 
         Self {
             pipeline,
@@ -274,17 +276,16 @@ impl SphereRenderer {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) -> Result<(), Box<dyn Error>> {
-        self.debug_camera.write().unwrap().yaw(Deg(0.05));
-        self.debug_camera.write().unwrap().zoom(-500.0);
+        //self.debug_camera.write().unwrap().yaw(Deg(0.05));
+        //self.debug_camera.write().unwrap().zoom(-500.0);
 
-        //self.camera.zoom(5000.0);
         let projected_cam = if let Ok(mut camera) = self.camera.write() {
             camera.update(None)
         } else {
             Matrix4::identity()
         };
 
-        self.debug_camera.write().unwrap().update(None);
+        self.debug_camera.write().unwrap().update(Some(20000.0));
 
         if let Some(layout) = self.pipeline.texture_bind_group_layout.as_ref() {
             self.content.update_render(device, queue, layout)?;
@@ -292,11 +293,17 @@ impl SphereRenderer {
 
         let mut counter = 0;
 
+        let latest_in_range = self.content.latest_in_range.blocking_read();
+        let latest_loaded = self.content.latest_loaded.blocking_read();
         let latest_render = self.content.latest_render.read().unwrap();
 
         // start past the debug camera
         let mut volume_counter = 1;
 
+        /*         println!("latest_render {} tiles", latest_render.len());
+               println!("latest_loaded {} tiles", latest_loaded.len());
+               println!("latest_in_range {} tiles", latest_in_range.len());
+        */
         for tile in latest_render.iter() {
             let corners = tile.volume.corners();
             let new_frustum_vertices: Vec<DebugVertex> = corners
