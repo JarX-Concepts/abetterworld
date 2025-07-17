@@ -236,6 +236,10 @@ fn is_nested_tileset(uri: &str) -> bool {
         })
 }
 
+fn is_glb(uri: &str) -> bool {
+    uri.trim_end_matches('/').ends_with(".glb")
+}
+
 fn extract_session(url: &str) -> Option<String> {
     url.split_once("session=")
         .map(|(_, session)| session.to_string())
@@ -250,6 +254,7 @@ pub async fn process_tileset<F>(
 where
     F: Fn(&ContentInRange) + SendSyncBounds + 'static,
 {
+    let mut found_geom = false;
     let Some(tile_info) = &state.tile else {
         return Ok(vec![]);
     };
@@ -265,24 +270,24 @@ where
 
     if let Some(content) = &tile_info.content {
         let tile_url = resolve_url(&state.tileset_url, &content.uri)?;
+        let refine_mode = tile_info.refine.as_deref().unwrap_or("REPLACE");
+        let session = extract_session(&tile_url).or_else(|| state.session.clone());
 
-        if is_nested_tileset(&tile_url) && needs_refinement {
+        if is_nested_tileset(&tile_url) {
             let nested_state = ConnectionState {
                 connection: state.connection.clone(),
-                session: extract_session(&tile_url).or_else(|| state.session.clone()),
+                session: session,
                 tileset_url: tile_url.clone(),
                 tile: None,
             };
 
             let nested = import_tileset(camera, &nested_state, Arc::clone(&on_tile)).await?;
             tiles.extend(nested);
-        }
-
-        let refine_mode = tile_info.refine.as_deref().unwrap_or("REPLACE");
-
-        if tile_url.ends_with(".glb")
+        } else if is_glb(&tile_url)
             && (refine_mode == "ADD" || tile_info.children.is_none() || !needs_refinement)
         {
+            //log::info!("Loading tile {}", tile_url);
+            found_geom = true;
             if let Some(session) = &state.session {
                 let result = ContentInRange {
                     uri: tile_url,
@@ -292,10 +297,14 @@ where
                 on_tile(&result);
                 tiles.push(result);
             }
+        } else if !is_glb(&tile_url) {
+            // these are weird
+            // https://tile.googleapis.com/v1/3dtiles/datasets/CgIYAQ/files/AJVsH2xhxJPWKbFgSv4QaTrl7SbTaFlJnvfES7rtU4UHj6Lt5ys_EykyPb_P6NdvvMm8XTjWA6bKUyTq94uFkec53CIZF33frCoSLMBSQiOnIlPsKc0G8BsSlYvL.glb?session=CPecuaT_6-PRSBDl8uHDBg
+            // log::info!("What is this tile {}", tile_url);
         }
     }
 
-    if needs_refinement {
+    if needs_refinement || !found_geom {
         if let Some(children) = &tile_info.children {
             for child in children {
                 let child_state = ConnectionState {
@@ -331,7 +340,7 @@ where
     .await?;
 
     match content_type.as_str() {
-        "application/json" => {
+        "application/json" | "application/json; charset=UTF-8" => {
             let tileset: GltfTileset = serde_json::from_slice(&bytes)?;
             let state = ConnectionState {
                 connection: state.connection.clone(),

@@ -45,8 +45,8 @@ use crate::tiles::{
 };
 
 pub struct TileContent {
-    latest_in_range: Arc<tokio::sync::RwLock<Vec<ContentInRange>>>,
-    latest_loaded: Arc<tokio::sync::RwLock<Vec<ContentLoaded>>>,
+    pub latest_in_range: Arc<tokio::sync::RwLock<Vec<ContentInRange>>>,
+    pub latest_loaded: Arc<tokio::sync::RwLock<Vec<ContentLoaded>>>,
     pub latest_render: Arc<RwLock<Vec<ContentRender>>>, // Sync access for render thread
 }
 
@@ -205,7 +205,7 @@ pub async fn start_background_tasks(
                 session: None,
             };
 
-            loop {
+            {
                 //log::info!("Running update_in_range");
                 let camera = camera_source.read().unwrap().clone();
                 if let Err(e) = rt.block_on(run_update_in_range_once(
@@ -402,6 +402,60 @@ pub async fn start_background_tasks(
                 wait_longer_delay().await;
             }
         });
+    }
+
+    Ok(())
+}
+
+pub async fn run_sync_iteration(
+    tile_content: Arc<TileContent>,
+    camera_source: Arc<RwLock<Camera>>,
+) -> Result<(), Box<dyn Error>> {
+    let camera = camera_source.read().unwrap().clone();
+
+    let client = Arc::new(Client::new());
+    let connection = establish_connection(client.clone()).await?;
+    let key = connection.connection.key.clone();
+    let tileset_url = connection.tileset_url.clone();
+
+    let local_conn = ConnectionState {
+        connection: Connection {
+            client: client.clone(),
+            key: key.clone(),
+        },
+        tileset_url: tileset_url.clone(),
+        tile: None,
+        session: None,
+    };
+
+    use std::sync::{Arc, Mutex};
+
+    let in_range = Arc::new(Mutex::new(Vec::new()));
+    let in_range_clone = in_range.clone();
+
+    let add_tile = Arc::new(move |tile: &ContentInRange| {
+        in_range_clone.lock().unwrap().push(tile.clone());
+    });
+
+    import_tileset(&camera, &local_conn, add_tile).await?;
+
+    log::info!(
+        "Running content decode for {} tiles",
+        in_range.lock().unwrap().len()
+    );
+
+    let tiles = in_range.lock().unwrap().clone();
+
+    let loaded = tile_content.latest_loaded.clone();
+
+    for tile in tiles {
+        let loaded = loaded.clone();
+        let client = client.clone();
+        let key = key.clone();
+        let conn = Connection { client, key };
+        if let Err(e) = content_decode(&conn, loaded, &tile).await {
+            log::error!("content_decode error for {}: {:?}", tile.uri, e);
+        }
     }
 
     Ok(())
