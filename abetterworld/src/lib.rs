@@ -10,7 +10,7 @@ use camera::Camera;
 mod cache;
 use cache::init_tileset_cache;
 mod content;
-use cgmath::{Deg, Matrix4, SquareMatrix};
+use cgmath::{Deg, EuclideanSpace, Matrix4, SquareMatrix, Vector3, Zero};
 use decode::init;
 use pager::start_background_tasks;
 
@@ -279,6 +279,7 @@ impl SphereRenderer {
         self.debug_camera.write().unwrap().yaw(Deg(0.1));
         //self.debug_camera.write().unwrap().zoom(-500.0);
 
+        let camera_pos = Vector3::zero();
         let projected_cam = if let Ok(mut camera) = self.camera.write() {
             camera.update(None)
         } else {
@@ -305,7 +306,7 @@ impl SphereRenderer {
                println!("latest_in_range {} tiles", latest_in_range.len());
         */
         for tile in latest_render.iter() {
-            let corners = tile.volume.corners();
+            let corners = tile.volume.corners(camera_pos);
             let new_frustum_vertices: Vec<DebugVertex> = corners
                 .iter()
                 .map(|p| DebugVertex {
