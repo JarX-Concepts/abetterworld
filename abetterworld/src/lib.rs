@@ -301,9 +301,10 @@ impl SphereRenderer {
         // start past the debug camera
         let mut volume_counter = 1;
 
-        /*         println!("latest_render {} tiles", latest_render.len());
-               println!("latest_loaded {} tiles", latest_loaded.len());
-               println!("latest_in_range {} tiles", latest_in_range.len());
+        /*
+            println!("latest_render {} tiles", latest_render.len());
+            println!("latest_loaded {} tiles", latest_loaded.len());
+            println!("latest_in_range {} tiles", latest_in_range.len());
         */
         for tile in latest_render.iter() {
             let corners = tile.volume.corners(camera_pos);
@@ -331,7 +332,8 @@ impl SphereRenderer {
                 let uniformed = matrix::decompose_matrix64_to_uniform(&projected);
                 let matrix_bytes = bytemuck::bytes_of(&uniformed);
 
-                /*                 let radius = 6_378_137.0;
+                /*
+                let radius = 6_378_137.0;
                 let distance: f64 = radius * 2.0;
                 let eye = Vector3::new(0.0, distance, 0.0);
                 let projected_eye = projected_cam * Matrix4::from_translation(eye);
@@ -339,9 +341,10 @@ impl SphereRenderer {
                 println!("projected_eye: {:?}", projected_eye); */
 
                 /*                 println!(
-                    "Node {}: Transform: {:?}, Cam: {:?}, Projected: {:?}, Unformed: {:?}",
-                    i, node.transform, projected_cam, projected, uniformed
-                ); */
+                        "Node {}: Transform: {:?}, Cam: {:?}, Projected: {:?}, Unformed: {:?}",
+                        i, node.transform, projected_cam, projected, uniformed
+                    );
+                */
 
                 let start = counter * self.pipeline.transforms.aligned_uniform_size;
                 let end = start + matrix_bytes.len();
