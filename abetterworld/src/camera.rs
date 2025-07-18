@@ -144,7 +144,7 @@ impl Camera {
         // set near/far as before
         self.cam_world = self.eye.to_vec();
         let d = self.cam_world.magnitude();
-        self.near = (d - (EARTH_RADIUS_M * 2.0)).max(1.0);
+        self.near = (d - EARTH_RADIUS_M).abs().clamp(0.01, 5000.0);
         self.far = far.unwrap_or(d);
 
         let proj64 = cgmath::perspective(self.fovy, self.aspect, self.near, self.far);
