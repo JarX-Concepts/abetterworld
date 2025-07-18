@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Vertex {
@@ -18,16 +20,31 @@ pub struct DecodedMesh {
 }
 
 #[derive(Clone)]
+pub struct InnerDecodedMesh {
+    pub data: DecodedMesh,
+}
+
+#[derive(Clone)]
 pub struct OwnedDecodedMesh {
-    pub(crate) inner: DecodedMesh,
+    pub(crate) inner: Arc<InnerDecodedMesh>,
     pub material_index: Option<usize>,
 }
 
 impl OwnedDecodedMesh {
     pub fn as_vertex_slice(&self) -> &[Vertex] {
-        unsafe { std::slice::from_raw_parts(self.inner.vertices, self.inner.vertex_count as usize) }
+        unsafe {
+            std::slice::from_raw_parts(
+                self.inner.data.vertices,
+                self.inner.data.vertex_count as usize,
+            )
+        }
     }
     pub fn as_index_slice(&self) -> &[u32] {
-        unsafe { std::slice::from_raw_parts(self.inner.indices, self.inner.index_count as usize) }
+        unsafe {
+            std::slice::from_raw_parts(
+                self.inner.data.indices,
+                self.inner.data.index_count as usize,
+            )
+        }
     }
 }

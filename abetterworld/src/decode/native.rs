@@ -1,14 +1,14 @@
-use super::types::{DecodedMesh, OwnedDecodedMesh};
-
-impl Drop for OwnedDecodedMesh {
-    fn drop(&mut self) {
-        //unsafe { free_decoded_mesh(&mut self.inner) }
-    }
-}
+use super::types::{DecodedMesh, InnerDecodedMesh, OwnedDecodedMesh};
 
 extern "C" {
     fn decode_draco_mesh_interleaved(data: *const u8, len: usize, out: *mut DecodedMesh) -> bool;
     fn free_decoded_mesh(mesh: *mut DecodedMesh);
+}
+
+impl Drop for InnerDecodedMesh {
+    fn drop(&mut self) {
+        unsafe { free_decoded_mesh(&mut self.data) }
+    }
 }
 
 pub fn init() -> Result<(), std::io::Error> {
@@ -33,7 +33,7 @@ pub fn decode(data: &[u8]) -> Result<OwnedDecodedMesh, std::io::Error> {
         }
 
         Ok(OwnedDecodedMesh {
-            inner: mesh,
+            inner: std::sync::Arc::new(InnerDecodedMesh { data: mesh }),
             material_index: None,
         })
     }

@@ -254,7 +254,7 @@ pub async fn process_tileset<F>(
 where
     F: Fn(&ContentInRange) + SendSyncBounds + 'static,
 {
-    let mut found_geom = false;
+    let mut added_geom = false;
     let Some(tile_info) = &state.tile else {
         return Ok(vec![]);
     };
@@ -287,7 +287,7 @@ where
             && (refine_mode == "ADD" || tile_info.children.is_none() || !needs_refinement)
         {
             //log::info!("Loading tile {}", tile_url);
-            found_geom = true;
+            added_geom = true;
             if let Some(session) = &state.session {
                 let result = ContentInRange {
                     uri: tile_url,
@@ -304,7 +304,7 @@ where
         }
     }
 
-    if needs_refinement || !found_geom {
+    if needs_refinement || !added_geom {
         if let Some(children) = &tile_info.children {
             for child in children {
                 let child_state = ConnectionState {
