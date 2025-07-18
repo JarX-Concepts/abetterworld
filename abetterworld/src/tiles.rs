@@ -114,9 +114,9 @@ impl BoundingVolume {
         }
     }
 
-    pub fn corners(&self) -> [Vector3<f64>; 8] {
+    pub fn corners(&self, offset: Vector3<f64>) -> [Vector3<f64>; 8] {
         let obb = self.to_obb();
-        let center = obb.center;
+        let center = obb.center - offset;
         let half_axes = obb.half_axes;
 
         let mut corners = [Vector3::zero(); 8];

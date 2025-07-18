@@ -134,8 +134,6 @@ pub async fn run_update_in_range_once(
         tile_content_clone.add_in_range(tile);
     });
 
-    println!("Running import_tileset for camera: {:?}", camera.eye);
-
     let new_import_tileset = import_tileset(&camera, connection, add_tile).await?;
 
     let mut current = tile_content.latest_in_range.write().await;
@@ -247,17 +245,8 @@ pub async fn start_background_tasks(
 
                 // git rid of ones we don't want anymore
                 rt.block_on(async {
-                    use core::num;
-
                     let mut loaded_tiles = loaded.write().await;
-                    let num_before = loaded_tiles.len();
                     loaded_tiles.retain(|r| tiles.iter().any(|l| l.uri == r.uri));
-                    if num_before - loaded_tiles.len() > 0 {
-                        log::info!(
-                            "Removed {} loaded tiles that are no longer in range",
-                            num_before - loaded_tiles.len()
-                        );
-                    }
                 });
 
                 let loaded_vec = rt.block_on(async { loaded.read().await.clone() });
