@@ -1,5 +1,5 @@
 #[cfg(target_arch = "wasm32")]
-use super::types::{DecodedMesh, OwnedDecodedMesh, Vertex};
+use super::types::{DecodedMesh, InnerDecodedMesh, OwnedDecodedMesh, Vertex};
 #[cfg(target_arch = "wasm32")]
 use js_sys::{Float32Array, Reflect, Uint32Array};
 #[cfg(target_arch = "wasm32")]
@@ -84,7 +84,7 @@ pub fn decode(data: &[u8]) -> Result<OwnedDecodedMesh, std::io::Error> {
     std::mem::forget(boxed_indices);
 
     Ok(OwnedDecodedMesh {
-        inner: mesh,
+        inner: std::sync::Arc::new(InnerDecodedMesh { data: mesh }),
         material_index: None,
     })
 }
