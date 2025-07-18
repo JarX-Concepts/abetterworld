@@ -40,8 +40,8 @@ async fn wait_longer_delay() {
 use crate::camera::Camera;
 use crate::content::{ContentInRange, ContentLoaded, ContentRender};
 use crate::tiles::{
-    content_render, download_content_for_tile, import_tileset, load_root, process_content_bytes,
-    Connection, ConnectionState,
+    self, content_render, download_content_for_tile, import_tileset, load_root,
+    process_content_bytes, Connection, ConnectionState,
 };
 
 pub struct TileContent {
@@ -134,7 +134,12 @@ pub async fn run_update_in_range_once(
         tile_content_clone.add_in_range(tile);
     });
 
-    import_tileset(&camera, connection, add_tile).await?;
+    println!("Running import_tileset for camera: {:?}", camera.eye);
+
+    let new_import_tileset = import_tileset(&camera, connection, add_tile).await?;
+
+    let mut current = tile_content.latest_in_range.write().await;
+    current.retain(|r| new_import_tileset.iter().any(|l| l.uri == r.uri));
 
     /*
     in_range.sort_by(|a, b| a.uri.cmp(&b.uri));
@@ -205,7 +210,7 @@ pub async fn start_background_tasks(
                 session: None,
             };
 
-            {
+            loop {
                 //log::info!("Running update_in_range");
                 let camera = camera_source.read().unwrap().clone();
                 if let Err(e) = rt.block_on(run_update_in_range_once(
@@ -238,6 +243,21 @@ pub async fn start_background_tasks(
                     let tiles = tc.latest_in_range.read().await.clone();
                     let loaded = tc.latest_loaded.clone();
                     (tiles, loaded)
+                });
+
+                // git rid of ones we don't want anymore
+                rt.block_on(async {
+                    use core::num;
+
+                    let mut loaded_tiles = loaded.write().await;
+                    let num_before = loaded_tiles.len();
+                    loaded_tiles.retain(|r| tiles.iter().any(|l| l.uri == r.uri));
+                    if num_before - loaded_tiles.len() > 0 {
+                        log::info!(
+                            "Removed {} loaded tiles that are no longer in range",
+                            num_before - loaded_tiles.len()
+                        );
+                    }
                 });
 
                 let loaded_vec = rt.block_on(async { loaded.read().await.clone() });

@@ -227,7 +227,7 @@ impl SphereRenderer {
         let mut volume_counter = 1;
         for _tile in latest_render.iter() {
             if volume_counter >= MAX_VOLUMES {
-                eprintln!("Hit maximum number of volumes");
+                //eprintln!("Hit maximum number of volumes");
             } else {
                 render_pass.draw_indexed(0..36, volume_counter as i32 * 8, 0..1);
             }
@@ -276,7 +276,7 @@ impl SphereRenderer {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) -> Result<(), Box<dyn Error>> {
-        //self.debug_camera.write().unwrap().yaw(Deg(0.05));
+        self.debug_camera.write().unwrap().yaw(Deg(0.1));
         //self.debug_camera.write().unwrap().zoom(-500.0);
 
         let projected_cam = if let Ok(mut camera) = self.camera.write() {
@@ -285,7 +285,7 @@ impl SphereRenderer {
             Matrix4::identity()
         };
 
-        self.debug_camera.write().unwrap().update(Some(20000.0));
+        self.debug_camera.write().unwrap().update(None);
 
         if let Some(layout) = self.pipeline.texture_bind_group_layout.as_ref() {
             self.content.update_render(device, queue, layout)?;
@@ -310,12 +310,12 @@ impl SphereRenderer {
                 .iter()
                 .map(|p| DebugVertex {
                     position: [p.x as f32, p.y as f32, p.z as f32],
-                    color: [1.0, 1.0, 0.25, 1.0],
+                    color: [1.0, 1.0, 0.25, 0.1],
                 })
                 .collect();
 
             if volume_counter >= MAX_VOLUMES {
-                eprintln!("Hit maximum number of volumes");
+                //eprintln!("Hit maximum number of volumes");
             } else {
                 queue.write_buffer(
                     &self.frustum_render.vertex_buffer,

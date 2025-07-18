@@ -158,7 +158,7 @@ pub fn build_pipeline(
             strip_index_format: None,
             front_face: wgpu::FrontFace::Ccw,
             cull_mode: Some(wgpu::Face::Back),
-            polygon_mode: wgpu::PolygonMode::Fill,
+            polygon_mode: wgpu::PolygonMode::Line,
             unclipped_depth: false,
             conservative: false,
         },
@@ -360,13 +360,13 @@ pub fn build_frustum_render(device: &wgpu::Device) -> FrustumRender {
     ];
 
     const VOLUME_TRI_INDICES: [u16; 36] = [
-        // Near face (0-3)
-        0, 1, 2, 2, 3, 0, // Far face (4-7)
-        4, 5, 6, 6, 7, 4, // Left face (0,3,7,4)
-        0, 3, 7, 7, 4, 0, // Right face (1,5,6,6,2,1)
-        1, 5, 6, 6, 2, 1, // Top face (3,2,6,6,7,3)
-        3, 2, 6, 6, 7, 3, // Bottom face (0,4,5,5,1,0)
-        0, 4, 5, 5, 1, 0,
+        // Near face (-Z)
+        0, 1, 5, 5, 4, 0, // Far face (+Z)
+        2, 3, 7, 7, 6, 2, // Left face (-X)
+        0, 2, 6, 6, 4, 0, // Right face (+X)
+        1, 3, 7, 7, 5, 1, // Bottom face (-Y)
+        0, 1, 3, 3, 2, 0, // Top face (+Y)
+        4, 5, 7, 7, 6, 4,
     ];
 
     let volume_indices: Vec<u16> = VOLUME_TRI_INDICES.iter().flat_map(|&i| [i]).collect();
