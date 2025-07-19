@@ -11,7 +11,13 @@ use crate::{
     tiles::{BoundingVolume, OrientedBoundingBox},
 };
 
+const EARTH_MIN_RADIUS_M: f64 = 6_350_000.0; // Conservative, accounting for sea-level radius
 const EARTH_RADIUS_M: f64 = 6_371_000.0;
+const EARTH_MAX_TERRAIN_HEIGHT_M: f64 = 10_000.0; // Everest + buffer
+const EARTH_OUTER_BOUND_M: f64 = EARTH_MIN_RADIUS_M + EARTH_MAX_TERRAIN_HEIGHT_M;
+
+const NEAR_MIN: f64 = 0.1; // Never go below this to avoid depth precision issues
+const NEAR_MAX: f64 = 10_000.0; // Upper limit for near to avoid blowing out near plane
 
 #[derive(Debug, Clone)]
 pub struct Camera {
@@ -140,11 +146,19 @@ impl Camera {
     }
 
     /// internal: recompute cam_world and UBO
-    pub fn update(&mut self, far: Option<f64>) -> Matrix4<f64> {
-        // set near/far as before
+    pub fn update(&mut self, distance_to_geom: Option<f64>, far: Option<f64>) -> Matrix4<f64> {
         self.cam_world = self.eye.to_vec();
         let d = self.cam_world.magnitude();
-        self.near = (d - EARTH_RADIUS_M).abs().clamp(0.01, 5000.0);
+
+        let altitude = (d - EARTH_RADIUS_M).max(1.0);
+        let max_distance = distance_to_geom.unwrap_or(altitude);
+
+        // More aggressive scaling for space views
+        let near_scale = if altitude > 50_000.0 { 0.5 } else { 0.25 };
+
+        // Near plane scales with altitude for depth precision and no clipping
+        self.near = (max_distance * near_scale).clamp(NEAR_MIN, NEAR_MAX);
+
         self.far = far.unwrap_or(d);
 
         let proj64 = cgmath::perspective(self.fovy, self.aspect, self.near, self.far);
@@ -304,10 +318,10 @@ pub fn init_camera() -> (Camera, Camera) {
     let up = Vector3::unit_z();
     let camera = Camera::new(Deg(45.0), 1.0, eye, target, up);
 
-    let debug_eye = geodetic_to_ecef_z_up(34.4208, -119.6982, 20000.0);
+    let debug_eye = geodetic_to_ecef_z_up(34.4208, -119.6982, 200.0);
     let debug_eye_pt: Point3<f64> = Point3::new(debug_eye.0, debug_eye.1, debug_eye.2);
     let mut debug_camera = Camera::new(Deg(45.0), 1.0, debug_eye_pt, target, up);
-    debug_camera.update(None);
+    debug_camera.update(None, None);
 
     (camera, debug_camera)
 }
