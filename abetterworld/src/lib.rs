@@ -10,7 +10,7 @@ use camera::Camera;
 mod cache;
 use cache::init_tileset_cache;
 mod content;
-use cgmath::{Deg, EuclideanSpace, Matrix4, SquareMatrix, Vector3, Zero};
+use cgmath::{Deg, EuclideanSpace, InnerSpace, Matrix4, SquareMatrix, Vector3, Zero};
 use decode::init;
 use pager::start_background_tasks;
 
@@ -22,7 +22,7 @@ use crate::{
         build_debug_pipeline, build_depth_buffer, build_frustum_render, build_pipeline,
         FrustumRender, RenderPipeline, MAX_VOLUMES, SIZE_OF_VOLUME,
     },
-    tiles::BoundingVolume,
+    tiles::{BoundingVolume, Ray},
 };
 mod coord_utils;
 mod importer;
@@ -276,71 +276,72 @@ impl SphereRenderer {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) -> Result<(), Box<dyn Error>> {
-        self.debug_camera.write().unwrap().yaw(Deg(0.1));
-        //self.debug_camera.write().unwrap().zoom(-500.0);
+        if let Some(layout) = self.pipeline.texture_bind_group_layout.as_ref() {
+            self.content.update_render(device, queue, layout)?;
+        }
+        let latest_render = self.content.latest_render.read().unwrap();
 
-        let camera_pos = Vector3::zero();
+        //self.debug_camera.write().unwrap().yaw(Deg(0.1));
+        //self.debug_camera.write().unwrap().zoom(-500.0);
+        self.debug_camera.write().unwrap().update(None, None);
+
         let projected_cam = if let Ok(mut camera) = self.camera.write() {
-            camera.update(None)
+            let camera_pos = camera.eye.to_vec();
+            // start past the debug camera
+            let mut volume_counter = 1;
+            let mut min_distance = f64::MAX;
+            for tile in latest_render.iter() {
+                let obb = tile.volume.to_aabb();
+                let distance = obb.ray_intersect(&Ray {
+                    origin: camera_pos,
+                    direction: -camera_pos.normalize(),
+                });
+                if distance.is_some() && distance.unwrap() < min_distance {
+                    min_distance = distance.unwrap();
+                }
+
+                let corners = tile.volume.corners(Vector3::zero());
+                let new_frustum_vertices: Vec<DebugVertex> = corners
+                    .iter()
+                    .map(|p| DebugVertex {
+                        position: [p.x as f32, p.y as f32, p.z as f32],
+                        color: [1.0, 1.0, 0.25, 0.1],
+                    })
+                    .collect();
+
+                if volume_counter >= MAX_VOLUMES {
+                    //eprintln!("Hit maximum number of volumes");
+                } else {
+                    queue.write_buffer(
+                        &self.frustum_render.vertex_buffer,
+                        volume_counter * SIZE_OF_VOLUME,
+                        bytemuck::cast_slice(&new_frustum_vertices),
+                    );
+                    volume_counter += 1;
+                }
+            }
+            camera.update(Some(min_distance), None)
         } else {
             Matrix4::identity()
         };
 
-        self.debug_camera.write().unwrap().update(None);
-
-        if let Some(layout) = self.pipeline.texture_bind_group_layout.as_ref() {
-            self.content.update_render(device, queue, layout)?;
-        }
-
         let mut counter = 0;
-
-        let latest_in_range = self.content.latest_in_range.blocking_read();
-        let latest_loaded = self.content.latest_loaded.blocking_read();
-        let latest_render = self.content.latest_render.read().unwrap();
-
-        // start past the debug camera
-        let mut volume_counter = 1;
-
-        /*
-            println!("latest_render {} tiles", latest_render.len());
-            println!("latest_loaded {} tiles", latest_loaded.len());
-            println!("latest_in_range {} tiles", latest_in_range.len());
-        */
         for tile in latest_render.iter() {
-            let corners = tile.volume.corners(camera_pos);
-            let new_frustum_vertices: Vec<DebugVertex> = corners
-                .iter()
-                .map(|p| DebugVertex {
-                    position: [p.x as f32, p.y as f32, p.z as f32],
-                    color: [1.0, 1.0, 0.25, 0.1],
-                })
-                .collect();
-
-            if volume_counter >= MAX_VOLUMES {
-                //eprintln!("Hit maximum number of volumes");
-            } else {
-                queue.write_buffer(
-                    &self.frustum_render.vertex_buffer,
-                    volume_counter * SIZE_OF_VOLUME,
-                    bytemuck::cast_slice(&new_frustum_vertices),
-                );
-                volume_counter += 1;
-            }
-
             for (_i, node) in tile.nodes.iter().enumerate() {
                 let projected = projected_cam * node.transform;
                 let uniformed = matrix::decompose_matrix64_to_uniform(&projected);
                 let matrix_bytes = bytemuck::bytes_of(&uniformed);
 
                 /*
-                let radius = 6_378_137.0;
-                let distance: f64 = radius * 2.0;
-                let eye = Vector3::new(0.0, distance, 0.0);
-                let projected_eye = projected_cam * Matrix4::from_translation(eye);
+                    let radius = 6_378_137.0;
+                    let distance: f64 = radius * 2.0;
+                    let eye = Vector3::new(0.0, distance, 0.0);
+                    let projected_eye = projected_cam * Matrix4::from_translation(eye);
 
-                println!("projected_eye: {:?}", projected_eye); */
-
-                /*                 println!(
+                    println!("projected_eye: {:?}", projected_eye);
+                */
+                /*
+                    println!(
                         "Node {}: Transform: {:?}, Cam: {:?}, Projected: {:?}, Unformed: {:?}",
                         i, node.transform, projected_cam, projected, uniformed
                     );
