@@ -145,7 +145,7 @@ impl TilesetCache {
     }
 
     pub fn get(&self, key: &str) -> Option<(String, Bytes)> {
-        let mut map = self.map.lock()?;
+        let mut map = self.map.lock().unwrap();
         if let Some((ct, data)) = map.get(key).cloned() {
             return Some((ct, data));
         }
@@ -183,7 +183,7 @@ impl TilesetCache {
     }
 
     pub fn insert(&self, key: String, content_type: String, bytes: Bytes) {
-        let mut map = self.map.lock()?;
+        let mut map = self.map.lock().unwrap();
         map.put(key.clone(), (content_type.clone(), bytes.clone()));
 
         let entry = DiskCacheEntry {
@@ -210,7 +210,7 @@ impl TilesetCache {
     }
 
     pub fn clear(&self) {
-        let mut map = self.map.lock()?;
+        let mut map = self.map.lock().unwrap();
         map.clear();
 
         #[cfg(not(target_arch = "wasm32"))]

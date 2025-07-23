@@ -1,5 +1,8 @@
+use std::mem;
+
 use crate::content::Mesh;
 use crate::content::Tile;
+use crate::content::TileState;
 use crate::download::download_content;
 use crate::errors::AbwError;
 use crate::errors::TileLoadingContext;
@@ -12,11 +15,7 @@ use crate::importer::upload_textures_to_gpu;
 use reqwest::blocking::Client;
 use wgpu::util::DeviceExt;
 
-pub fn download_content_for_tile(
-    client: &Client,
-    key: &str,
-    load: &TileToLoad,
-) -> Result<Vec<u8>, AbwError> {
+fn download_content_for_tile(client: &Client, key: &str, load: &Tile) -> Result<Vec<u8>, AbwError> {
     let (content_type, bytes) = download_content(&client, &load.uri, key, load.session.as_deref())?;
 
     if content_type != "model/gltf-binary" {
@@ -37,7 +36,7 @@ pub fn download_content_for_tile(
     Ok(bytes.to_vec())
 }
 
-pub fn process_content_bytes(load: &Tile, bytes: Vec<u8>) -> Result<ContentLoaded, AbwError> {
+fn process_content_bytes(load: &mut Tile, bytes: Vec<u8>) -> Result<(), AbwError> {
     let (gltf_json, gltf_bin) =
         parse_glb(&bytes).tile_loading(&format!("Failed to parse GLB: URI: {}", load.uri,))?;
 
@@ -53,58 +52,82 @@ pub fn process_content_bytes(load: &Tile, bytes: Vec<u8>) -> Result<ContentLoade
     let nodes = build_nodes(&gltf_json)
         .tile_loading(&format!("Failed to parse GLB nodes: URI: {}", load.uri,))?;
 
-    Ok(ContentLoaded {
-        uri: load.uri.to_string(),
-        volume: load.volume.clone(),
+    load.state = TileState::Decoded {
         nodes,
         meshes,
         textures,
         materials,
-    })
+    };
+
+    Ok(())
 }
 
-pub fn content_load(client: &Client, key: &str, tile: &Tile) -> Result<ContentLoaded, AbwError> {
+pub fn content_load(client: &Client, key: &str, tile: &mut Tile) -> Result<(), AbwError> {
+    if tile.state != TileState::ToLoad {
+        return Err(AbwError::TileLoading(format!(
+            "Tile is not in ToLoad state: {}",
+            tile.uri
+        )));
+    }
     let data = download_content_for_tile(client, key, &tile)?;
-    process_content_bytes(&tile, data)
+    process_content_bytes(tile, data)
 }
 
-pub fn content_render(
+pub fn content_render_setup(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     texture_bind_group_layout: &wgpu::BindGroupLayout,
-    content: &ContentLoaded,
-) -> Result<ContentRender, std::io::Error> {
-    let textures =
-        upload_textures_to_gpu(device, queue, &content.textures, texture_bind_group_layout);
+    tile: &mut Tile,
+) -> Result<(), AbwError> {
+    // hacky way to get ownership of decoded tile state
+    let decoded = match mem::replace(&mut tile.state, TileState::Invalid) {
+        TileState::Decoded {
+            nodes,
+            meshes,
+            textures,
+            materials,
+        } => (nodes, meshes, textures, materials),
+        other => {
+            tile.state = other; // restore original state
+            return Err(AbwError::TileLoading(
+                "Tile is not in Decoded state".to_owned(),
+            ));
+        }
+    };
 
-    let mut return_meshes = Vec::new();
-    for mesh in &content.meshes {
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Vertex Buffer"),
-            contents: bytemuck::cast_slice(mesh.as_vertex_slice()),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Index Buffer"),
-            contents: bytemuck::cast_slice(mesh.as_index_slice()),
-            usage: wgpu::BufferUsages::INDEX,
-        });
-        let num_indices = mesh.as_index_slice().len() as u32;
+    let (nodes, meshes, textures, materials) = decoded;
 
-        return_meshes.push(Mesh {
-            vertex_buffer,
-            index_buffer,
-            num_indices,
-            material_index: mesh.material_index,
-        });
-    }
+    let textures = upload_textures_to_gpu(device, queue, &textures, texture_bind_group_layout);
 
-    Ok(ContentRender {
-        uri: content.uri.clone(),
-        volume: content.volume.clone(),
-        nodes: content.nodes.clone(),
+    let return_meshes = meshes
+        .into_iter()
+        .map(|mesh| {
+            let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Vertex Buffer"),
+                contents: bytemuck::cast_slice(mesh.as_vertex_slice()),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+            let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Index Buffer"),
+                contents: bytemuck::cast_slice(mesh.as_index_slice()),
+                usage: wgpu::BufferUsages::INDEX,
+            });
+            let num_indices = mesh.as_index_slice().len() as u32;
+
+            Mesh {
+                vertex_buffer,
+                index_buffer,
+                num_indices,
+                material_index: mesh.material_index,
+            }
+        })
+        .collect();
+
+    tile.state = TileState::Renderable {
+        nodes,
         meshes: return_meshes,
-        textures: textures,
-        materials: content.materials.clone(),
-    })
+        textures: textures.into_iter().map(|t| t.into()).collect(),
+        materials,
+    };
+    Ok(())
 }

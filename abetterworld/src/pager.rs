@@ -7,7 +7,7 @@ use std::time::Duration;
 use threadpool::ThreadPool;
 
 use crate::camera::Camera;
-use crate::content::TileState;
+use crate::content::{Tile, TileState};
 use crate::errors::AbwError;
 use crate::tile_manager::TileManager;
 use crate::tiles::content_load;
@@ -27,14 +27,14 @@ fn wait_longer_delay() {
 pub fn start_pager(
     camera_source: Arc<RwLock<Camera>>,
     tile_manager: Arc<TileManager>,
-    main_thread_sender: SyncSender<crate::content::Tile>,
+    main_thread_sender: SyncSender<Tile>,
 ) -> Result<(), AbwError> {
-    let max_threads = 20;
-    let (sender, receiver) = sync_channel(max_threads * 2);
+    let max_loader_threads = 20;
+    let (sender, receiver) = sync_channel(max_loader_threads * 2);
 
     let mut tileset_pager = TileSetImporter::new(sender, tile_manager);
     {
-        thread::spawn(|| loop {
+        thread::spawn(move || loop {
             let camera_data = if let Ok(camera) = camera_source.read() {
                 camera.refinement_data()
             } else {
@@ -50,23 +50,26 @@ pub fn start_pager(
 
     {
         thread::spawn(move || {
-            let pool = ThreadPool::new(max_threads);
+            let pool = ThreadPool::new(max_loader_threads);
             let client = Client::new();
 
             loop {
                 match receiver.recv() {
-                    Ok(tile) => {
+                    Ok(mut tile) => {
+                        let client_clone = client.clone();
+                        let sender_clone = main_thread_sender.clone();
                         pool.execute(move || {
                             if tile.state == TileState::ToLoad {
-                                let loaded_tile = content_load(&client, GOOGLE_API_KEY, &tile)
+                                content_load(&client_clone, GOOGLE_API_KEY, &mut tile)
                                     .unwrap_or_else(|e| log::error!("Failed to load tile: {}", e));
 
-                                if matches!(loaded_tile.state, TileState::Decoded { .. }) {
-                                    if let Err(e) = main_thread_sender.send(loaded_tile) {
+                                if matches!(tile.state, TileState::Decoded { .. }) {
+                                    // you're almost there
+                                    if let Err(e) = sender_clone.send(tile) {
                                         log::error!("Failed to send tile to main thread: {}", e);
                                     }
                                 } else {
-                                    log::warn!("Tile not in decoded state: {}", loaded_tile.uri);
+                                    log::warn!("Tile not in decoded state: {}", tile.uri);
                                 }
                             }
                         });
@@ -77,7 +80,7 @@ pub fn start_pager(
                     }
                 }
 
-                wait_short_delay(); // Optional
+                wait_short_delay();
             }
         });
     }
