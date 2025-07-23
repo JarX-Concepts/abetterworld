@@ -26,7 +26,7 @@ struct DiskCacheEntry {
 
 #[derive(Debug)]
 pub struct TilesetCache {
-    pub map: AsyncMutex<LruCache<String, (String, Bytes)>>,
+    pub map: Mutex<LruCache<String, (String, Bytes)>>,
     #[cfg(not(target_arch = "wasm32"))]
     file_lock: Arc<Mutex<()>>,
     #[cfg(target_arch = "wasm32")]
@@ -34,8 +34,8 @@ pub struct TilesetCache {
 }
 
 impl TilesetCache {
-    pub async fn new() -> Self {
-        let map = AsyncMutex::new(LruCache::new(LRU_CACHE_CAPACITY));
+    pub fn new() -> Self {
+        let map = Mutex::new(LruCache::new(LRU_CACHE_CAPACITY));
 
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -146,8 +146,8 @@ impl TilesetCache {
         Ok(id)
     }
 
-    pub async fn get(&self, key: &str) -> Option<(String, Bytes)> {
-        let mut map = self.map.lock().await;
+    pub fn get(&self, key: &str) -> Option<(String, Bytes)> {
+        let mut map = self.map.lock()?;
         if let Some((ct, data)) = map.get(key).cloned() {
             return Some((ct, data));
         }
@@ -184,8 +184,8 @@ impl TilesetCache {
         None
     }
 
-    pub async fn insert(&self, key: String, content_type: String, bytes: Bytes) {
-        let mut map = self.map.lock().await;
+    pub fn insert(&self, key: String, content_type: String, bytes: Bytes) {
+        let mut map = self.map.lock()?;
         map.put(key.clone(), (content_type.clone(), bytes.clone()));
 
         let entry = DiskCacheEntry {
@@ -211,8 +211,8 @@ impl TilesetCache {
         }
     }
 
-    pub async fn clear(&self) {
-        let mut map = self.map.lock().await;
+    pub fn clear(&self) {
+        let mut map = self.map.lock()?;
         map.clear();
 
         #[cfg(not(target_arch = "wasm32"))]
@@ -255,8 +255,8 @@ use once_cell::sync::OnceCell;
 pub static TILESET_CACHE: OnceCell<Arc<TilesetCache>> = OnceCell::new();
 
 #[cfg(not(target_arch = "wasm32"))]
-pub async fn init_tileset_cache() -> Arc<TilesetCache> {
-    let cache = Arc::new(TilesetCache::new().await);
+pub fn init_tileset_cache() -> Arc<TilesetCache> {
+    let cache = Arc::new(TilesetCache::new());
     TILESET_CACHE
         .set(cache.clone())
         .expect("TILESET_CACHE was already initialized");
