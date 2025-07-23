@@ -8,7 +8,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_insert_get_lru_disk_roundtrip() {
-        init_tileset_cache().await;
+        init_tileset_cache();
 
         let cache = get_tileset_cache().expect("Cache should be initialized");
         let base_key = "test-key";
@@ -16,16 +16,14 @@ mod tests {
         let value = Bytes::from_static(b"hello-payload");
 
         // Insert a key
-        cache
-            .insert(
-                base_key.to_string(),
-                content_type.to_string(),
-                value.clone(),
-            )
-            .await;
+        cache.insert(
+            base_key.to_string(),
+            content_type.to_string(),
+            value.clone(),
+        );
 
         // Get from memory
-        let result = cache.get(base_key).await;
+        let result = cache.get(base_key);
         assert!(result.is_some());
         let (ct, val) = result.unwrap();
         assert_eq!(ct, content_type);
@@ -35,16 +33,14 @@ mod tests {
         for i in 0..1024 {
             let key = format!("key-{}", i);
             let val = Bytes::from(vec![i as u8; 32]);
-            cache
-                .insert(key.clone(), "application/test".to_string(), val.clone())
-                .await;
+            cache.insert(key.clone(), "application/test".to_string(), val.clone());
 
-            let found = cache.get(&key).await;
+            let found = cache.get(&key);
             assert!(found.is_some(), "Expected to find {}", key);
         }
 
         let in_memory = {
-            let locked_map = cache.map.lock().await;
+            let locked_map = cache.map.lock().unwrap();
             locked_map.peek(base_key).cloned()
         };
         assert!(
@@ -53,7 +49,7 @@ mod tests {
         );
 
         // But it should still be on disk
-        let result = cache.get(base_key).await;
+        let result = cache.get(base_key);
         assert!(
             result.is_some(),
             "Expected base_key to be recovered from disk"

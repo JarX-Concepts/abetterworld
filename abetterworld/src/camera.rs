@@ -1,15 +1,12 @@
-use bytemuck::{Pod, Zeroable};
+use crate::{
+    coord_utils::geodetic_to_ecef_z_up,
+    matrix::{decompose_matrix64_to_uniform, Uniforms},
+    tilesets::CameraRefinementData,
+    volumes::BoundingVolume,
+};
 use cgmath::{
     Deg, EuclideanSpace, InnerSpace, Matrix, Matrix4, Point3, Quaternion, Rotation, Rotation3,
     SquareMatrix, Vector2, Vector3, Vector4, Zero,
-};
-
-use crate::{
-    camera,
-    coord_utils::geodetic_to_ecef_z_up,
-    matrix::{decompose_matrix64_to_uniform, Uniforms},
-    tiles::OrientedBoundingBox,
-    tilesets::{BoundingVolume, CameraRefinementData},
 };
 
 const EARTH_MIN_RADIUS_M: f64 = 6_350_000.0; // Conservative, accounting for sea-level radius
@@ -236,48 +233,6 @@ impl Camera {
         println!("True");
 
         true
-    }
-
-    pub fn needs_refinement(
-        &self,
-        bounding_volume: &BoundingVolume,
-        geometric_error: f64,
-        screen_height: f64,
-        sse_threshold: f64,
-    ) -> bool {
-        // 1. Frustum test
-        /*         if !self.is_bounding_volume_visible(bounding_volume) {
-            return false;
-        } */
-
-        if !geometric_error.is_finite() || geometric_error > 1e20 {
-            return true; // Always refine root/sentinel
-        }
-
-        let obb = bounding_volume.to_obb();
-        let cam_pos = self.cam_world;
-        let closest_point = obb.closest_point(cam_pos);
-
-        let is_inside = (closest_point - cam_pos).magnitude() < f64::EPSILON;
-        let dist = if is_inside {
-            0.0
-        } else {
-            let diagonal = obb.half_axes.iter().map(|a| a.magnitude()).sum::<f64>() * 2.0;
-            (closest_point - cam_pos).magnitude().max(diagonal * 0.01)
-        };
-
-        if dist > self.far {
-            //return false; // far away, no need to refine
-        }
-
-        // 3. Compute vertical FOV (in radians)
-        let vertical_fov = self.fovy.0.to_radians();
-
-        // 4. SSE formula
-        let sse = (geometric_error * screen_height) / (dist * (vertical_fov * 0.5).tan() * 2.0);
-
-        // 5. Needs refinement?
-        sse > sse_threshold
     }
 
     pub fn frustum_corners(&self) -> [Point3<f64>; 8] {

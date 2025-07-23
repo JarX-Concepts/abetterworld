@@ -14,6 +14,7 @@ pub struct Tile {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TileState {
+    Invalid,
     ToLoad,
     Decoded {
         nodes: Vec<Node>,
