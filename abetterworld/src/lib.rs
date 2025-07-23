@@ -25,14 +25,18 @@ use crate::{
     tiles::{BoundingVolume, Ray},
 };
 mod coord_utils;
+mod download;
 mod errors;
+mod helpers;
 mod importer;
 mod input;
 mod matrix;
 mod pager;
 mod rendering;
 mod tests;
+mod tile_manager;
 mod tilesets;
+mod volumes;
 
 pub struct UniformDataBlob {
     pub data: Vec<u8>,

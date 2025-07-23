@@ -1,9 +1,7 @@
 use bytes::Bytes;
 use lru::LruCache;
-use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
-use tokio::sync::Mutex as AsyncMutex;
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::{fs, path::Path};
@@ -239,12 +237,9 @@ impl TilesetCache {
 
     #[cfg(not(target_arch = "wasm32"))]
     pub fn disk_path_for(key: &str) -> String {
-        use hex;
-        use sha2::{Digest, Sha256};
-        let mut hasher = Sha256::new();
-        hasher.update(key.as_bytes());
-        let hash = hasher.finalize();
-        let encoded = hex::encode(hash);
+        use crate::helpers::hash_uri;
+
+        let encoded = hash_uri(key);
         format!("{}/{}.json", TILESET_CACHE_DIR, encoded)
     }
 }

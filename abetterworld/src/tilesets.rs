@@ -1,23 +1,21 @@
-use crate::cache::get_tileset_cache;
+use crate::content::{Tile, TileState};
+use crate::download::download_content;
 use crate::errors::{AbwError, TileLoadingContext};
-use crate::Camera;
+use crate::helpers::hash_uri;
+use crate::tile_manager::TileManager;
+use crate::volumes::BoundingVolume;
 use bytes::Bytes;
+use cgmath::{Deg, InnerSpace, Vector3};
 use reqwest::blocking::Client;
 use serde::Deserialize;
+use std::collections::HashSet;
+use std::sync::mpsc::SyncSender;
+use std::sync::Arc;
 use url::Url;
-
-const GOOGLE_API_KEY: &str = "AIzaSyDrSNqujmAmhhZtenz6MEofEuITd3z0JM0";
-const GOOGLE_API_URL: &str = "https://tile.googleapis.com/v1/3dtiles/root.json";
 
 #[derive(Debug, Deserialize)]
 struct GltfTileset {
     root: GltfTile,
-}
-
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq)]
-pub struct BoundingVolume {
-    #[serde(rename = "box")]
-    bounding_box: [f64; 12],
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -36,13 +34,23 @@ pub struct GltfTile {
     children: Option<Vec<GltfTile>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct TileSetImporter {
     client: Client,
-    url: String,
-    key: String,
+    sender: SyncSender<Tile>,
+    tile_manager: Arc<TileManager>,
+    last_pass_tiles: HashSet<u64>,
+    current_pass_tiles: HashSet<u64>,
 }
 
+#[derive(Debug, Clone)]
+pub struct CameraRefinementData {
+    pub position: Vector3<f64>,
+    pub far: f64,
+    pub fovy: Deg<f64>,
+}
+
+// This is not optimal (make a custom implementation that doesn't allocate extra strings)
 fn resolve_url(base: &str, relative: &str) -> Result<String, AbwError> {
     use url::Url;
     let mut base_url = Url::parse(base).tile_loading("invalid base url")?;
@@ -75,39 +83,102 @@ fn extract_session(url: &str) -> Option<&str> {
     url.split_once("session=").map(|(_, session)| session)
 }
 
+fn needs_refinement(
+    camera: &CameraRefinementData,
+    bounding_volume: &BoundingVolume,
+    geometric_error: f64,
+    screen_height: f64,
+    sse_threshold: f64,
+) -> bool {
+    if !geometric_error.is_finite() || geometric_error > 1e20 {
+        return true; // Always refine root/sentinel
+    }
+
+    let obb = bounding_volume.to_obb();
+    let cam_pos = camera.position;
+    let closest_point = obb.closest_point(cam_pos);
+
+    let is_inside = (closest_point - cam_pos).magnitude() < f64::EPSILON;
+    let dist = if is_inside {
+        0.0
+    } else {
+        let diagonal = obb.half_axes.iter().map(|a| a.magnitude()).sum::<f64>() * 2.0;
+        (closest_point - cam_pos).magnitude().max(diagonal * 0.01)
+    };
+
+    if dist > camera.far {
+        //return false; // far away, no need to refine
+    }
+
+    // 3. Compute vertical FOV (in radians)
+    let vertical_fov = camera.fovy.0.to_radians();
+
+    // 4. SSE formula
+    let sse = (geometric_error * screen_height) / (dist * (vertical_fov * 0.5).tan() * 2.0);
+
+    // 5. Needs refinement?
+    sse > sse_threshold
+}
+
 impl TileSetImporter {
-    pub fn new(client: &Client, key: &str, url: &str) -> Self {
+    pub fn new(sender: Sender<Tile>, tile_manager: Arc<TileManager>) -> Self {
         Self {
-            client: client.clone(),
-            key: key.to_string(),
-            url: url.to_string(),
+            client: Client::new(),
+            sender,
+            tile_manager,
+            last_pass_tiles: HashSet::new(),
+            current_pass_tiles: HashSet::new(),
         }
     }
 
-    pub fn go(self, camera: &Camera) -> Result<(), AbwError> {
-        return self.import_tileset(camera, self.url.as_str(), None);
+    pub fn go(
+        &mut self,
+        camera: &CameraRefinementData,
+        url: &str,
+        key: &str,
+    ) -> Result<(), AbwError> {
+        let ret = self.import_tileset(camera, url, key, None);
+
+        // Compute tiles to unload
+        let tiles_to_unload: Vec<u64> = self
+            .last_pass_tiles
+            .iter()
+            .filter(|tile| !self.current_pass_tiles.contains(tile))
+            .copied()
+            .collect();
+
+        // Unload the ones not in the current pass
+        if !tiles_to_unload.is_empty() {
+            self.tile_manager.unload_tiles(tiles_to_unload);
+        }
+
+        // Prepare for next pass
+        self.last_pass_tiles = std::mem::take(&mut self.current_pass_tiles);
+        self.current_pass_tiles.clear();
+
+        ret
     }
 
     fn import_tileset(
-        &self,
-        camera: &Camera,
-
+        &mut self,
+        camera: &CameraRefinementData,
         url: &str,
+        key: &str,
         session: Option<&str>,
     ) -> Result<(), AbwError> {
-        let (content_type, bytes) = self.download_content(url, &self.key, session)?;
+        let (content_type, bytes) = self.download_content(url, key, session)?;
 
         match content_type.as_str() {
             "application/json" | "application/json; charset=UTF-8" => {
                 let tileset: GltfTileset =
                     serde_json::from_slice(&bytes).tile_loading("Failed to parse tileset JSON")?;
 
-                self.process_tileset(camera, &tileset.root, url, &self.key, session)
+                self.process_tileset(camera, &tileset.root, url, key, session)
             }
             _ => Err(AbwError::TileLoading(
                 format!(
                     "Unsupported content type: {} for {} ({})",
-                    content_type, url, self.key
+                    content_type, url, key
                 )
                 .into(),
             )),
@@ -115,8 +186,8 @@ impl TileSetImporter {
     }
 
     fn process_tileset(
-        &self,
-        camera: &Camera,
+        &mut self,
+        camera: &CameraRefinementData,
         tile_info: &GltfTile,
         tileset_url: &str,
         key: &str,
@@ -124,7 +195,8 @@ impl TileSetImporter {
     ) -> Result<(), AbwError> {
         let mut added_geom = false;
 
-        let needs_refinement = camera.needs_refinement(
+        let needs_refinement = needs_refinement(
+            camera,
             &tile_info.bounding_volume,
             tile_info.geometric_error,
             1024.0,
@@ -137,13 +209,29 @@ impl TileSetImporter {
             let new_session = extract_session(&tile_url).or_else(|| session);
 
             if is_nested_tileset(&tile_url) {
-                let nested = self.import_tileset(camera, &tile_url, new_session)?;
+                self.import_tileset(camera, &tile_url, key, new_session)?;
             } else if is_glb(&tile_url)
                 && (refine_mode == "ADD" || tile_info.children.is_none() || !needs_refinement)
             {
                 added_geom = true;
-                // push this tile into the next thread...
-                // use std::sync::mpsc::channel
+
+                let tile_id = hash_uri(&tile_url);
+
+                if !self.current_pass_tiles.contains(&tile_id)
+                    && !self.last_pass_tiles.contains(&tile_id)
+                {
+                    self.current_pass_tiles.insert(tile_id);
+
+                    // off you go; good luck; god speed
+                    self.sender.send(Tile {
+                        parent: None,
+                        id: tile_id,
+                        uri: tile_url,
+                        session: None, // get rid of this if we don't need it...
+                        volume: tile_info.bounding_volume,
+                        state: TileState::ToLoad,
+                    });
+                }
             } else if !is_glb(&tile_url) {
                 // these are weird
                 // https://tile.googleapis.com/v1/3dtiles/datasets/CgIYAQ/files/AJVsH2xhxJPWKbFgSv4QaTrl7SbTaFlJnvfES7rtU4UHj6Lt5ys_EykyPb_P6NdvvMm8XTjWA6bKUyTq94uFkec53CIZF33frCoSLMBSQiOnIlPsKc0G8BsSlYvL.glb?session=CPecuaT_6-PRSBDl8uHDBg
@@ -168,58 +256,6 @@ impl TileSetImporter {
         key: &str,
         session: Option<&str>,
     ) -> Result<(String, Bytes), AbwError> {
-        // Try cache first
-        if let Some(cache) = get_tileset_cache() {
-            if let Some((content_type, bytes)) = cache.get(content_url) {
-                return Ok((content_type, bytes));
-            }
-        }
-
-        let mut query_params = vec![("key", key)];
-
-        if let Some(session) = session.as_deref() {
-            query_params.push(("session", session));
-        }
-
-        let response = self
-            .client
-            .get(content_url)
-            .query(&query_params)
-            .send()
-            .tile_loading(&format!("Failed to download content from {}", content_url))?;
-
-        let content_type = response
-            .headers()
-            .get("content-type")
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| "unknown".to_string());
-
-        let expected_len = response
-            .headers()
-            .get("content-length")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|s| s.parse::<usize>().ok());
-
-        let bytes = response.bytes().tile_loading(&format!(
-            "Failed to access byte content from {}",
-            content_url
-        ))?;
-
-        if let Some(expected) = expected_len {
-            if bytes.len() < expected {
-                log::error!(
-                    "Truncated content: expected {} bytes, got {}",
-                    expected,
-                    bytes.len()
-                );
-            }
-        }
-
-        if let Some(cache) = get_tileset_cache() {
-            cache.insert(content_url.to_string(), content_type.clone(), bytes.clone());
-        }
-
-        Ok((content_type, bytes))
+        download_content(&self.client, content_url, key, session)
     }
 }

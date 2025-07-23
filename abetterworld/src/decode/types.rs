@@ -11,20 +11,22 @@ pub struct Vertex {
 }
 
 #[repr(C)]
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct DecodedMesh {
     pub vertices: *mut Vertex,
     pub vertex_count: i32,
     pub indices: *mut u32,
     pub index_count: i32,
 }
+unsafe impl Send for DecodedMesh {}
+unsafe impl Sync for DecodedMesh {}
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct InnerDecodedMesh {
     pub data: DecodedMesh,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct OwnedDecodedMesh {
     pub(crate) inner: Arc<InnerDecodedMesh>,
     pub material_index: Option<usize>,
