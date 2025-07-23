@@ -1,13 +1,10 @@
 // Optimized Tile Content System for Rust + WASM
 use reqwest::Client;
+use std::collections::HashSet;
 use std::error::Error;
+use std::sync::mpsc::channel;
 use std::sync::{Arc, RwLock};
 use threadpool::ThreadPool;
-use tokio::runtime::Builder;
-use tokio::runtime::Runtime;
-
-use std::collections::HashSet;
-use tokio::sync::{Mutex, Semaphore};
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::thread;

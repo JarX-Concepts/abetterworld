@@ -60,12 +60,6 @@ struct GltfTileset {
     root: GltfTile,
 }
 
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq)]
-pub struct BoundingVolume {
-    #[serde(rename = "box")]
-    bounding_box: [f64; 12],
-}
-
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BoundingBox {
     pub min: Vector3<f64>,
@@ -395,7 +389,7 @@ fn extract_session(url: &str) -> Option<String> {
 }
 
 #[async_recursion(?Send)]
-pub async fn process_tileset<F>(
+pub async fn process_tileset_old<F>(
     camera: &Camera,
     state: &ConnectionState,
     on_tile: Arc<F>,
@@ -472,7 +466,7 @@ where
     Ok(tiles)
 }
 
-pub async fn import_tileset<F>(
+pub async fn import_tileset_old<F>(
     camera: &Camera,
     state: &ConnectionState,
     on_tile: Arc<F>,

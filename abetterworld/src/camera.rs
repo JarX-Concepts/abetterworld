@@ -8,7 +8,8 @@ use crate::{
     camera,
     coord_utils::geodetic_to_ecef_z_up,
     matrix::{decompose_matrix64_to_uniform, Uniforms},
-    tiles::{BoundingVolume, OrientedBoundingBox},
+    tiles::OrientedBoundingBox,
+    tilesets::BoundingVolume,
 };
 
 const EARTH_MIN_RADIUS_M: f64 = 6_350_000.0; // Conservative, accounting for sea-level radius
