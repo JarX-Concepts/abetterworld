@@ -9,7 +9,7 @@ use crate::{
     coord_utils::geodetic_to_ecef_z_up,
     matrix::{decompose_matrix64_to_uniform, Uniforms},
     tiles::OrientedBoundingBox,
-    tilesets::BoundingVolume,
+    tilesets::{BoundingVolume, CameraRefinementData},
 };
 
 const EARTH_MIN_RADIUS_M: f64 = 6_350_000.0; // Conservative, accounting for sea-level radius
@@ -106,6 +106,14 @@ impl Camera {
         let new_view = q.rotate_vector(view_vec);
         self.eye = self.target + new_view;
         // up stays the same
+    }
+
+    pub fn refinement_data(&self) -> CameraRefinementData {
+        CameraRefinementData {
+            position: self.cam_world,
+            far: self.far,
+            fovy: self.fovy,
+        }
     }
 
     fn extract_frustum_planes(mat: &Matrix4<f64>) -> [(Vector4<f64>, Vector3<f64>, f64); 6] {

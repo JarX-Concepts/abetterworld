@@ -1,37 +1,35 @@
-use crate::{decode::OwnedDecodedMesh, tiles::BoundingVolume};
+use crate::{decode::OwnedDecodedMesh, volumes::BoundingVolume};
 use cgmath::Matrix4;
 use std::mem;
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ContentInRange {
+pub struct Tile {
+    pub parent: Option<u64>,
+    pub id: u64,
     pub uri: String,
-    pub session: String,
+    pub session: Option<String>,
     pub volume: BoundingVolume,
+    pub state: TileState,
 }
 
-#[derive(Clone)]
-pub struct ContentLoaded {
-    pub uri: String,
-    pub volume: BoundingVolume,
-    pub nodes: Vec<Node>,
-    pub meshes: Vec<OwnedDecodedMesh>,
-    pub textures: Vec<Texture>,
-    pub materials: Vec<Material>,
+#[derive(Debug, Clone, PartialEq)]
+pub enum TileState {
+    ToLoad,
+    Decoded {
+        nodes: Vec<Node>,
+        meshes: Vec<OwnedDecodedMesh>,
+        textures: Vec<Texture>,
+        materials: Vec<Material>,
+    },
+    Renderable {
+        nodes: Vec<Node>,
+        meshes: Vec<Mesh>,
+        textures: Vec<TextureResource>,
+        materials: Vec<Material>,
+    },
 }
 
-// SAFETY: ContentLoaded only contains pointers that are managed elsewhere and are safe to send/share between threads.
-unsafe impl Send for ContentLoaded {}
-unsafe impl Sync for ContentLoaded {}
-
-pub struct ContentRender {
-    pub uri: String,
-    pub volume: BoundingVolume,
-    pub nodes: Vec<Node>,
-    pub meshes: Vec<Mesh>,
-    pub textures: Vec<TextureResource>,
-    pub materials: Vec<Material>,
-}
-
+#[derive(Debug, Clone, PartialEq)]
 pub struct TextureResource {
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
@@ -39,7 +37,7 @@ pub struct TextureResource {
     pub bind_group: wgpu::BindGroup,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Texture {
     pub width: u32,
     pub height: u32,
@@ -47,31 +45,24 @@ pub struct Texture {
     // add more metadata as needed (mime, index, etc)
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Node {
     pub transform: Matrix4<f64>,
     pub mesh_indices: Vec<usize>,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Material {
     pub base_color_texture_index: Option<usize>,
     // Add more as needed (base_color_factor, metallic_roughness_texture, etc.)
 }
 
+#[derive(Debug, Clone, PartialEq)]
 pub struct Mesh {
     pub vertex_buffer: wgpu::Buffer,
     pub index_buffer: wgpu::Buffer,
     pub num_indices: u32,
     pub material_index: Option<usize>,
-}
-
-pub struct Tile {
-    glb_name: String,
-    nodes: Vec<Node>,
-    meshes: Vec<Mesh>,
-    textures: Vec<TextureResource>,
-    materials: Vec<Material>,
 }
 
 #[repr(C)]
