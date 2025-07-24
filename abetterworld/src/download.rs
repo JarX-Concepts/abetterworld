@@ -19,6 +19,8 @@ pub fn download_content(
         }
     }
 
+    log::info!("Downloading content from: {}", content_url);
+
     let mut query_params = vec![("key", key)];
 
     if let Some(session) = session.as_deref() {

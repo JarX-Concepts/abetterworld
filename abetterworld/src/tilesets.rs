@@ -231,24 +231,26 @@ impl TileSetImporter {
                 let tile_url = add_key_and_session(&tile_url, key, new_session);
                 let tile_id = hash_uri(&tile_url);
 
-                if !self.current_pass_tiles.contains(&tile_id)
-                    && !self.last_pass_tiles.contains(&tile_id)
-                {
+                if !self.current_pass_tiles.contains(&tile_id) {
                     self.current_pass_tiles.insert(tile_id);
 
-                    let new_tile = Tile {
-                        parent: None,
-                        id: tile_id,
-                        uri: tile_url,
-                        session: None,
-                        volume: tile_info.bounding_volume,
-                        state: TileState::ToLoad,
-                    };
+                    if !self.last_pass_tiles.contains(&tile_id) {
+                        let new_tile = Tile {
+                            parent: None,
+                            id: tile_id,
+                            uri: tile_url,
+                            session: None,
+                            volume: tile_info.bounding_volume,
+                            state: TileState::ToLoad,
+                        };
 
-                    // off you go; good luck; god speed
-                    self.sender
-                        .send(new_tile)
-                        .map_err(|e| AbwError::TileLoading(e.to_string()))?;
+                        //self.tile_manager.add_tile(new_tile);
+
+                        // off you go; good luck; god speed
+                        self.sender
+                            .send(new_tile)
+                            .map_err(|e| AbwError::TileLoading(e.to_string()))?;
+                    }
                 }
             } else if !is_glb(&tile_url) {
                 // these are weird
