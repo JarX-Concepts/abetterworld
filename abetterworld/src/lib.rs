@@ -121,8 +121,8 @@ impl SphereRenderer {
         let camera_source = Arc::new(RwLock::new(camera));
         let debug_camera_source = Arc::new(RwLock::new(debug_camera));
 
-        let max_tiles_per_frame = 500;
-        let (sender, receiver) = sync_channel(max_tiles_per_frame);
+        let max_new_tiles_per_frame = 5;
+        let (sender, receiver) = sync_channel(max_new_tiles_per_frame);
 
         let _ = init();
         let _ = start_pager(debug_camera_source.clone(), tile_content.clone(), sender);
@@ -150,70 +150,72 @@ impl SphereRenderer {
         queue: &wgpu::Queue,
         device: &wgpu::Device,
     ) {
-        let latest_render = self.content.tileset.read().unwrap();
-        if !latest_render.is_empty() {
-            render_pass.set_pipeline(&self.pipeline.pipeline);
+        {
+            let latest_render = self.content.tileset.read().unwrap();
+            if !latest_render.is_empty() {
+                render_pass.set_pipeline(&self.pipeline.pipeline);
 
-            let mut counter = 0;
-            queue.write_buffer(
-                &self.pipeline.transforms.uniform_buffer,
-                0,
-                &self.pipeline.transforms.data,
-            );
+                let mut counter = 0;
+                queue.write_buffer(
+                    &self.pipeline.transforms.uniform_buffer,
+                    0,
+                    &self.pipeline.transforms.data,
+                );
 
-            for tile in latest_render.iter() {
-                if let TileState::Renderable {
-                    ref nodes,
-                    ref meshes,
-                    ref textures,
-                    ref materials,
-                } = tile.1.state
-                {
-                    let render_it = true; //debug_cam_read.is_bounding_volume_visible(&tile.volume);
+                for tile in latest_render.iter() {
+                    if let TileState::Renderable {
+                        ref nodes,
+                        ref meshes,
+                        ref textures,
+                        ref materials,
+                    } = tile.1.state
+                    {
+                        let render_it = true; //debug_cam_read.is_bounding_volume_visible(&tile.volume);
 
-                    if !render_it {
-                        counter += nodes.len() as u32;
-                        continue;
-                    }
+                        if !render_it {
+                            counter += nodes.len() as u32;
+                            continue;
+                        }
 
-                    for (i, node) in nodes.iter().enumerate() {
-                        render_pass.set_bind_group(
-                            0,
-                            &self.pipeline.transforms.uniform_bind_group,
-                            &[counter * self.pipeline.transforms.aligned_uniform_size as u32],
-                        );
-                        counter += 1;
-
-                        for mesh_index in node.mesh_indices.iter() {
-                            if (*mesh_index as usize) >= meshes.len() {
-                                //println!("Mesh index out of bounds: {}", mesh_index);
-                                continue;
-                            }
-                            let mesh = &meshes[*mesh_index];
-
-                            // Set the vertex and index buffer for this mesh
-                            render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                            render_pass.set_index_buffer(
-                                mesh.index_buffer.slice(..),
-                                wgpu::IndexFormat::Uint32,
+                        for (i, node) in nodes.iter().enumerate() {
+                            render_pass.set_bind_group(
+                                0,
+                                &self.pipeline.transforms.uniform_bind_group,
+                                &[counter * self.pipeline.transforms.aligned_uniform_size as u32],
                             );
+                            counter += 1;
 
-                            // Set the correct material/texture bind group
-                            if let Some(material_index) = mesh.material_index {
-                                let material = &materials[material_index];
-                                if let Some(texture_index) = material.base_color_texture_index {
-                                    let texture_resource = &textures[texture_index];
-                                    // You must have created the bind_group for this texture previously!
-                                    render_pass.set_bind_group(
-                                        1,
-                                        &texture_resource.bind_group,
-                                        &[],
-                                    );
+                            for mesh_index in node.mesh_indices.iter() {
+                                if (*mesh_index as usize) >= meshes.len() {
+                                    //println!("Mesh index out of bounds: {}", mesh_index);
+                                    continue;
                                 }
-                            }
+                                let mesh = &meshes[*mesh_index];
 
-                            // Draw call for this mesh
-                            render_pass.draw_indexed(0..mesh.num_indices, 0, 0..1);
+                                // Set the vertex and index buffer for this mesh
+                                render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                                render_pass.set_index_buffer(
+                                    mesh.index_buffer.slice(..),
+                                    wgpu::IndexFormat::Uint32,
+                                );
+
+                                // Set the correct material/texture bind group
+                                if let Some(material_index) = mesh.material_index {
+                                    let material = &materials[material_index];
+                                    if let Some(texture_index) = material.base_color_texture_index {
+                                        let texture_resource = &textures[texture_index];
+                                        // You must have created the bind_group for this texture previously!
+                                        render_pass.set_bind_group(
+                                            1,
+                                            &texture_resource.bind_group,
+                                            &[],
+                                        );
+                                    }
+                                }
+
+                                // Draw call for this mesh
+                                render_pass.draw_indexed(0..mesh.num_indices, 0, 0..1);
+                            }
                         }
                     }
                 }
@@ -225,8 +227,6 @@ impl SphereRenderer {
     }
 
     fn draw_all_tile_volumes(&self, render_pass: &mut wgpu::RenderPass<'_>, queue: &wgpu::Queue) {
-        let latest_render = self.content.tileset.read().unwrap();
-
         let camera_vp = self.camera.read().unwrap().uniform();
         queue.write_buffer(
             &self.debug_pipeline.transforms.uniform_buffer,
@@ -244,6 +244,7 @@ impl SphereRenderer {
 
         // start past the debug camera
         let mut volume_counter = 1;
+        let latest_render = self.content.tileset.read().unwrap();
         for _tile in latest_render.iter() {
             if volume_counter >= MAX_VOLUMES {
                 //eprintln!("Hit maximum number of volumes");
@@ -305,13 +306,12 @@ impl SphereRenderer {
             });
         }
 
-        let latest_render = self.content.tileset.read().unwrap();
-
         //self.debug_camera.write().unwrap().yaw(Deg(0.1));
         //self.debug_camera.write().unwrap().zoom(-500.0);
         self.debug_camera.write().unwrap().update(None, None);
 
         let projected_cam = if let Ok(mut camera) = self.camera.write() {
+            let latest_render = self.content.tileset.read().unwrap();
             let camera_pos = camera.eye.to_vec();
             // start past the debug camera
             let mut volume_counter = 1;
@@ -351,35 +351,39 @@ impl SphereRenderer {
             Matrix4::identity()
         };
 
-        let mut counter = 0;
-        for tile in latest_render.iter() {
-            if let TileState::Renderable { ref nodes, .. } = tile.1.state {
-                for (_i, node) in nodes.iter().enumerate() {
-                    let projected = projected_cam * node.transform;
-                    let uniformed = matrix::decompose_matrix64_to_uniform(&projected);
-                    let matrix_bytes = bytemuck::bytes_of(&uniformed);
+        {
+            let latest_render = self.content.tileset.read().unwrap();
 
-                    /*
-                        let radius = 6_378_137.0;
-                        let distance: f64 = radius * 2.0;
-                        let eye = Vector3::new(0.0, distance, 0.0);
-                        let projected_eye = projected_cam * Matrix4::from_translation(eye);
+            let mut counter = 0;
+            for tile in latest_render.iter() {
+                if let TileState::Renderable { ref nodes, .. } = tile.1.state {
+                    for (_i, node) in nodes.iter().enumerate() {
+                        let projected = projected_cam * node.transform;
+                        let uniformed = matrix::decompose_matrix64_to_uniform(&projected);
+                        let matrix_bytes = bytemuck::bytes_of(&uniformed);
 
-                        println!("projected_eye: {:?}", projected_eye);
-                    */
-                    /*
-                        println!(
-                            "Node {}: Transform: {:?}, Cam: {:?}, Projected: {:?}, Unformed: {:?}",
-                            i, node.transform, projected_cam, projected, uniformed
-                        );
-                    */
+                        /*
+                            let radius = 6_378_137.0;
+                            let distance: f64 = radius * 2.0;
+                            let eye = Vector3::new(0.0, distance, 0.0);
+                            let projected_eye = projected_cam * Matrix4::from_translation(eye);
 
-                    let start = counter * self.pipeline.transforms.aligned_uniform_size;
-                    let end = start + matrix_bytes.len();
+                            println!("projected_eye: {:?}", projected_eye);
+                        */
+                        /*
+                            println!(
+                                "Node {}: Transform: {:?}, Cam: {:?}, Projected: {:?}, Unformed: {:?}",
+                                i, node.transform, projected_cam, projected, uniformed
+                            );
+                        */
 
-                    self.pipeline.transforms.data[start..end].copy_from_slice(matrix_bytes);
+                        let start = counter * self.pipeline.transforms.aligned_uniform_size;
+                        let end = start + matrix_bytes.len();
 
-                    counter += 1;
+                        self.pipeline.transforms.data[start..end].copy_from_slice(matrix_bytes);
+
+                        counter += 1;
+                    }
                 }
             }
         }

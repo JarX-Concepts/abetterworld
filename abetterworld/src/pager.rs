@@ -29,8 +29,8 @@ pub fn start_pager(
     tile_manager: Arc<TileManager>,
     main_thread_sender: SyncSender<Tile>,
 ) -> Result<(), AbwError> {
-    let max_loader_threads = 200;
-    let (sender, receiver) = sync_channel(max_loader_threads * 200);
+    let max_loader_threads = 20;
+    let (sender, receiver) = sync_channel(max_loader_threads * 2);
 
     let mut tileset_pager = TileSetImporter::new(sender, tile_manager);
     {
@@ -47,7 +47,7 @@ pub fn start_pager(
                 .err()
                 .map(|e| log::error!("Failed to import tileset: {}", e));
 
-            wait_short_delay();
+            //wait_short_delay();
         });
     }
 
@@ -84,8 +84,6 @@ pub fn start_pager(
                         break;
                     }
                 }
-
-                wait_short_delay();
             }
         });
     }
