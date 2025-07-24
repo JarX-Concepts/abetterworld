@@ -121,7 +121,7 @@ impl SphereRenderer {
         let camera_source = Arc::new(RwLock::new(camera));
         let debug_camera_source = Arc::new(RwLock::new(debug_camera));
 
-        let max_tiles_per_frame = 5;
+        let max_tiles_per_frame = 500;
         let (sender, receiver) = sync_channel(max_tiles_per_frame);
 
         let _ = init();
@@ -300,6 +300,8 @@ impl SphereRenderer {
                 tiles::content_render_setup(device, queue, layout, &mut tile).unwrap_or_else(|e| {
                     eprintln!("Failed to setup tile for rendering: {}", e);
                 });
+
+                self.content.add_tile(tile);
             });
         }
 

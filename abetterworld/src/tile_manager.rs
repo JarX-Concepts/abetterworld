@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::RwLock};
 
 #[derive(Debug)]
 pub struct TileManager {
-    pub tileset: RwLock<HashMap<String, Tile>>,
+    pub tileset: RwLock<HashMap<u64, Tile>>,
 }
 
 impl TileManager {
@@ -14,8 +14,15 @@ impl TileManager {
     }
 
     pub fn add_tile(&self, tile: Tile) {
-        let mut tileset = self.tileset.write().unwrap();
-        tileset.insert(tile.uri.clone(), tile);
+        let add_this_tile = if let Ok(tileset_read) = self.tileset.read() {
+            !tileset_read.contains_key(&tile.id)
+        } else {
+            false
+        };
+        if add_this_tile {
+            let mut tileset = self.tileset.write().unwrap();
+            tileset.insert(tile.id, tile);
+        }
     }
 
     pub fn unload_tiles(&self, tiles: Vec<u64>) {
@@ -24,7 +31,7 @@ impl TileManager {
         }
         let mut tileset = self.tileset.write().unwrap();
         for tile in tiles {
-            tileset.remove(&tile.to_string());
+            tileset.remove(&tile);
         }
     }
 }
