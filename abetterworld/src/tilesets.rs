@@ -171,7 +171,10 @@ impl TileSetImporter {
         match content_type.as_str() {
             "application/json" | "application/json; charset=UTF-8" => {
                 let tileset: GltfTileset =
-                    serde_json::from_slice(&bytes).tile_loading("Failed to parse tileset JSON")?;
+                    serde_json::from_slice(&bytes).tile_loading(&format!(
+                        "Failed to parse tileset JSON: {}",
+                        String::from_utf8_lossy(&bytes)
+                    ))?;
 
                 self.process_tileset(camera, &tileset.root, url, key, session)
             }
