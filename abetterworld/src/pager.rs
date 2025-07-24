@@ -42,7 +42,10 @@ pub fn start_pager(
                 continue;
             };
 
-            tileset_pager.go(&camera_data, GOOGLE_API_URL, GOOGLE_API_KEY);
+            tileset_pager
+                .go(&camera_data, GOOGLE_API_URL, GOOGLE_API_KEY)
+                .err()
+                .map(|e| log::error!("Failed to import tileset: {}", e));
 
             wait_short_delay();
         });
