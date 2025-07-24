@@ -13,7 +13,7 @@ use crate::tile_manager::TileManager;
 use crate::tiles::content_load;
 use crate::tilesets::TileSetImporter;
 
-const GOOGLE_API_KEY: &str = "AIzaSyDrSNqujmAmhhZtenz6MEofEuITd3z0JM0";
+const GOOGLE_API_KEY: &str = "AIzaSyD526Czd1rD44BZE2d2R70-fBEdDdf6vZQ";
 const GOOGLE_API_URL: &str = "https://tile.googleapis.com/v1/3dtiles/root.json";
 
 fn wait_short_delay() {
@@ -29,8 +29,8 @@ pub fn start_pager(
     tile_manager: Arc<TileManager>,
     main_thread_sender: SyncSender<Tile>,
 ) -> Result<(), AbwError> {
-    let max_loader_threads = 20;
-    let (sender, receiver) = sync_channel(max_loader_threads * 2);
+    let max_loader_threads = 200;
+    let (sender, receiver) = sync_channel(max_loader_threads * 200);
 
     let mut tileset_pager = TileSetImporter::new(sender, tile_manager);
     {
@@ -74,6 +74,8 @@ pub fn start_pager(
                                 } else {
                                     log::warn!("Tile not in decoded state: {}", tile.uri);
                                 }
+                            } else {
+                                log::warn!("Tile not in load state: {}", tile.uri);
                             }
                         });
                     }

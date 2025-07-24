@@ -83,6 +83,15 @@ fn extract_session(url: &str) -> Option<&str> {
     url.split_once("session=").map(|(_, session)| session)
 }
 
+fn add_key_and_session(url: &str, key: &str, session: Option<&str>) -> String {
+    let mut url = Url::parse(url).unwrap();
+    url.query_pairs_mut().append_pair("key", key);
+    if let Some(session) = session {
+        url.query_pairs_mut().append_pair("session", session);
+    }
+    url.to_string()
+}
+
 fn needs_refinement(
     camera: &CameraRefinementData,
     bounding_volume: &BoundingVolume,
@@ -218,6 +227,8 @@ impl TileSetImporter {
             {
                 added_geom = true;
 
+                // add key and session to the tile_url
+                let tile_url = add_key_and_session(&tile_url, key, new_session);
                 let tile_id = hash_uri(&tile_url);
 
                 if !self.current_pass_tiles.contains(&tile_id)
@@ -225,15 +236,19 @@ impl TileSetImporter {
                 {
                     self.current_pass_tiles.insert(tile_id);
 
-                    // off you go; good luck; god speed
-                    self.sender.send(Tile {
+                    let new_tile = Tile {
                         parent: None,
                         id: tile_id,
                         uri: tile_url,
-                        session: None, // get rid of this if we don't need it...
+                        session: None,
                         volume: tile_info.bounding_volume,
                         state: TileState::ToLoad,
-                    });
+                    };
+
+                    // off you go; good luck; god speed
+                    self.sender
+                        .send(new_tile)
+                        .map_err(|e| AbwError::TileLoading(e.to_string()))?;
                 }
             } else if !is_glb(&tile_url) {
                 // these are weird
