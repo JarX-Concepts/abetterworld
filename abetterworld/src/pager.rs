@@ -29,10 +29,11 @@ pub fn start_pager(
     tile_manager: Arc<TileManager>,
     main_thread_sender: SyncSender<Tile>,
 ) -> Result<(), AbwError> {
-    let max_loader_threads = 20;
+    let max_loader_threads = 200;
     let (sender, receiver) = sync_channel(max_loader_threads * 2);
+    let client = Client::new();
 
-    let mut tileset_pager = TileSetImporter::new(sender, tile_manager);
+    let mut tileset_pager = TileSetImporter::new(client.clone(), sender, tile_manager);
     {
         thread::spawn(move || loop {
             let camera_data = if let Ok(camera) = camera_source.read() {
@@ -47,14 +48,13 @@ pub fn start_pager(
                 .err()
                 .map(|e| log::error!("Failed to import tileset: {}", e));
 
-            //wait_short_delay();
+            wait_short_delay();
         });
     }
 
     {
         thread::spawn(move || {
             let pool = ThreadPool::new(max_loader_threads);
-            let client = Client::new();
 
             loop {
                 match receiver.recv() {
