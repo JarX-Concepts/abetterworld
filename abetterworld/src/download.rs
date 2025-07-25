@@ -18,7 +18,7 @@ pub fn download_content(
         return Ok((content_type, bytes));
     }
 
-    log::info!("Downloading content from: {}", content_url);
+    //log::info!("Downloading content from: {}", content_url);
 
     let mut query_params = vec![("key", key)];
 

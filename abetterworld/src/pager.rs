@@ -29,9 +29,13 @@ pub fn start_pager(
     tile_manager: Arc<TileManager>,
     main_thread_sender: SyncSender<Tile>,
 ) -> Result<(), AbwError> {
-    let max_loader_threads = 200;
+    let max_loader_threads = 40;
     let (sender, receiver) = sync_channel(max_loader_threads * 2);
-    let client = Client::new();
+    let client = Client::builder()
+        .user_agent("abetterworld")
+        .pool_max_idle_per_host(max_loader_threads)
+        .build()
+        .unwrap();
 
     let mut tileset_pager = TileSetImporter::new(client.clone(), sender, tile_manager);
     {
@@ -55,7 +59,6 @@ pub fn start_pager(
     {
         thread::spawn(move || {
             let pool = ThreadPool::new(max_loader_threads);
-
             loop {
                 match receiver.recv() {
                     Ok(mut tile) => {

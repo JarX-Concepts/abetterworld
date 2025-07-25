@@ -3,7 +3,7 @@ use crate::decode::{decode, OwnedDecodedMesh};
 use byteorder::{LittleEndian, ReadBytesExt};
 use cgmath::{Deg, Matrix4, One, Quaternion, Vector3, Vector4};
 use image::GenericImageView;
-use log::{debug, error};
+use log::error;
 use serde_json::Value;
 use std::io::{Cursor, Read};
 
