@@ -25,6 +25,11 @@ pub struct BoundingVolume {
 }
 
 impl BoundingVolume {
+    pub fn center(&self) -> Vector3<f64> {
+        let b = &self.bounding_box;
+        Vector3::new(b[0], b[1], b[2])
+    }
+
     pub fn to_obb(&self) -> OrientedBoundingBox {
         let b = &self.bounding_box;
 

@@ -28,6 +28,7 @@ dependencies = [
  "bytes",
  "cgmath",
  "console_log",
+ "crossbeam-channel",
  "dashmap",
  "futures",
  "futures-util",
