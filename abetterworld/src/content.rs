@@ -17,9 +17,6 @@ pub struct Tile {
 pub enum TileState {
     Invalid,
     ToLoad,
-
-    Prioritize, // ?
-
     Decoded {
         nodes: Vec<Node>,
         meshes: Vec<OwnedDecodedMesh>,

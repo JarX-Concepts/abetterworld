@@ -9,7 +9,7 @@ use cgmath::{Deg, InnerSpace, Vector3};
 use reqwest::blocking::Client;
 use serde::Deserialize;
 use std::collections::HashSet;
-use std::sync::mpsc::SyncSender;
+use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use url::Url;
 
@@ -37,7 +37,7 @@ pub struct GltfTile {
 #[derive(Debug)]
 pub struct TileSetImporter {
     client: Client,
-    sender: SyncSender<Tile>,
+    sender: Sender<Tile>,
     tile_manager: Arc<TileManager>,
     last_pass_tiles: HashSet<u64>,
     current_pass_tiles: HashSet<u64>,
@@ -130,7 +130,7 @@ fn needs_refinement(
 }
 
 impl TileSetImporter {
-    pub fn new(client: Client, sender: SyncSender<Tile>, tile_manager: Arc<TileManager>) -> Self {
+    pub fn new(client: Client, sender: Sender<Tile>, tile_manager: Arc<TileManager>) -> Self {
         Self {
             client,
             sender,
