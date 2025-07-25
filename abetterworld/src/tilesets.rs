@@ -1,3 +1,4 @@
+use crate::camera::CameraRefinementData;
 use crate::content::{Tile, TileState};
 use crate::download::download_content;
 use crate::errors::{AbwError, TileLoadingContext};
@@ -5,11 +6,11 @@ use crate::helpers::hash_uri;
 use crate::tile_manager::TileManager;
 use crate::volumes::BoundingVolume;
 use bytes::Bytes;
-use cgmath::{Deg, InnerSpace, Vector3};
+use cgmath::InnerSpace;
+use crossbeam_channel::Sender;
 use reqwest::blocking::Client;
 use serde::Deserialize;
 use std::collections::HashSet;
-use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use url::Url;
 
@@ -41,13 +42,6 @@ pub struct TileSetImporter {
     tile_manager: Arc<TileManager>,
     last_pass_tiles: HashSet<u64>,
     current_pass_tiles: HashSet<u64>,
-}
-
-#[derive(Debug, Clone)]
-pub struct CameraRefinementData {
-    pub position: Vector3<f64>,
-    pub far: f64,
-    pub fovy: Deg<f64>,
 }
 
 // This is not optimal (make a custom implementation that doesn't allocate extra strings)

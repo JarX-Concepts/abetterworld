@@ -31,13 +31,12 @@ use crate::{
 use cache::init_tileset_cache;
 use camera::Camera;
 use cgmath::{EuclideanSpace, InnerSpace, Matrix4, SquareMatrix, Vector3, Zero};
+use crossbeam_channel::{bounded, Receiver};
 use decode::init;
 use std::{
     error::Error,
-    sync::{
-        mpsc::{sync_channel, Receiver},
-        Arc, RwLock,
-    },
+    ops::Deref,
+    sync::{Arc, RwLock},
 };
 
 pub struct UniformDataBlob {
@@ -52,8 +51,8 @@ pub struct UniformDataBlob {
 pub struct SphereRenderer {
     pipeline: RenderPipeline,
     debug_pipeline: RenderPipeline,
-    camera: Arc<RwLock<Camera>>,
-    debug_camera: Arc<RwLock<Camera>>,
+    camera: Arc<Camera>,
+    debug_camera: Arc<Camera>,
     depth_view: wgpu::TextureView,
     content: Arc<TileManager>,
     receiver: Receiver<Tile>,
@@ -118,14 +117,14 @@ impl SphereRenderer {
         let frustum_render = build_frustum_render(device);
 
         let tile_content = Arc::new(TileManager::new());
-        let camera_source = Arc::new(RwLock::new(camera));
-        let debug_camera_source = Arc::new(RwLock::new(debug_camera));
+        let camera_source = Arc::new(camera);
+        let debug_camera_source = Arc::new(debug_camera);
 
         let max_new_tiles_per_frame = 10;
-        let (sender, receiver) = sync_channel(max_new_tiles_per_frame);
+        let (loader_tx, render_rx) = bounded::<Tile>(max_new_tiles_per_frame);
 
         let _ = init();
-        let _ = start_pager(debug_camera_source.clone(), tile_content.clone(), sender);
+        let _ = start_pager(debug_camera_source.clone(), tile_content.clone(), loader_tx);
 
         Self {
             pipeline,
@@ -136,7 +135,7 @@ impl SphereRenderer {
             content: tile_content,
             input_state: input::InputState::new(),
             frustum_render,
-            receiver,
+            receiver: render_rx,
         }
     }
 
@@ -227,7 +226,7 @@ impl SphereRenderer {
     }
 
     fn draw_all_tile_volumes(&self, render_pass: &mut wgpu::RenderPass<'_>, queue: &wgpu::Queue) {
-        let camera_vp = self.camera.read().unwrap().uniform();
+        let camera_vp = self.camera.uniform();
         queue.write_buffer(
             &self.debug_pipeline.transforms.uniform_buffer,
             0,
@@ -256,7 +255,7 @@ impl SphereRenderer {
     }
 
     pub fn draw_debug_camera(&self, render_pass: &mut wgpu::RenderPass<'_>, queue: &wgpu::Queue) {
-        let mut camera_vp = self.camera.read().unwrap().uniform();
+        let mut camera_vp = self.camera.uniform();
         camera_vp.free_space = 0.5;
 
         queue.write_buffer(
@@ -268,7 +267,7 @@ impl SphereRenderer {
         render_pass.set_bind_group(0, &self.debug_pipeline.transforms.uniform_bind_group, &[]);
         render_pass.set_pipeline(&self.debug_pipeline.pipeline);
 
-        let corners = self.debug_camera.read().unwrap().frustum_corners();
+        let corners = self.debug_camera.frustum_corners();
         let new_frustum_vertices: Vec<DebugVertex> = corners
             .iter()
             .map(|p| DebugVertex {
@@ -296,6 +295,8 @@ impl SphereRenderer {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) -> Result<(), Box<dyn Error>> {
+        self.debug_camera.deref().update(None);
+
         if let Some(layout) = self.pipeline.texture_bind_group_layout.as_ref() {
             self.receiver.try_iter().for_each(|mut tile| {
                 tiles::content_render_setup(device, queue, layout, &mut tile).unwrap_or_else(|e| {
@@ -308,14 +309,15 @@ impl SphereRenderer {
 
         //self.debug_camera.write().unwrap().yaw(Deg(0.1));
         //self.debug_camera.write().unwrap().zoom(-500.0);
-        self.debug_camera.write().unwrap().update(None, None);
+        self.debug_camera.deref().update(None);
 
-        let projected_cam = if let Ok(mut camera) = self.camera.write() {
+        let mut min_distance = f64::MAX;
+        {
             let latest_render = self.content.tileset.read().unwrap();
-            let camera_pos = camera.eye.to_vec();
+            let camera_pos = self.camera.eye_vector();
             // start past the debug camera
             let mut volume_counter = 1;
-            let mut min_distance = f64::MAX;
+
             for tile in latest_render.iter() {
                 let obb = tile.1.volume.to_aabb();
                 let distance = obb.ray_intersect(&Ray {
@@ -346,10 +348,8 @@ impl SphereRenderer {
                     volume_counter += 1;
                 }
             }
-            camera.update(Some(min_distance), None)
-        } else {
-            Matrix4::identity()
-        };
+        }
+        let projected_cam = self.camera.deref().update(Some(min_distance));
 
         {
             let latest_render = self.content.tileset.read().unwrap();
@@ -392,7 +392,6 @@ impl SphereRenderer {
     }
 
     pub fn input(&mut self, event: InputEvent) {
-        self.input_state
-            .process_input(&mut self.camera.write().unwrap(), event);
+        self.input_state.process_input(&self.camera, event);
     }
 }

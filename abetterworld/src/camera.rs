@@ -1,7 +1,11 @@
+use std::sync::{
+    atomic::{AtomicBool, AtomicU64, Ordering},
+    RwLock,
+};
+
 use crate::{
     coord_utils::geodetic_to_ecef_z_up,
     matrix::{decompose_matrix64_to_uniform, Uniforms},
-    tilesets::CameraRefinementData,
     volumes::BoundingVolume,
 };
 use cgmath::{
@@ -18,99 +22,150 @@ const NEAR_MIN: f64 = 0.1; // Never go below this to avoid depth precision issue
 const NEAR_MAX: f64 = 10_000.0; // Upper limit for near to avoid blowing out near plane
 
 #[derive(Debug, Clone)]
-pub struct Camera {
-    // intrinsic
+pub struct CameraRefinementData {
+    pub position: Vector3<f64>,
+    pub far: f64,
+    pub fovy: Deg<f64>,
+}
+impl CameraRefinementData {
+    fn default() -> CameraRefinementData {
+        CameraRefinementData {
+            position: Vector3::zero(),
+            far: 0.0,
+            fovy: Deg(45.0),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CameraDerivedMatrices {
+    planes: [(Vector4<f64>, Vector3<f64>, f64); 6],
+    proj_view_matrix: Matrix4<f64>,
+    uniform: Uniforms,
+
+    near: f64,
+    far: f64,
+}
+impl CameraDerivedMatrices {
+    fn default() -> CameraDerivedMatrices {
+        CameraDerivedMatrices {
+            planes: [(Vector4::zero(), Vector3::zero(), 0.0); 6],
+            proj_view_matrix: Matrix4::identity(),
+            uniform: Uniforms::default(),
+
+            near: 0.0,
+            far: 0.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CameraUserPosition {
     fovy: Deg<f64>,
     aspect: f64,
-    // orientation
-    pub eye: Point3<f64>,
+    eye: Point3<f64>,
     target: Point3<f64>,
     up: Vector3<f64>,
 
-    // depth
-    near: f64,
-    far: f64,
+    near: Option<f64>,
+    far: Option<f64>,
+}
 
-    // derived
-    uniform: Uniforms,
-    cam_world: Vector3<f64>,
-    planes: [(Vector4<f64>, Vector3<f64>, f64); 6],
-    proj_view_matrix: Matrix4<f64>,
+#[derive(Debug)]
+pub struct Camera {
+    generation: AtomicU64,
+    dirty: AtomicBool,
+
+    user_state: RwLock<CameraUserPosition>,
+    derived_state: RwLock<CameraDerivedMatrices>,
+    paging_state: RwLock<CameraRefinementData>,
 }
 
 impl Camera {
-    pub fn new(
-        fovy: Deg<f64>,
-        aspect: f64,
-        eye: Point3<f64>,
-        target: Point3<f64>,
-        up: Vector3<f64>,
-    ) -> Self {
+    pub fn new(start: CameraUserPosition) -> Self {
         let cam = Camera {
-            fovy,
-            aspect,
-            eye,
-            target,
-            up: up.normalize(),
-            uniform: Uniforms::default(),
-            planes: [(Vector4::zero(), Vector3::zero(), 0.0); 6],
-            cam_world: eye.to_vec(),
-            near: 0.0,
-            far: 0.0,
-            proj_view_matrix: Matrix4::identity(),
+            generation: AtomicU64::new(1),
+            dirty: AtomicBool::new(true),
+            user_state: RwLock::new(start),
+            derived_state: RwLock::new(CameraDerivedMatrices::default()),
+            paging_state: RwLock::new(CameraRefinementData::default()),
         };
 
         cam
     }
 
     pub fn height_above_terrain(&self) -> f64 {
-        self.eye.to_vec().magnitude() - EARTH_RADIUS_M
+        let user_state = self.user_state.read().unwrap();
+        let cam_world = user_state.eye.to_vec();
+        // Distance from camera to Earth's center
+        let distance_to_center = cam_world.magnitude();
+        // Height above terrain is distance to center minus Earth's radius
+        distance_to_center - EARTH_RADIUS_M
+    }
+
+    pub fn eye(&self) -> Point3<f64> {
+        self.user_state.read().unwrap().eye
+    }
+
+    pub fn eye_vector(&self) -> Vector3<f64> {
+        self.user_state.read().unwrap().eye.to_vec()
     }
 
     /// move camera and target along camera-right (x) and camera-up (y) axes
-    pub fn pan(&mut self, delta: Vector2<f64>) {
-        let view_dir = (self.target - self.eye).normalize();
-        let right = view_dir.cross(self.up).normalize();
-        let up = self.up;
+    pub fn pan(&self, delta: Vector2<f64>) {
+        let mut user_state = self.user_state.write().unwrap();
+        let view_dir = (user_state.target - user_state.eye).normalize();
+        let right = view_dir.cross(user_state.up).normalize();
+        let up = user_state.up;
         let shift = right * delta.x + up * delta.y;
-        self.eye += shift;
-        self.target += shift;
+        user_state.eye += shift;
+        user_state.target += shift;
+
+        self.dirty.store(true, Ordering::Relaxed);
     }
 
     /// move the eye closer/further from the target along the view direction
-    pub fn zoom(&mut self, amount: f64) {
-        let view_dir = (self.target - self.eye).normalize();
-        self.eye += view_dir * amount;
+    pub fn zoom(&self, amount: f64) {
+        let mut user_state = self.user_state.write().unwrap();
+        let view_dir = (user_state.target - user_state.eye).normalize();
+        user_state.eye += view_dir * amount;
+
+        self.dirty.store(true, Ordering::Relaxed);
     }
 
     /// rotate camera up/down around the camera-right axis
-    pub fn tilt(&mut self, angle: Deg<f64>) {
-        let view_vec = self.eye - self.target;
-        let right = (self.target - self.eye)
+    pub fn tilt(&self, angle: Deg<f64>) {
+        let mut user_state = self.user_state.write().unwrap();
+        let view_vec = user_state.eye - user_state.target;
+        let right = (user_state.target - user_state.eye)
             .normalize()
-            .cross(self.up)
+            .cross(user_state.up)
             .normalize();
         let q: Quaternion<f64> = Quaternion::from_axis_angle(right, angle);
         let new_view = q.rotate_vector(view_vec);
-        self.eye = self.target + new_view;
-        self.up = q.rotate_vector(self.up).normalize();
+        user_state.eye = user_state.target + new_view;
+        user_state.up = q.rotate_vector(user_state.up).normalize();
+
+        self.dirty.store(true, Ordering::Relaxed);
     }
 
     /// rotate camera left/right around the world-up axis
-    pub fn yaw(&mut self, angle: Deg<f64>) {
-        let view_vec = self.eye - self.target;
-        let q: Quaternion<f64> = Quaternion::from_axis_angle(self.up, angle);
+    pub fn yaw(&self, angle: Deg<f64>) {
+        let mut user_state = self.user_state.write().unwrap();
+        let view_vec = user_state.eye - user_state.target;
+        let q: Quaternion<f64> = Quaternion::from_axis_angle(user_state.up, angle);
         let new_view = q.rotate_vector(view_vec);
-        self.eye = self.target + new_view;
-        // up stays the same
+        user_state.eye = user_state.target + new_view;
+
+        self.dirty.store(true, Ordering::Relaxed);
     }
 
     pub fn refinement_data(&self) -> CameraRefinementData {
-        CameraRefinementData {
-            position: self.cam_world,
-            far: self.far,
-            fovy: self.fovy,
-        }
+        self.paging_state.read().unwrap().clone()
+    }
+
+    pub fn generation(&self) -> u64 {
+        self.generation.load(Ordering::Relaxed)
     }
 
     fn extract_frustum_planes(mat: &Matrix4<f64>) -> [(Vector4<f64>, Vector3<f64>, f64); 6] {
@@ -152,9 +207,16 @@ impl Camera {
     }
 
     /// internal: recompute cam_world and UBO
-    pub fn update(&mut self, distance_to_geom: Option<f64>, far: Option<f64>) -> Matrix4<f64> {
-        self.cam_world = self.eye.to_vec();
-        let d = self.cam_world.magnitude();
+    pub fn update(&self, distance_to_geom: Option<f64>) -> Matrix4<f64> {
+        if !self.dirty.load(Ordering::Relaxed) {
+            return self.derived_state.read().unwrap().proj_view_matrix;
+        }
+
+        let user_state = self.user_state.read().unwrap();
+        let mut derived_state = self.derived_state.write().unwrap();
+
+        let cam_world = user_state.eye.to_vec();
+        let d = cam_world.magnitude();
 
         let altitude = (d - EARTH_RADIUS_M).max(1.0);
         let max_distance = distance_to_geom.unwrap_or(altitude);
@@ -163,32 +225,49 @@ impl Camera {
         let near_scale = if altitude > 50_000.0 { 0.5 } else { 0.25 };
 
         // Near plane scales with altitude for depth precision and no clipping
-        self.near = (max_distance * near_scale).clamp(NEAR_MIN, NEAR_MAX);
+        derived_state.near = user_state
+            .near
+            .unwrap_or((max_distance * near_scale).clamp(NEAR_MIN, NEAR_MAX));
+        derived_state.far = user_state.far.unwrap_or(d);
 
-        self.far = far.unwrap_or(d);
+        let proj64 = cgmath::perspective(
+            user_state.fovy,
+            user_state.aspect,
+            derived_state.near,
+            derived_state.far,
+        );
+        let model_view_mat = Matrix4::look_at_rh(user_state.eye, user_state.target, user_state.up);
+        derived_state.proj_view_matrix = proj64 * model_view_mat;
+        derived_state.planes = Self::extract_frustum_planes(&derived_state.proj_view_matrix);
+        derived_state.uniform = decompose_matrix64_to_uniform(&derived_state.proj_view_matrix);
 
-        let proj64 = cgmath::perspective(self.fovy, self.aspect, self.near, self.far);
-        let model_view_mat = Matrix4::look_at_rh(self.eye, self.target, self.up);
-        self.proj_view_matrix = proj64 * model_view_mat;
-        self.planes = Self::extract_frustum_planes(&self.proj_view_matrix);
-        self.uniform = decompose_matrix64_to_uniform(&self.proj_view_matrix);
+        self.generation.fetch_add(1, Ordering::Relaxed);
+        self.dirty.store(false, Ordering::Relaxed);
 
-        self.proj_view_matrix
+        if let Ok(mut state) = self.paging_state.write() {
+            *state = CameraRefinementData {
+                position: cam_world,
+                far: derived_state.far,
+                fovy: user_state.fovy,
+            };
+        }
+
+        derived_state.proj_view_matrix
     }
 
     /// expose the latest UBO
     pub fn uniform(&self) -> Uniforms {
-        self.uniform
+        self.derived_state.read().unwrap().uniform
     }
 
     pub fn proj_view(&self) -> Matrix4<f64> {
-        self.proj_view_matrix
+        self.derived_state.read().unwrap().proj_view_matrix
     }
 
     pub fn print_frustum_planes(&self) {
         println!("Frustum planes:");
         let labels = ["Left", "Right", "Bottom", "Top", "Near", "Far"];
-        for (i, plane) in self.planes.iter().enumerate() {
+        for (i, plane) in self.derived_state.read().unwrap().planes.iter().enumerate() {
             println!(
                 "Plane {} ({}): offset= {:?}, normal = {:?}, d = {:?}",
                 i, labels[i], plane.0, plane.1, plane.2,
@@ -203,7 +282,8 @@ impl Camera {
         //aabb.min -= offset;
         //aabb.max -= offset;Í
 
-        for &(_, normal, d) in &self.planes {
+        let planes = self.derived_state.read().unwrap().planes;
+        for &(_, normal, d) in &planes {
             // p-vertex: most positive vertex in direction of normal
             let p = Vector3::new(
                 if normal.x >= 0.0 {
@@ -236,21 +316,24 @@ impl Camera {
     }
 
     pub fn frustum_corners(&self) -> [Point3<f64>; 8] {
-        let fovy_rad = self.fovy.0.to_radians();
-        let view_dir = (self.target - self.eye).normalize();
-        let right = view_dir.cross(self.up).normalize();
-        let up = self.up.normalize();
+        let user_state = self.user_state.read().unwrap();
+        let derived_state = self.derived_state.read().unwrap();
+
+        let fovy_rad = user_state.fovy.0.to_radians();
+        let view_dir = (user_state.target - user_state.eye).normalize();
+        let right = view_dir.cross(user_state.up).normalize();
+        let up = user_state.up.normalize();
 
         // Height and width at near and far planes
         let tan_fovy = (fovy_rad / 2.0).tan();
-        let near_height = 2.0 * tan_fovy * self.near;
-        let near_width = near_height * self.aspect;
-        let far_height = 2.0 * tan_fovy * self.far;
-        let far_width = far_height * self.aspect;
+        let near_height = 2.0 * tan_fovy * derived_state.near;
+        let near_width = near_height * user_state.aspect;
+        let far_height = 2.0 * tan_fovy * derived_state.far;
+        let far_width = far_height * user_state.aspect;
 
         // Centers of near and far planes
-        let near_center = self.eye + view_dir * self.near;
-        let far_center = self.eye + view_dir * self.far;
+        let near_center = user_state.eye + view_dir * derived_state.near;
+        let far_center = user_state.eye + view_dir * derived_state.far;
 
         // Corner offsets
         let near_up = up * (near_height / 2.0);
@@ -280,12 +363,29 @@ pub fn init_camera() -> (Camera, Camera) {
     let eye = Point3::new(distance, 100.0, 100.0);
     let target = Point3::new(0.0, 0.0, 0.0);
     let up = Vector3::unit_z();
-    let camera = Camera::new(Deg(45.0), 1.0, eye, target, up);
+    let camera = Camera::new(CameraUserPosition {
+        fovy: Deg(45.0),
+        aspect: 1.0,
+        eye,
+        target,
+        up,
+        near: None,
+        far: None,
+    });
+    camera.update(None);
 
     let debug_eye = geodetic_to_ecef_z_up(34.4208, -119.6982, 200.0);
     let debug_eye_pt: Point3<f64> = Point3::new(debug_eye.0, debug_eye.1, debug_eye.2);
-    let mut debug_camera = Camera::new(Deg(45.0), 1.0, debug_eye_pt, target, up);
-    debug_camera.update(None, None);
+    let debug_camera = Camera::new(CameraUserPosition {
+        fovy: Deg(45.0),
+        aspect: 1.0,
+        eye: debug_eye_pt,
+        target,
+        up,
+        near: None,
+        far: None,
+    });
+    debug_camera.update(None);
 
     (camera, debug_camera)
 }

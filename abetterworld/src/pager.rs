@@ -1,11 +1,9 @@
 use cgmath::MetricSpace;
-// Optimized Tile Content System for Rust + WASM
-use crossbeam_channel::bounded;
+use crossbeam_channel::{bounded, select, unbounded};
 use reqwest::blocking::Client;
-use std::sync::mpsc::{channel, sync_channel, SyncSender};
-use std::sync::{Arc, RwLock};
-use std::thread::{self, sleep};
-use std::time::Duration;
+use std::sync::RwLock;
+use std::{sync::Arc, thread, time::Duration};
+use wgpu::naga::back;
 
 use crate::camera::Camera;
 use crate::content::{Tile, TileState};
@@ -17,134 +15,129 @@ use crate::tilesets::TileSetImporter;
 const GOOGLE_API_KEY: &str = "AIzaSyD526Czd1rD44BZE2d2R70-fBEdDdf6vZQ";
 const GOOGLE_API_URL: &str = "https://tile.googleapis.com/v1/3dtiles/root.json";
 
-fn wait_short_delay() {
-    sleep(Duration::from_millis(10));
-}
-
-fn wait_longer_delay() {
-    sleep(Duration::from_millis(1000));
-}
-
 pub fn start_pager(
-    camera_source: Arc<RwLock<Camera>>,
-    tile_manager: Arc<TileManager>,
-    main_thread_sender: SyncSender<Tile>,
+    camera_src: Arc<Camera>,
+    tile_mgr: Arc<TileManager>,
+    render_tx: crossbeam_channel::Sender<Tile>,
 ) -> Result<(), AbwError> {
-    let max_loader_threads = 1;
-    let (pager_sender, priortize_receiver) = channel::<Tile>();
-    let (priortize_sender, loader_receiver) = sync_channel(max_loader_threads);
+    let loader_threads = 1; // /num_cpus::get().clamp(2, 8);
+                            // unbounded: pager -> prioritizer
+    let (pager_tx, pager_rx) = unbounded::<Tile>();
+    // bounded:   prioritizer -> workers  (back-pressure)
+    let (loader_tx, loader_rx) = bounded::<Tile>(loader_threads * 4);
 
-    // one client used for all downloads (is that good?)
-    let client = Client::builder()
-        .user_agent("abetterworld")
-        .pool_max_idle_per_host(max_loader_threads + 1)
-        .build()
-        .unwrap();
-
-    let mut tileset_pager = TileSetImporter::new(client.clone(), pager_sender, tile_manager);
-
-    // Pager Thread
+    // ---------- 1. Pager (discovers tiles) ----------
     {
-        let my_camera_source = Arc::clone(&camera_source);
-        thread::spawn(move || loop {
-            let camera_data = if let Ok(camera) = my_camera_source.read() {
-                camera.refinement_data()
-            } else {
-                log::warn!("Failed to acquire read lock on camera source");
-                continue;
-            };
+        let cam = Arc::clone(&camera_src);
+        let mut pager =
+            TileSetImporter::new(build_client(loader_threads)?, pager_tx.clone(), tile_mgr);
 
-            tileset_pager
-                .go(&camera_data, GOOGLE_API_URL, GOOGLE_API_KEY)
-                .err()
-                .map(|e| log::error!("Failed to import tileset: {}", e));
+        thread::spawn(move || {
+            let mut last_cam_gen = 0;
+            loop {
+                let new_gen = cam.generation();
+                if new_gen != last_cam_gen {
+                    let camera_data = cam.refinement_data();
 
-            wait_short_delay();
+                    if let Err(e) = pager.go(&camera_data, GOOGLE_API_URL, GOOGLE_API_KEY) {
+                        log::error!("tileset import failed: {e}");
+                    }
+
+                    last_cam_gen = new_gen;
+                } else {
+                    // No camera movement, sleep briefly to avoid busy-waiting
+                    thread::sleep(Duration::from_millis(10));
+                }
+            }
         });
     }
 
-    // Priortize Tiles Thread
-    // If the loader/worker threads are busy, then priortize the tiles in the backlog
+    // ---------- 2. Prioritizer ----------
     {
+        let cam = Arc::clone(&camera_src);
         thread::spawn(move || {
-            let mut priortized_tiles = Vec::new();
+            let mut backlog: Vec<Tile> = Vec::new();
+            let mut last_cam_gen = 0;
 
             loop {
-                let camera_data = if let Ok(camera) = camera_source.read() {
-                    camera.refinement_data()
-                } else {
-                    log::warn!("Failed to acquire read lock on camera source");
-                    continue;
-                };
+                let mut did_nothing_iter = true;
 
-                let mut added_new_tiles = false;
-                for tile in priortize_receiver.try_iter() {
-                    if tile.state == TileState::ToLoad {
-                        priortized_tiles.push(tile);
-                        added_new_tiles = true;
+                if backlog.is_empty() {
+                    // No backlog, wait for new tiles
+                    //thread::sleep(Duration::from_millis(5000));
+                }
+
+                // ingest new tiles -------------------------------------------------
+                for t in pager_rx.try_iter() {
+                    if t.state == TileState::ToLoad {
+                        backlog.push(t);
+                        did_nothing_iter = false;
                     }
                 }
 
-                if added_new_tiles {
-                    // sort priortized tiles by distance to camera
-                    priortized_tiles.sort_by(|a, b| {
-                        let a_distance = camera_data.position.distance2(a.volume.center());
-                        let b_distance = camera_data.position.distance2(b.volume.center());
-                        a_distance
-                            .partial_cmp(&b_distance)
-                            .unwrap_or(std::cmp::Ordering::Greater)
+                // detect camera movement ------------------------------------------
+                let new_gen = cam.generation();
+                if new_gen != last_cam_gen {
+                    let camera_data = cam.refinement_data();
+                    backlog.sort_unstable_by(|a, b| {
+                        let da = camera_data.position.distance2(a.volume.center());
+                        let db = camera_data.position.distance2(b.volume.center());
+                        db.partial_cmp(&da).unwrap()
                     });
+                    last_cam_gen = new_gen;
                 }
 
-                let mut send_tiles = Vec::new();
-                for tile in priortized_tiles.iter() {
-                    if let Ok(()) = priortize_sender.try_send(tile.clone()) {
-                        // it worked, so removed from the list
-                        send_tiles.push(tile.id);
+                // feed workers -----------------------------------------------------
+                while let Some(tile) = backlog.last() {
+                    // ≈ cheapest (small dist) at back
+                    if loader_tx.try_send(tile.clone()).is_ok() {
+                        backlog.pop();
+                        did_nothing_iter = false;
                     } else {
-                        break; // channel is full, stop sending
+                        break;
                     }
                 }
 
-                // remove sent tiles from priortized list
-                priortized_tiles.retain(|tile| !send_tiles.contains(&tile.id));
+                if (did_nothing_iter) {
+                    // No new tiles or camera movement, sleep briefly to avoid busy-waiting
+                    thread::sleep(Duration::from_millis(10));
+                }
             }
         });
     }
 
-    // Download/Decode Tile Thread Pool
+    // ---------- 3. Workers ----------
     {
-        thread::spawn(move || {
-            let (task_sender, task_receiver) = bounded::<Tile>(max_loader_threads);
+        let cli = build_client(loader_threads)?;
 
-            // Fixed number of worker threads
-            for _ in 0..max_loader_threads {
-                let client_clone = client.clone();
-                let sender_clone = main_thread_sender.clone();
-                let task_receiver = task_receiver.clone();
+        for _ in 0..loader_threads {
+            let client_clone = cli.clone();
+            let render_time = render_tx.clone();
+            let rx = loader_rx.clone();
 
-                thread::spawn(move || {
-                    while let Ok(mut tile) = task_receiver.recv() {
-                        if tile.state == TileState::ToLoad {
-                            std::thread::sleep(Duration::from_millis(500));
-                            content_load(&client_clone, GOOGLE_API_KEY, &mut tile)
-                                .unwrap_or_else(|e| log::error!("Failed to load tile: {}", e));
-                            if matches!(tile.state, TileState::Decoded { .. }) {
-                                sender_clone.send(tile).ok();
-                            }
+            thread::spawn(move || {
+                for mut tile in rx.iter() {
+                    if tile.state == TileState::ToLoad {
+                        if let Err(e) = content_load(&client_clone, GOOGLE_API_KEY, &mut tile) {
+                            log::error!("load failed: {e}");
+                            continue;
+                        }
+                        if matches!(tile.state, TileState::Decoded { .. }) {
+                            let _ = render_time.send(tile);
                         }
                     }
-                });
-            }
-
-            // Backpressure point: blocks if queue is full
-            for tile in loader_receiver.iter() {
-                task_sender.send(tile).unwrap();
-            }
-
-            log::warn!("loader_receiver closed; exiting loader thread");
-        });
+                }
+            });
+        }
     }
 
     Ok(())
+}
+
+fn build_client(threads: usize) -> Result<Client, AbwError> {
+    Client::builder()
+        .user_agent("abetterworld")
+        .pool_max_idle_per_host(threads + 1)
+        .build()
+        .map_err(|e| AbwError::Network(format!("Failed to build HTTP client: {e}")))
 }
