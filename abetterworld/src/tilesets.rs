@@ -130,9 +130,9 @@ fn needs_refinement(
 }
 
 impl TileSetImporter {
-    pub fn new(sender: SyncSender<Tile>, tile_manager: Arc<TileManager>) -> Self {
+    pub fn new(client: Client, sender: SyncSender<Tile>, tile_manager: Arc<TileManager>) -> Self {
         Self {
-            client: Client::new(),
+            client,
             sender,
             tile_manager: tile_manager,
             last_pass_tiles: HashSet::new(),

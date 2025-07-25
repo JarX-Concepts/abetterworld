@@ -13,10 +13,9 @@ pub fn download_content(
     session: Option<&str>,
 ) -> Result<(String, Bytes), AbwError> {
     // Try cache first
-    if let Some(cache) = get_tileset_cache() {
-        if let Some((content_type, bytes)) = cache.get(content_url) {
-            return Ok((content_type, bytes));
-        }
+    let cache = get_tileset_cache();
+    if let Some((content_type, bytes)) = cache.get(content_url) {
+        return Ok((content_type, bytes));
     }
 
     log::info!("Downloading content from: {}", content_url);
@@ -61,9 +60,7 @@ pub fn download_content(
         }
     }
 
-    if let Some(cache) = get_tileset_cache() {
-        cache.insert(content_url.to_string(), content_type.clone(), bytes.clone());
-    }
+    cache.insert(content_url.to_string(), content_type.clone(), bytes.clone());
 
     Ok((content_type, bytes))
 }

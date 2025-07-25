@@ -1,10 +1,10 @@
 use bytes::Bytes;
-use lru::LruCache;
+use moka::sync::Cache;
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 #[cfg(not(target_arch = "wasm32"))]
-use std::{fs, path::Path};
+use std::{fs, path::Path, sync::RwLock};
 
 #[cfg(target_arch = "wasm32")]
 use idb::{Database, DatabaseEvent, Error, Factory, KeyPath, ObjectStoreParams, TransactionMode};
@@ -12,28 +12,29 @@ use idb::{Database, DatabaseEvent, Error, Factory, KeyPath, ObjectStoreParams, T
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen_futures::wasm_bindgen::JsValue;
 
+use crate::helpers::hash_uri;
+
 const TILESET_CACHE_DIR: &str = "./tilesets";
-const LRU_CACHE_CAPACITY: std::num::NonZeroUsize = std::num::NonZeroUsize::new(512).unwrap();
+const LRU_CACHE_CAPACITY: u64 = 512;
 
 #[derive(Serialize, Deserialize)]
 struct DiskCacheEntry {
-    id: String,
+    id: u64,
     content_type: String,
     data: Vec<u8>,
 }
 
 #[derive(Debug)]
 pub struct TilesetCache {
-    pub map: Mutex<LruCache<String, (String, Bytes)>>,
-    #[cfg(not(target_arch = "wasm32"))]
-    file_lock: Arc<Mutex<()>>,
+    pub map: Cache<u64, (String, Bytes)>,
+    file_lock: RwLock<()>,
     #[cfg(target_arch = "wasm32")]
     db: Option<Database>,
 }
 
 impl TilesetCache {
     pub fn new() -> Self {
-        let map = Mutex::new(LruCache::new(LRU_CACHE_CAPACITY));
+        let map = Cache::new(LRU_CACHE_CAPACITY);
 
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -78,8 +79,7 @@ impl TilesetCache {
         {
             return Self {
                 map,
-                #[cfg(not(target_arch = "wasm32"))]
-                file_lock: Arc::new(Mutex::new(())),
+                file_lock: RwLock::new(()),
             };
         }
     }
@@ -145,8 +145,8 @@ impl TilesetCache {
     }
 
     pub fn get(&self, key: &str) -> Option<(String, Bytes)> {
-        let mut map = self.map.lock().unwrap();
-        if let Some((ct, data)) = map.get(key).cloned() {
+        let id = hash_uri(key);
+        if let Some((ct, data)) = self.map.get(&id) {
             return Some((ct, data));
         }
 
@@ -155,12 +155,13 @@ impl TilesetCache {
             let filename = Self::disk_path_for(key);
             if Path::new(&filename).exists() {
                 let bytes = {
-                    let _guard = self.file_lock.lock().unwrap();
+                    let _guard = self.file_lock.read().expect("cache get lock poisoned");
                     fs::read(&filename).ok()
                 }?;
                 let entry: DiskCacheEntry = serde_json::from_slice(&bytes).ok()?;
                 let data = Bytes::from(entry.data.clone());
-                map.put(key.to_string(), (entry.content_type.clone(), data.clone()));
+                self.map
+                    .insert(id, (entry.content_type.clone(), data.clone()));
                 return Some((entry.content_type, data));
             }
         }
@@ -183,11 +184,11 @@ impl TilesetCache {
     }
 
     pub fn insert(&self, key: String, content_type: String, bytes: Bytes) {
-        let mut map = self.map.lock().unwrap();
-        map.put(key.clone(), (content_type.clone(), bytes.clone()));
+        let id = hash_uri(&key);
+        self.map.insert(id, (content_type.clone(), bytes.clone()));
 
         let entry = DiskCacheEntry {
-            id: key.clone(),
+            id: id,
             content_type,
             data: bytes.to_vec(),
         };
@@ -196,7 +197,7 @@ impl TilesetCache {
         {
             let filename = Self::disk_path_for(&key);
             let bytes = serde_json::to_vec(&entry).unwrap();
-            let _guard = self.file_lock.lock().unwrap();
+            let _guard = self.file_lock.write().expect("cache insert lock poisoned");
             let _ = fs::write(filename, bytes);
         }
 
@@ -210,12 +211,11 @@ impl TilesetCache {
     }
 
     pub fn clear(&self) {
-        let mut map = self.map.lock().unwrap();
-        map.clear();
+        self.map.invalidate_all();
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let _guard = self.file_lock.lock().unwrap();
+            let _guard = self.file_lock.write().expect("cache clear lock poisoned");
             if Path::new(TILESET_CACHE_DIR).exists() {
                 fs::remove_dir_all(TILESET_CACHE_DIR).ok();
             }
@@ -244,46 +244,20 @@ impl TilesetCache {
     }
 }
 
-use once_cell::sync::OnceCell;
+static TILESET_CACHE: OnceLock<Arc<TilesetCache>> = OnceLock::new();
 
-#[cfg(not(target_arch = "wasm32"))]
-pub static TILESET_CACHE: OnceCell<Arc<TilesetCache>> = OnceCell::new();
-
-#[cfg(not(target_arch = "wasm32"))]
 pub fn init_tileset_cache() -> Arc<TilesetCache> {
     let cache = Arc::new(TilesetCache::new());
     TILESET_CACHE
         .set(cache.clone())
-        .expect("TILESET_CACHE was already initialized");
+        .ok()
+        .expect("TilesetCache already initialized");
     cache
 }
 
-#[cfg(target_arch = "wasm32")]
-use once_cell::unsync::OnceCell as LocalOnceCell;
-
-#[cfg(target_arch = "wasm32")]
-thread_local! {
-    pub static TILESET_CACHE: LocalOnceCell<Arc<TilesetCache>> = LocalOnceCell::new();
-}
-
-#[cfg(target_arch = "wasm32")]
-pub async fn init_tileset_cache() -> Arc<TilesetCache> {
-    let cache = Arc::new(TilesetCache::new().await);
-    TILESET_CACHE.with(|cell| {
-        cell.set(cache.clone())
-            .expect("TILESET_CACHE already initialized");
-    });
-    cache
-}
-
-pub fn get_tileset_cache() -> Option<Arc<TilesetCache>> {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        TILESET_CACHE.get().cloned()
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        // In wasm, we use thread-local storage
-        TILESET_CACHE.with(|cell| cell.get().cloned())
-    }
+pub fn get_tileset_cache() -> Arc<TilesetCache> {
+    TILESET_CACHE
+        .get()
+        .expect("TilesetCache not initialized")
+        .clone()
 }

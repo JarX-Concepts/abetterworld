@@ -1,16 +1,17 @@
 #[cfg(test)]
 mod tests {
     use crate::cache::{get_tileset_cache, init_tileset_cache, TilesetCache};
+    use crate::helpers::hash_uri;
 
     use bytes::Bytes;
     use std::fs;
     use std::path::Path;
 
-    #[tokio::test]
-    async fn test_insert_get_lru_disk_roundtrip() {
+    #[test]
+    fn test_insert_get_lru_disk_roundtrip() {
         init_tileset_cache();
 
-        let cache = get_tileset_cache().expect("Cache should be initialized");
+        let cache = get_tileset_cache();
         let base_key = "test-key";
         let content_type = "application/octet-stream";
         let value = Bytes::from_static(b"hello-payload");
@@ -40,8 +41,8 @@ mod tests {
         }
 
         let in_memory = {
-            let locked_map = cache.map.lock().unwrap();
-            locked_map.peek(base_key).cloned()
+            let id = hash_uri(&base_key);
+            cache.map.get(&id)
         };
         assert!(
             in_memory.is_none(),
