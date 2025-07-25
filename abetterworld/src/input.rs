@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use cgmath::Deg;
 
 use crate::{camera::Camera, InputEvent, Key, MouseButton};
@@ -25,7 +27,7 @@ impl InputState {
         self.mouse_position = (0.0, 0.0);
     }
 
-    pub fn process_input(&mut self, camera: &mut Camera, event: InputEvent) {
+    pub fn process_input(&mut self, camera: &Arc<Camera>, event: InputEvent) {
         let height = camera.height_above_terrain();
 
         match event {
