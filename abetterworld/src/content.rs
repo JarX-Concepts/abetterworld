@@ -4,6 +4,7 @@ use std::mem;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Tile {
+    pub counter: u64,
     pub parent: Option<u64>,
     pub id: u64,
     pub uri: String,
@@ -16,6 +17,9 @@ pub struct Tile {
 pub enum TileState {
     Invalid,
     ToLoad,
+
+    Prioritize, // ?
+
     Decoded {
         nodes: Vec<Node>,
         meshes: Vec<OwnedDecodedMesh>,

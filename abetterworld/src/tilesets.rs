@@ -236,6 +236,7 @@ impl TileSetImporter {
 
                     if !self.last_pass_tiles.contains(&tile_id) {
                         let new_tile = Tile {
+                            counter: self.current_pass_tiles.len() as u64,
                             parent: None,
                             id: tile_id,
                             uri: tile_url,

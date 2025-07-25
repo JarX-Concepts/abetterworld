@@ -121,7 +121,7 @@ impl SphereRenderer {
         let camera_source = Arc::new(RwLock::new(camera));
         let debug_camera_source = Arc::new(RwLock::new(debug_camera));
 
-        let max_new_tiles_per_frame = 5;
+        let max_new_tiles_per_frame = 10;
         let (sender, receiver) = sync_channel(max_new_tiles_per_frame);
 
         let _ = init();
