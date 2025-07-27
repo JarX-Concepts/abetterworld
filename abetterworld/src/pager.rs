@@ -20,17 +20,17 @@ pub fn start_pager(
     tile_mgr: Arc<TileManager>,
     render_tx: crossbeam_channel::Sender<Tile>,
 ) -> Result<(), AbwError> {
-    let loader_threads = 1; // /num_cpus::get().clamp(2, 8);
-                            // unbounded: pager -> prioritizer
+    const LOADER_THREADS: usize = 20;
+    // unbounded: pager -> prioritizer
     let (pager_tx, pager_rx) = unbounded::<Tile>();
     // bounded:   prioritizer -> workers  (back-pressure)
-    let (loader_tx, loader_rx) = bounded::<Tile>(loader_threads * 4);
+    let (loader_tx, loader_rx) = bounded::<Tile>(LOADER_THREADS * 2);
 
     // ---------- 1. Pager (discovers tiles) ----------
     {
         let cam = Arc::clone(&camera_src);
         let mut pager =
-            TileSetImporter::new(build_client(loader_threads)?, pager_tx.clone(), tile_mgr);
+            TileSetImporter::new(build_client(LOADER_THREADS)?, pager_tx.clone(), tile_mgr);
 
         thread::spawn(move || {
             let mut last_cam_gen = 0;
@@ -63,8 +63,12 @@ pub fn start_pager(
                 let mut did_nothing_iter = true;
 
                 if backlog.is_empty() {
-                    // No backlog, wait for new tiles
-                    //thread::sleep(Duration::from_millis(5000));
+                    // No backlog, block wait for a tile
+                    let t = pager_rx.recv();
+                    if let Ok(tile) = t {
+                        backlog.push(tile);
+                        did_nothing_iter = false;
+                    }
                 }
 
                 // ingest new tiles -------------------------------------------------
@@ -108,9 +112,9 @@ pub fn start_pager(
 
     // ---------- 3. Workers ----------
     {
-        let cli = build_client(loader_threads)?;
+        let cli = build_client(LOADER_THREADS)?;
 
-        for _ in 0..loader_threads {
+        for _ in 0..LOADER_THREADS {
             let client_clone = cli.clone();
             let render_time = render_tx.clone();
             let rx = loader_rx.clone();

@@ -374,7 +374,7 @@ pub fn init_camera() -> (Camera, Camera) {
     });
     camera.update(None);
 
-    let debug_eye = geodetic_to_ecef_z_up(34.4208, -119.6982, 200.0);
+    let debug_eye = geodetic_to_ecef_z_up(34.4208, -119.6982, 20000.0);
     let debug_eye_pt: Point3<f64> = Point3::new(debug_eye.0, debug_eye.1, debug_eye.2);
     let debug_camera = Camera::new(CameraUserPosition {
         fovy: Deg(45.0),

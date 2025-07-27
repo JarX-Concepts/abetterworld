@@ -16,6 +16,7 @@ pub struct Tile {
 #[derive(Debug, Clone, PartialEq)]
 pub enum TileState {
     Invalid,
+    Unload,
     ToLoad,
     Decoded {
         nodes: Vec<Node>,
@@ -28,6 +29,7 @@ pub enum TileState {
         meshes: Vec<Mesh>,
         textures: Vec<TextureResource>,
         materials: Vec<Material>,
+        unload: bool,
     },
 }
 

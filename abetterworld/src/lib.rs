@@ -30,13 +30,14 @@ use crate::{
 };
 use cache::init_tileset_cache;
 use camera::Camera;
-use cgmath::{EuclideanSpace, InnerSpace, Matrix4, SquareMatrix, Vector3, Zero};
+use cgmath::{Deg, EuclideanSpace, InnerSpace, Matrix4, SquareMatrix, Vector3, Zero};
 use crossbeam_channel::{bounded, Receiver};
 use decode::init;
 use std::{
     error::Error,
     ops::Deref,
     sync::{Arc, RwLock},
+    time::{Duration, Instant},
 };
 
 pub struct UniformDataBlob {
@@ -120,8 +121,8 @@ impl SphereRenderer {
         let camera_source = Arc::new(camera);
         let debug_camera_source = Arc::new(debug_camera);
 
-        let max_new_tiles_per_frame = 10;
-        let (loader_tx, render_rx) = bounded::<Tile>(max_new_tiles_per_frame);
+        const MAX_NEW_TILES_PER_FRAME: usize = 1_000;
+        let (loader_tx, render_rx) = bounded::<Tile>(MAX_NEW_TILES_PER_FRAME);
 
         let _ = init();
         let _ = start_pager(debug_camera_source.clone(), tile_content.clone(), loader_tx);
@@ -167,6 +168,7 @@ impl SphereRenderer {
                         ref meshes,
                         ref textures,
                         ref materials,
+                        unload: ref _unload,
                     } = tile.1.state
                     {
                         let render_it = true; //debug_cam_read.is_bounding_volume_visible(&tile.volume);
@@ -297,19 +299,34 @@ impl SphereRenderer {
     ) -> Result<(), Box<dyn Error>> {
         self.debug_camera.deref().update(None);
 
-        if let Some(layout) = self.pipeline.texture_bind_group_layout.as_ref() {
-            self.receiver.try_iter().for_each(|mut tile| {
-                tiles::content_render_setup(device, queue, layout, &mut tile).unwrap_or_else(|e| {
-                    eprintln!("Failed to setup tile for rendering: {}", e);
-                });
+        const BUDGET: Duration = Duration::from_millis(20);
 
-                self.content.add_tile(tile);
-            });
+        if let Some(layout) = self.pipeline.texture_bind_group_layout.as_ref() {
+            let deadline = Instant::now() + BUDGET;
+
+            self.content.unload_tiles();
+
+            // Pull tiles until either the channel is empty or we run out of time.
+            while Instant::now() < deadline {
+                match self.receiver.try_recv() {
+                    Ok(mut tile) => {
+                        if let Err(e) =
+                            tiles::content_render_setup(device, queue, layout, &mut tile)
+                        {
+                            eprintln!("Failed to set up tile for rendering: {e}");
+                            continue; // skip adding this tile
+                        }
+                        self.content.add_tile(tile);
+                    }
+                    Err(crossbeam_channel::TryRecvError::Empty) => break, // nothing left
+                    Err(crossbeam_channel::TryRecvError::Disconnected) => break, // sender gone
+                }
+            }
         }
 
-        //self.debug_camera.write().unwrap().yaw(Deg(0.1));
+        self.debug_camera.yaw(Deg(0.1));
         //self.debug_camera.write().unwrap().zoom(-500.0);
-        self.debug_camera.deref().update(None);
+        self.debug_camera.update(None);
 
         let mut min_distance = f64::MAX;
         {
@@ -349,7 +366,7 @@ impl SphereRenderer {
                 }
             }
         }
-        let projected_cam = self.camera.deref().update(Some(min_distance));
+        let projected_cam = self.camera.update(Some(min_distance));
 
         {
             let latest_render = self.content.tileset.read().unwrap();
