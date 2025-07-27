@@ -1,4 +1,4 @@
-use crate::content::Tile;
+use crate::content::{Tile, TileState};
 use std::{collections::HashMap, sync::RwLock};
 
 #[derive(Debug)]
@@ -25,13 +25,32 @@ impl TileManager {
         }
     }
 
-    pub fn unload_tiles(&self, tiles: Vec<u64>) {
+    pub fn mark_tiles_unload(&self, tiles: Vec<u64>) {
         if tiles.is_empty() {
             return;
         }
         let mut tileset = self.tileset.write().unwrap();
         for tile in tiles {
-            tileset.remove(&tile);
+            if let Some(existing_tile) = tileset.get_mut(&tile) {
+                match &mut existing_tile.state {
+                    TileState::Renderable { unload, .. } => {
+                        // need to do this from the render thread
+                        *unload = true; // mark as needing unload
+                    }
+                    _ => {
+                        existing_tile.state = TileState::Unload;
+                    }
+                }
+            }
         }
+    }
+
+    pub fn unload_tiles(&self) {
+        let mut tileset = self.tileset.write().unwrap();
+        tileset.retain(|_, tile| match &tile.state {
+            TileState::Unload => false,
+            TileState::Renderable { unload: true, .. } => false,
+            _ => true,
+        });
     }
 }

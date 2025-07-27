@@ -128,6 +128,7 @@ pub fn content_render_setup(
         meshes: return_meshes,
         textures: textures.into_iter().map(|t| t.into()).collect(),
         materials,
+        unload: false,
     };
     Ok(())
 }

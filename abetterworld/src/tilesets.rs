@@ -152,7 +152,7 @@ impl TileSetImporter {
 
         // Unload the ones not in the current pass
         if !tiles_to_unload.is_empty() {
-            self.tile_manager.unload_tiles(tiles_to_unload);
+            self.tile_manager.mark_tiles_unload(tiles_to_unload);
         }
 
         // Prepare for next pass
