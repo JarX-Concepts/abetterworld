@@ -20,6 +20,7 @@ mod volumes;
 use crate::{
     camera::init_camera,
     content::{DebugVertex, Tile, TileState},
+    errors::AbwError,
     matrix::is_bounding_volume_visible,
     pager::start_pager,
     rendering::{
@@ -31,26 +32,17 @@ use crate::{
 };
 use cache::init_tileset_cache;
 use camera::Camera;
-use cgmath::{Deg, EuclideanSpace, InnerSpace, Matrix4, SquareMatrix, Vector3, Zero};
+use cgmath::InnerSpace;
 use crossbeam_channel::{bounded, Receiver};
 use decode::init;
 use std::{
     error::Error,
     ops::Deref,
-    sync::{Arc, RwLock},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
-pub struct UniformDataBlob {
-    pub data: Vec<u8>,
-    pub size: usize,
-    pub aligned_uniform_size: usize,
-    pub max_objects: usize,
-    pub uniform_buffer: wgpu::Buffer,
-    pub uniform_bind_group: wgpu::BindGroup,
-}
-
-pub struct SphereRenderer {
+pub struct ABetterWorld {
     pipeline: RenderPipeline,
     debug_pipeline: RenderPipeline,
     camera: Arc<Camera>,
@@ -101,13 +93,9 @@ pub enum InputEvent {
     TouchEnd { id: u64 },
 }
 
-impl SphereRenderer {
-    /// Creates a new SphereRenderer.
-    pub async fn new(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        config: &wgpu::SurfaceConfiguration,
-    ) -> Self {
+impl ABetterWorld {
+    /// Creates a new ABetterWorld.
+    pub fn new(device: &wgpu::Device, config: &wgpu::SurfaceConfiguration) -> Self {
         //download_test();
         init_tileset_cache();
 
@@ -145,9 +133,9 @@ impl SphereRenderer {
         &self.depth_view
     }
 
-    pub fn render<'a>(
-        &'a mut self,
-        render_pass: &mut wgpu::RenderPass<'a>,
+    pub fn render(
+        &self,
+        render_pass: &mut wgpu::RenderPass,
         queue: &wgpu::Queue,
         _device: &wgpu::Device,
     ) {
@@ -230,7 +218,7 @@ impl SphereRenderer {
         self.draw_all_tile_volumes(render_pass, queue);
     }
 
-    fn draw_all_tile_volumes(&self, render_pass: &mut wgpu::RenderPass<'_>, queue: &wgpu::Queue) {
+    fn draw_all_tile_volumes(&self, render_pass: &mut wgpu::RenderPass, queue: &wgpu::Queue) {
         let camera_vp = self.camera.uniform();
         queue.write_buffer(
             &self.debug_pipeline.transforms.uniform_buffer,
@@ -259,7 +247,7 @@ impl SphereRenderer {
         }
     }
 
-    pub fn draw_debug_camera(&self, render_pass: &mut wgpu::RenderPass<'_>, queue: &wgpu::Queue) {
+    pub fn draw_debug_camera(&self, render_pass: &mut wgpu::RenderPass, queue: &wgpu::Queue) {
         let mut camera_vp = self.camera.uniform();
         camera_vp.free_space = 0.5;
 
@@ -295,11 +283,7 @@ impl SphereRenderer {
         render_pass.draw_indexed(0..36, 0, 0..1);
     }
 
-    pub fn update(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-    ) -> Result<(), Box<dyn Error>> {
+    pub fn update(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> Result<(), AbwError> {
         self.debug_camera.deref().update(None);
 
         const BUDGET: Duration = Duration::from_millis(20);
