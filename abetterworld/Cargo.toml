@@ -32,7 +32,6 @@ crossbeam-channel = "0.5"
 num_cpus = "1.17.0"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-tokio = { version = "1", default-features = false, features = ["macros", "rt", "time"] }
 gloo-timers = { version = "0.3", features = ["futures"] }
 wasm-bindgen = "0.2"
 wasm-bindgen-test = "0.3"
@@ -43,9 +42,14 @@ serde-wasm-bindgen = "0.6"
 console_log = "1.0"
 futures-util = "0.3"
 
-[features]
-paging_test = []
-
-[build-dependencies]
+[target.'cfg(not(target_arch = "wasm32"))'.build-dependencies]
+cmake = "0.1.54"
 cc = "1.0"
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+cxx = "1.0.78"
+# 0.30.0 does not compile at the moment (see https://github.com/google/autocxx/issues/1480)
+autocxx = { version = "0.28" }
+
+[features]
+paging_test = []
