@@ -188,12 +188,12 @@ fn map_keycode(physical_key: &PhysicalKey) -> Option<Key> {
 fn main() {
     dotenv::dotenv().ok();
     env_logger::init();
-    log::info!("Starting Blue Sphere application...");
+    log::info!("Starting A Better World application...");
 
     let event_loop = EventLoop::new().unwrap();
     let window = Arc::new(
         WindowBuilder::new()
-            .with_title("Blue Sphere")
+            .with_title("A Better World")
             .build(&event_loop)
             .unwrap(),
     );
