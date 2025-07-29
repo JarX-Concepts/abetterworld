@@ -248,10 +248,9 @@ static TILESET_CACHE: OnceLock<Arc<TilesetCache>> = OnceLock::new();
 
 pub fn init_tileset_cache() -> Arc<TilesetCache> {
     let cache = Arc::new(TilesetCache::new());
-    TILESET_CACHE
-        .set(cache.clone())
-        .ok()
-        .expect("TilesetCache already initialized");
+    if TILESET_CACHE.set(cache.clone()).is_err() {
+        log::warn!("TilesetCache already initialized");
+    }
     cache
 }
 

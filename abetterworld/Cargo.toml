@@ -31,9 +31,6 @@ xxhash-rust = { version = "0.8", features = ["xxh3"] }
 crossbeam-channel = "0.5"
 num_cpus = "1.17.0"
 
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-tokio = { version = "1", features = ["full"] }
-
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 tokio = { version = "1", default-features = false, features = ["macros", "rt", "time"] }
 gloo-timers = { version = "0.3", features = ["futures"] }
@@ -45,4 +42,10 @@ js-sys = "0.3"
 serde-wasm-bindgen = "0.6"
 console_log = "1.0"
 futures-util = "0.3"
+
+[features]
+paging_test = []
+
+[build-dependencies]
+cc = "1.0"
 
