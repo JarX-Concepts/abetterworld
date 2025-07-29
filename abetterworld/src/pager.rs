@@ -102,7 +102,7 @@ pub fn start_pager(
                     }
                 }
 
-                if (did_nothing_iter) {
+                if did_nothing_iter {
                     // No new tiles or camera movement, sleep briefly to avoid busy-waiting
                     thread::sleep(Duration::from_millis(10));
                 }
