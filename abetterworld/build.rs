@@ -25,8 +25,8 @@ fn main() {
     println!("cargo:rustc-link-search=native={}", out_dir.display());
 
     // Link order matters: draco first, wrapper second
-    println!("cargo:rustc-link-lib=static=draco");
     println!("cargo:rustc-link-lib=static=draco_wrapper");
+    println!("cargo:rustc-link-lib=static=draco");
 
     // Platform-specific stdlib for C++
     #[cfg(target_os = "linux")]
