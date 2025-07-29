@@ -129,6 +129,7 @@ pub fn content_render_setup(
         textures: textures.into_iter().map(|t| t.into()).collect(),
         materials,
         unload: false,
+        culling_volume: tile.volume.to_aabb(),
     };
     Ok(())
 }

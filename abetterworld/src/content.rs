@@ -1,4 +1,7 @@
-use crate::{decode::OwnedDecodedMesh, volumes::BoundingVolume};
+use crate::{
+    decode::OwnedDecodedMesh,
+    volumes::{BoundingBox, BoundingVolume},
+};
 use cgmath::Matrix4;
 use std::mem;
 
@@ -30,6 +33,7 @@ pub enum TileState {
         textures: Vec<TextureResource>,
         materials: Vec<Material>,
         unload: bool,
+        culling_volume: BoundingBox,
     },
 }
 
