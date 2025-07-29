@@ -21,3 +21,9 @@ target/
 
 **/pkg/**
 **/dist/**
+
+# We want to keep draco/ in Git, but avoid temporary CMake artifacts
+**/draco/**/CMakeFiles/
+**/draco/**/CMakeCache.txt
+**/draco/**/Makefile
+**/draco/**/cmake_install.cmake

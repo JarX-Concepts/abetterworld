@@ -3,6 +3,12 @@ name = "abetterworld"
 version = "0.1.0"
 edition = "2021"
 resolver = "2"
+include = [
+    "src/**/*",
+    "draco/**/*",
+    "build.rs",
+    "Cargo.toml",
+]
 
 [dependencies]
 bytemuck = { version = "1.10", features = ["derive"] }
