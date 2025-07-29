@@ -20,6 +20,7 @@ mod volumes;
 use crate::{
     camera::init_camera,
     content::{DebugVertex, Tile, TileState},
+    matrix::is_bounding_volume_visible,
     pager::start_pager,
     rendering::{
         build_debug_pipeline, build_depth_buffer, build_frustum_render, build_pipeline,
@@ -148,10 +149,11 @@ impl SphereRenderer {
         &'a mut self,
         render_pass: &mut wgpu::RenderPass<'a>,
         queue: &wgpu::Queue,
-        device: &wgpu::Device,
+        _device: &wgpu::Device,
     ) {
         {
             let latest_render = self.content.tileset.read().unwrap();
+            let planes = self.debug_camera.planes();
             if !latest_render.is_empty() {
                 render_pass.set_pipeline(&self.pipeline.pipeline);
 
@@ -169,9 +171,10 @@ impl SphereRenderer {
                         ref textures,
                         ref materials,
                         unload: ref _unload,
+                        ref culling_volume,
                     } = tile.1.state
                     {
-                        let render_it = true; //debug_cam_read.is_bounding_volume_visible(&tile.volume);
+                        let render_it = is_bounding_volume_visible(&planes, &culling_volume);
 
                         if !render_it {
                             counter += nodes.len() as u32;
@@ -313,7 +316,7 @@ impl SphereRenderer {
                         if let Err(e) =
                             tiles::content_render_setup(device, queue, layout, &mut tile)
                         {
-                            eprintln!("Failed to set up tile for rendering: {e}");
+                            log::error!("Failed to set up tile for rendering: {e}");
                             continue; // skip adding this tile
                         }
                         self.content.add_tile(tile);
@@ -324,7 +327,7 @@ impl SphereRenderer {
             }
         }
 
-        self.debug_camera.yaw(Deg(0.1));
+        //self.debug_camera.yaw(Deg(0.1));
         //self.debug_camera.write().unwrap().zoom(-500.0);
         self.debug_camera.update(None);
 
@@ -336,33 +339,34 @@ impl SphereRenderer {
             let mut volume_counter = 1;
 
             for tile in latest_render.iter() {
-                let obb = tile.1.volume.to_aabb();
-                let distance = obb.ray_intersect(&Ray {
-                    origin: camera_pos,
-                    direction: -camera_pos.normalize(),
-                });
-                if distance.is_some() && distance.unwrap() < min_distance {
-                    min_distance = distance.unwrap();
-                }
+                if let TileState::Renderable { culling_volume, .. } = &tile.1.state {
+                    let distance = culling_volume.ray_intersect(&Ray {
+                        origin: camera_pos,
+                        direction: -camera_pos.normalize(),
+                    });
+                    if distance.is_some() && distance.unwrap() < min_distance {
+                        min_distance = distance.unwrap();
+                    }
 
-                let corners = tile.1.volume.corners(Vector3::zero());
-                let new_frustum_vertices: Vec<DebugVertex> = corners
-                    .iter()
-                    .map(|p| DebugVertex {
-                        position: [p.x as f32, p.y as f32, p.z as f32],
-                        color: [1.0, 1.0, 0.25, 0.1],
-                    })
-                    .collect();
+                    let new_frustum_vertices: Vec<DebugVertex> = culling_volume
+                        .corners
+                        .iter()
+                        .map(|p| DebugVertex {
+                            position: [p.x as f32, p.y as f32, p.z as f32],
+                            color: [1.0, 1.0, 0.25, 0.1],
+                        })
+                        .collect();
 
-                if volume_counter >= MAX_VOLUMES {
-                    //eprintln!("Hit maximum number of volumes");
-                } else {
-                    queue.write_buffer(
-                        &self.frustum_render.vertex_buffer,
-                        volume_counter * SIZE_OF_VOLUME,
-                        bytemuck::cast_slice(&new_frustum_vertices),
-                    );
-                    volume_counter += 1;
+                    if volume_counter >= MAX_VOLUMES {
+                        //eprintln!("Hit maximum number of volumes");
+                    } else {
+                        queue.write_buffer(
+                            &self.frustum_render.vertex_buffer,
+                            volume_counter * SIZE_OF_VOLUME,
+                            bytemuck::cast_slice(&new_frustum_vertices),
+                        );
+                        volume_counter += 1;
+                    }
                 }
             }
         }
@@ -378,21 +382,6 @@ impl SphereRenderer {
                         let projected = projected_cam * node.transform;
                         let uniformed = matrix::decompose_matrix64_to_uniform(&projected);
                         let matrix_bytes = bytemuck::bytes_of(&uniformed);
-
-                        /*
-                            let radius = 6_378_137.0;
-                            let distance: f64 = radius * 2.0;
-                            let eye = Vector3::new(0.0, distance, 0.0);
-                            let projected_eye = projected_cam * Matrix4::from_translation(eye);
-
-                            println!("projected_eye: {:?}", projected_eye);
-                        */
-                        /*
-                            println!(
-                                "Node {}: Transform: {:?}, Cam: {:?}, Projected: {:?}, Unformed: {:?}",
-                                i, node.transform, projected_cam, projected, uniformed
-                            );
-                        */
 
                         let start = counter * self.pipeline.transforms.aligned_uniform_size;
                         let end = start + matrix_bytes.len();

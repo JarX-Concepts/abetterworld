@@ -5,7 +5,7 @@ use std::sync::{
 
 use crate::{
     coord_utils::geodetic_to_ecef_z_up,
-    matrix::{decompose_matrix64_to_uniform, Uniforms},
+    matrix::{decompose_matrix64_to_uniform, extract_frustum_planes, Uniforms},
     volumes::BoundingVolume,
 };
 use cgmath::{
@@ -168,44 +168,6 @@ impl Camera {
         self.generation.load(Ordering::Relaxed)
     }
 
-    fn extract_frustum_planes(mat: &Matrix4<f64>) -> [(Vector4<f64>, Vector3<f64>, f64); 6] {
-        let m = mat; //mat.transpose();
-
-        let rows = [
-            m.row(0).to_owned(),
-            m.row(1).to_owned(),
-            m.row(2).to_owned(),
-            m.row(3).to_owned(),
-        ];
-
-        let mut planes = [(Vector4::zero(), Vector3::zero(), 0.0); 6];
-
-        // Left
-        planes[0].0 = rows[3] + rows[0];
-        // Right
-        planes[1].0 = rows[3] - rows[0];
-        // Bottom
-        planes[2].0 = rows[3] + rows[1];
-        // Top
-        planes[3].0 = rows[3] - rows[1];
-        // Near
-        planes[4].0 = rows[3] + rows[2];
-        // Far
-        planes[5].0 = rows[3] - rows[2];
-
-        // Normalize planes and extract (normal, d)
-        for plane in &mut planes {
-            let normal = Vector3::new(plane.0.x, plane.0.y, plane.0.z);
-            let len = normal.magnitude();
-            plane.1 = normal / len;
-            plane.2 = plane.0.w / len;
-        }
-
-        //println!("Planes: {:?}", planes);
-
-        planes
-    }
-
     /// internal: recompute cam_world and UBO
     pub fn update(&self, distance_to_geom: Option<f64>) -> Matrix4<f64> {
         if !self.dirty.load(Ordering::Relaxed) {
@@ -238,7 +200,7 @@ impl Camera {
         );
         let model_view_mat = Matrix4::look_at_rh(user_state.eye, user_state.target, user_state.up);
         derived_state.proj_view_matrix = proj64 * model_view_mat;
-        derived_state.planes = Self::extract_frustum_planes(&derived_state.proj_view_matrix);
+        derived_state.planes = extract_frustum_planes(&derived_state.proj_view_matrix);
         derived_state.uniform = decompose_matrix64_to_uniform(&derived_state.proj_view_matrix);
 
         self.generation.fetch_add(1, Ordering::Relaxed);
@@ -260,59 +222,9 @@ impl Camera {
         self.derived_state.read().unwrap().uniform
     }
 
-    pub fn proj_view(&self) -> Matrix4<f64> {
-        self.derived_state.read().unwrap().proj_view_matrix
-    }
-
-    pub fn print_frustum_planes(&self) {
-        println!("Frustum planes:");
-        let labels = ["Left", "Right", "Bottom", "Top", "Near", "Far"];
-        for (i, plane) in self.derived_state.read().unwrap().planes.iter().enumerate() {
-            println!(
-                "Plane {} ({}): offset= {:?}, normal = {:?}, d = {:?}",
-                i, labels[i], plane.0, plane.1, plane.2,
-            );
-        }
-    }
-
-    pub fn is_bounding_volume_visible(&self, bv: &BoundingVolume) -> bool {
-        let aabb = bv.to_aabb();
-
-        // Apply camera offset to the whole box
-        //aabb.min -= offset;
-        //aabb.max -= offset;Í
-
-        let planes = self.derived_state.read().unwrap().planes;
-        for &(_, normal, d) in &planes {
-            // p-vertex: most positive vertex in direction of normal
-            let p = Vector3::new(
-                if normal.x >= 0.0 {
-                    aabb.max.x
-                } else {
-                    aabb.min.x
-                },
-                if normal.y >= 0.0 {
-                    aabb.max.y
-                } else {
-                    aabb.min.y
-                },
-                if normal.z >= 0.0 {
-                    aabb.max.z
-                } else {
-                    aabb.min.z
-                },
-            );
-
-            if normal.dot(p) + d < 0.0 {
-                //println!("False");
-                return false;
-            }
-        }
-
-        println!("Bounding Volume: {:?}", aabb);
-        println!("True");
-
-        true
+    /// expose the latest planes
+    pub fn planes(&self) -> [(Vector4<f64>, Vector3<f64>, f64); 6] {
+        self.derived_state.read().unwrap().planes
     }
 
     pub fn frustum_corners(&self) -> [Point3<f64>; 8] {
@@ -354,6 +266,17 @@ impl Camera {
             far_center - far_up - far_right, // 7: far bottom-left
         ]
     }
+
+    pub fn print_frustum_planes(&self) {
+        println!("Frustum planes:");
+        let labels = ["Left", "Right", "Bottom", "Top", "Near", "Far"];
+        for (i, plane) in self.derived_state.read().unwrap().planes.iter().enumerate() {
+            println!(
+                "Plane {} ({}): offset= {:?}, normal = {:?}, d = {:?}",
+                i, labels[i], plane.0, plane.1, plane.2,
+            );
+        }
+    }
 }
 
 pub fn init_camera() -> (Camera, Camera) {
@@ -374,7 +297,7 @@ pub fn init_camera() -> (Camera, Camera) {
     });
     camera.update(None);
 
-    let debug_eye = geodetic_to_ecef_z_up(34.4208, -119.6982, 20000.0);
+    let debug_eye = geodetic_to_ecef_z_up(34.4208, -119.6982, 200.0);
     let debug_eye_pt: Point3<f64> = Point3::new(debug_eye.0, debug_eye.1, debug_eye.2);
     let debug_camera = Camera::new(CameraUserPosition {
         fovy: Deg(45.0),

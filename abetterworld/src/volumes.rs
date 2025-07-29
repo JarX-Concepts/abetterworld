@@ -5,6 +5,7 @@ use serde::Deserialize;
 pub struct BoundingBox {
     pub min: Vector3<f64>,
     pub max: Vector3<f64>,
+    pub corners: [Vector3<f64>; 8],
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -62,12 +63,13 @@ impl BoundingVolume {
         BoundingBox {
             min: center - extent,
             max: center + extent,
+            corners: self.corners(),
         }
     }
 
-    pub fn corners(&self, offset: Vector3<f64>) -> [Vector3<f64>; 8] {
+    pub fn corners(&self) -> [Vector3<f64>; 8] {
         let obb = self.to_obb();
-        let center = obb.center - offset;
+        let center = obb.center;
         let half_axes = obb.half_axes;
 
         let mut corners = [Vector3::zero(); 8];
@@ -161,96 +163,5 @@ impl OrientedBoundingBox {
         );
 
         self.center + basis * clamped
-    }
-
-    pub fn ray_intersect(&self, ray: &Ray) -> Option<f64> {
-        let basis = Matrix3::from_cols(self.half_axes[0], self.half_axes[1], self.half_axes[2]);
-
-        log::debug!("OBB center: {:?}", self.center);
-        log::debug!("OBB half-axes: {:?}", self.half_axes);
-        log::debug!("Ray origin: {:?}", ray.origin);
-        log::debug!("Ray direction: {:?}", ray.direction);
-
-        let Some(inv_basis) = basis.invert() else {
-            log::warn!("OBB basis matrix is not invertible");
-            return None;
-        };
-
-        log::debug!("Inverse basis matrix: {:?}", inv_basis);
-
-        let local_origin = inv_basis * (ray.origin - self.center);
-        let local_direction = inv_basis * ray.direction;
-
-        log::debug!("Local ray origin: {:?}", local_origin);
-        log::debug!("Local ray direction: {:?}", local_direction);
-
-        let min = Vector3::new(-1.0, -1.0, -1.0);
-        let max = Vector3::new(1.0, 1.0, 1.0);
-
-        let mut t_min = f64::NEG_INFINITY;
-        let mut t_max = f64::INFINITY;
-
-        for i in 0..3 {
-            let origin = local_origin[i];
-            let dir = local_direction[i];
-
-            log::debug!(
-                "Axis {}: local_origin = {}, local_direction = {}",
-                i,
-                origin,
-                dir
-            );
-
-            if dir.abs() < 1e-8 {
-                log::debug!("Axis {}: Ray is parallel to slab", i);
-                if origin < min[i] || origin > max[i] {
-                    log::debug!(
-                        "Axis {}: Ray origin {} is outside slab bounds ({}, {})",
-                        i,
-                        origin,
-                        min[i],
-                        max[i]
-                    );
-                    return None;
-                }
-            } else {
-                let t1 = (min[i] - origin) / dir;
-                let t2 = (max[i] - origin) / dir;
-                let (t_near, t_far) = if t1 < t2 { (t1, t2) } else { (t2, t1) };
-
-                log::debug!(
-                    "Axis {}: t_near = {}, t_far = {}, before clamp t_min = {}, t_max = {}",
-                    i,
-                    t_near,
-                    t_far,
-                    t_min,
-                    t_max
-                );
-
-                t_min = t_min.max(t_near);
-                t_max = t_max.min(t_far);
-
-                log::debug!(
-                    "Axis {}: after clamp t_min = {}, t_max = {}",
-                    i,
-                    t_min,
-                    t_max
-                );
-
-                if t_min > t_max {
-                    log::debug!("Axis {}: No intersection after clamp (t_min > t_max)", i);
-                    return None;
-                }
-            }
-        }
-
-        if t_min < 0.0 && t_max < 0.0 {
-            log::debug!("OBB intersection is fully behind the ray origin");
-            None
-        } else {
-            let t_result = if t_min >= 0.0 { t_min } else { t_max };
-            log::debug!("Intersection at t = {}", t_result);
-            Some(t_result)
-        }
     }
 }

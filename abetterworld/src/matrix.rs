@@ -1,5 +1,7 @@
 use bytemuck::{Pod, Zeroable};
-use cgmath::{Matrix4, SquareMatrix, Vector3};
+use cgmath::{InnerSpace, Matrix, Matrix4, SquareMatrix, Vector3, Vector4, Zero};
+
+use crate::volumes::{BoundingBox, BoundingVolume};
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
@@ -89,4 +91,70 @@ pub fn recompose_uniform_to_matrix64(uniforms: &Uniforms) -> Matrix4<f64> {
     mat64.w.z += uniforms.offset[2] as f64;
 
     mat64
+}
+
+pub fn extract_frustum_planes(mat: &Matrix4<f64>) -> [(Vector4<f64>, Vector3<f64>, f64); 6] {
+    let rows = [mat.row(0), mat.row(1), mat.row(2), mat.row(3)];
+
+    let mut planes = [(Vector4::zero(), Vector3::zero(), 0.0); 6];
+
+    // Left
+    planes[0].0 = rows[3] + rows[0];
+    // Right
+    planes[1].0 = rows[3] - rows[0];
+    // Bottom
+    planes[2].0 = rows[3] + rows[1];
+    // Top
+    planes[3].0 = rows[3] - rows[1];
+    // Near
+    planes[4].0 = rows[3] + rows[2];
+    // Far
+    planes[5].0 = rows[3] - rows[2];
+
+    // Normalize planes and extract (normal, d)
+    for plane in &mut planes {
+        let normal = Vector3::new(plane.0.x, plane.0.y, plane.0.z);
+        let len = normal.magnitude();
+        plane.1 = normal / len;
+        plane.2 = plane.0.w / len;
+    }
+
+    planes
+}
+
+pub fn is_bounding_volume_visible(
+    planes: &[(Vector4<f64>, Vector3<f64>, f64); 6],
+    bb: &BoundingBox,
+) -> bool {
+    for &(_, normal, d) in planes {
+        let p = Vector3::new(
+            if normal.x >= 0.0 { bb.max.x } else { bb.min.x },
+            if normal.y >= 0.0 { bb.max.y } else { bb.min.y },
+            if normal.z >= 0.0 { bb.max.z } else { bb.min.z },
+        );
+
+        let n = Vector3::new(
+            if normal.x < 0.0 { bb.max.x } else { bb.min.x },
+            if normal.y < 0.0 { bb.max.y } else { bb.min.y },
+            if normal.z < 0.0 { bb.max.z } else { bb.min.z },
+        );
+
+        let dp_p = normal.dot(p) + d;
+        let dp_n = normal.dot(n) + d;
+
+        if dp_p < 0.0 {
+            // Fully outside
+            return false;
+        }
+
+        if dp_n < 0.0 {
+            // Intersecting → run full corner test
+            let all_outside = bb.corners.iter().all(|c| normal.dot(*c) + d < 0.0);
+            if all_outside {
+                return false;
+            }
+        }
+    }
+
+    true
 }
