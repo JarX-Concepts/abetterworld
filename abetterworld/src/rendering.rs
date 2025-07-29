@@ -3,8 +3,16 @@ use wgpu::util::DeviceExt;
 use crate::{
     content::{DebugVertex, Vertex},
     matrix::{uniform_size, Uniforms},
-    UniformDataBlob,
 };
+
+pub struct UniformDataBlob {
+    pub data: Vec<u8>,
+    pub size: usize,
+    pub aligned_uniform_size: usize,
+    pub max_objects: usize,
+    pub uniform_buffer: wgpu::Buffer,
+    pub uniform_bind_group: wgpu::BindGroup,
+}
 
 pub struct RenderPipeline {
     pub pipeline: wgpu::RenderPipeline,
