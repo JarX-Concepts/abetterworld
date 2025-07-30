@@ -1,9 +1,12 @@
 use cgmath::MetricSpace;
-use crossbeam_channel::{bounded, select, unbounded};
-use reqwest::blocking::Client;
-use std::sync::RwLock;
+use crossbeam_channel::{bounded, unbounded};
 use std::{sync::Arc, thread, time::Duration};
-use wgpu::naga::back;
+
+#[cfg(wasm)]
+use reqwest::Client;
+
+#[cfg(not(wasm))]
+use reqwest::blocking::Client;
 
 use crate::camera::Camera;
 use crate::content::{Tile, TileState};
@@ -32,14 +35,14 @@ pub fn start_pager(
         let mut pager =
             TileSetImporter::new(build_client(LOADER_THREADS)?, pager_tx.clone(), tile_mgr);
 
-        thread::spawn(move || {
+        thread::spawn(async move || {
             let mut last_cam_gen = 0;
             loop {
                 let new_gen = cam.generation();
                 if new_gen != last_cam_gen {
                     let camera_data = cam.refinement_data();
 
-                    if let Err(e) = pager.go(&camera_data, GOOGLE_API_URL, GOOGLE_API_KEY) {
+                    if let Err(e) = pager.go(&camera_data, GOOGLE_API_URL, GOOGLE_API_KEY).await {
                         log::error!("tileset import failed: {e}");
                     }
 
@@ -119,10 +122,11 @@ pub fn start_pager(
             let render_time = render_tx.clone();
             let rx = loader_rx.clone();
 
-            thread::spawn(move || {
+            thread::spawn(async move || {
                 for mut tile in rx.iter() {
                     if tile.state == TileState::ToLoad {
-                        if let Err(e) = content_load(&client_clone, GOOGLE_API_KEY, &mut tile) {
+                        if let Err(e) = content_load(&client_clone, GOOGLE_API_KEY, &mut tile).await
+                        {
                             log::error!("load failed: {e}");
                             continue;
                         }
@@ -139,9 +143,19 @@ pub fn start_pager(
 }
 
 fn build_client(threads: usize) -> Result<Client, AbwError> {
-    Client::builder()
-        .user_agent("abetterworld")
-        .pool_max_idle_per_host(threads + 1)
-        .build()
-        .map_err(|e| AbwError::Network(format!("Failed to build HTTP client: {e}")))
+    #[cfg(not(wasm))]
+    {
+        Client::builder()
+            .user_agent("abetterworld")
+            .pool_max_idle_per_host(threads + 1)
+            .build()
+            .map_err(|e| AbwError::Network(format!("Failed to build HTTP client: {e}")))
+    }
+    #[cfg(wasm)]
+    {
+        Client::builder()
+            .user_agent("abetterworld")
+            .build()
+            .map_err(|e| AbwError::Network(format!("Failed to build HTTP client: {e}")))
+    }
 }

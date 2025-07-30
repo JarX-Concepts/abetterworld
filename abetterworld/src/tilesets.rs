@@ -8,11 +8,16 @@ use crate::volumes::BoundingVolume;
 use bytes::Bytes;
 use cgmath::InnerSpace;
 use crossbeam_channel::Sender;
-use reqwest::blocking::Client;
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::sync::Arc;
 use url::Url;
+
+#[cfg(wasm)]
+use reqwest::Client;
+
+#[cfg(not(wasm))]
+use reqwest::blocking::Client;
 
 #[derive(Debug, Deserialize)]
 struct GltfTileset {
@@ -77,11 +82,12 @@ fn extract_session(url: &str) -> Option<&str> {
     url.split_once("session=").map(|(_, session)| session)
 }
 
-fn add_key_and_session(url: &str, key: &str, session: Option<&str>) -> String {
+fn add_key_and_session(url: &str, key: &str, session: &Option<Arc<String>>) -> String {
     let mut url = Url::parse(url).unwrap();
     url.query_pairs_mut().append_pair("key", key);
     if let Some(session) = session {
-        url.query_pairs_mut().append_pair("session", session);
+        url.query_pairs_mut()
+            .append_pair("session", session.as_str());
     }
     url.to_string()
 }
@@ -134,13 +140,14 @@ impl TileSetImporter {
         }
     }
 
-    pub fn go(
+    #[cfg(wasm)]
+    pub async fn go(
         &mut self,
         camera: &CameraRefinementData,
         url: &str,
         key: &str,
     ) -> Result<(), AbwError> {
-        let ret = self.import_tileset(camera, url, key, None);
+        let ret = self.import_tileset(camera, url, key).await;
 
         // Compute tiles to unload
         let tiles_to_unload: Vec<u64> = self
@@ -162,14 +169,14 @@ impl TileSetImporter {
         ret
     }
 
-    fn import_tileset(
+    #[cfg(wasm)]
+    async fn import_tileset(
         &mut self,
         camera: &CameraRefinementData,
         url: &str,
         key: &str,
-        session: Option<&str>,
     ) -> Result<(), AbwError> {
-        let (content_type, bytes) = self.download_content(url, key, session)?;
+        let (content_type, bytes) = self.download_content(url, key, &None).await?;
 
         match content_type.as_str() {
             "application/json" | "application/json; charset=UTF-8" => {
@@ -179,7 +186,8 @@ impl TileSetImporter {
                         String::from_utf8_lossy(&bytes)
                     ))?;
 
-                self.process_tileset(camera, &tileset.root, url, key, session)
+                self.process_tileset(camera, tileset.root, url, key, None)
+                    .await
             }
             _ => Err(AbwError::TileLoading(
                 format!(
@@ -191,73 +199,90 @@ impl TileSetImporter {
         }
     }
 
-    fn process_tileset(
+    #[cfg(wasm)]
+    async fn process_tileset(
         &mut self,
         camera: &CameraRefinementData,
-        tile_info: &GltfTile,
+        root_tile: GltfTile,
         tileset_url: &str,
         key: &str,
-        session: Option<&str>,
+        session: Option<Arc<String>>,
     ) -> Result<(), AbwError> {
-        let mut added_geom = false;
+        use std::collections::VecDeque;
 
-        let needs_refinement = needs_refinement(
-            camera,
-            &tile_info.bounding_volume,
-            tile_info.geometric_error,
-            1024.0,
-            100.0,
-        );
+        let mut stack = VecDeque::new();
+        stack.push_back((root_tile, tileset_url.to_string(), session));
 
-        if let Some(content) = &tile_info.content {
-            let tile_url = resolve_url(&tileset_url, &content.uri)?;
-            let refine_mode = tile_info.refine.as_deref().unwrap_or("REPLACE");
-            let new_session = extract_session(&tile_url).or_else(|| session);
+        while let Some((tile, base_url, session)) = stack.pop_back() {
+            let mut added_geom = false;
 
-            if is_nested_tileset(&tile_url) {
-                self.import_tileset(camera, &tile_url, key, new_session)?;
-            } else if is_glb(&tile_url)
-                && (refine_mode == "ADD" || tile_info.children.is_none() || !needs_refinement)
-            {
-                added_geom = true;
+            let needs_refinement = needs_refinement(
+                camera,
+                &tile.bounding_volume,
+                tile.geometric_error,
+                1024.0,
+                100.0,
+            );
 
-                // add key and session to the tile_url
-                let tile_url = add_key_and_session(&tile_url, key, new_session);
-                let tile_id = hash_uri(&tile_url);
+            if let Some(content) = &tile.content {
+                let tile_url = resolve_url(&base_url, &content.uri)?;
+                let refine_mode = tile.refine.as_deref().unwrap_or("REPLACE");
+                let new_session = extract_session(&tile_url);
+                let current_session = match new_session {
+                    Some(s) => match session.as_ref() {
+                        Some(existing) if existing.as_str() == s => session.clone(),
+                        _ => Some(Arc::new(s.to_string())),
+                    },
+                    None => session.clone(), // nothing new — reuse or continue None
+                };
 
-                if !self.current_pass_tiles.contains(&tile_id) {
-                    self.current_pass_tiles.insert(tile_id);
+                if is_nested_tileset(&tile_url) {
+                    let (content_type, bytes) = self
+                        .download_content(&tile_url, key, &current_session)
+                        .await?;
 
-                    if !self.last_pass_tiles.contains(&tile_id) {
-                        let new_tile = Tile {
-                            counter: self.current_pass_tiles.len() as u64,
-                            parent: None,
-                            id: tile_id,
-                            uri: tile_url,
-                            session: None,
-                            volume: tile_info.bounding_volume,
-                            state: TileState::ToLoad,
-                        };
+                    if content_type.starts_with("application/json") {
+                        let tileset: GltfTileset =
+                            serde_json::from_slice(&bytes).tile_loading(&format!(
+                                "Failed to parse tileset JSON: {}",
+                                String::from_utf8_lossy(&bytes)
+                            ))?;
+                        stack.push_back((tileset.root, tile_url.clone(), current_session));
+                    }
+                } else if is_glb(&tile_url)
+                    && (refine_mode == "ADD" || tile.children.is_none() || !needs_refinement)
+                {
+                    added_geom = true;
 
-                        //self.tile_manager.add_tile(new_tile);
+                    let tile_url = add_key_and_session(&tile_url, key, &current_session);
+                    let tile_id = hash_uri(&tile_url);
 
-                        // off you go; good luck; god speed
-                        self.sender
-                            .send(new_tile)
-                            .map_err(|e| AbwError::TileLoading(e.to_string()))?;
+                    if !self.current_pass_tiles.contains(&tile_id) {
+                        self.current_pass_tiles.insert(tile_id);
+
+                        if !self.last_pass_tiles.contains(&tile_id) {
+                            let new_tile = Tile {
+                                counter: self.current_pass_tiles.len() as u64,
+                                parent: None,
+                                id: tile_id,
+                                uri: tile_url,
+                                volume: tile.bounding_volume.clone(),
+                                state: TileState::ToLoad,
+                            };
+
+                            self.sender
+                                .send(new_tile)
+                                .map_err(|e| AbwError::TileLoading(e.to_string()))?;
+                        }
                     }
                 }
-            } else if !is_glb(&tile_url) {
-                // these are weird
-                // https://tile.googleapis.com/v1/3dtiles/datasets/CgIYAQ/files/AJVsH2xhxJPWKbFgSv4QaTrl7SbTaFlJnvfES7rtU4UHj6Lt5ys_EykyPb_P6NdvvMm8XTjWA6bKUyTq94uFkec53CIZF33frCoSLMBSQiOnIlPsKc0G8BsSlYvL.glb?session=CPecuaT_6-PRSBDl8uHDBg
-                // log::info!("What is this tile {}", tile_url);
             }
-        }
 
-        if needs_refinement || !added_geom {
-            if let Some(children) = &tile_info.children {
-                for child in children {
-                    self.process_tileset(camera, &child, &tileset_url, &key, session)?;
+            if needs_refinement || !added_geom {
+                if let Some(children) = &tile.children {
+                    for child in children.iter().cloned() {
+                        stack.push_back((child, base_url.clone(), session.clone()));
+                    }
                 }
             }
         }
@@ -265,11 +290,22 @@ impl TileSetImporter {
         Ok(())
     }
 
-    fn download_content(
+    #[cfg(wasm)]
+    async fn download_content(
         &self,
         content_url: &str,
         key: &str,
-        session: Option<&str>,
+        session: &Option<Arc<String>>,
+    ) -> Result<(String, Bytes), AbwError> {
+        download_content(&self.client, content_url, key, session).await
+    }
+
+    #[cfg(not(wasm))]
+    async fn download_content(
+        &self,
+        content_url: &str,
+        key: &str,
+        session: &Option<Arc<String>>,
     ) -> Result<(String, Bytes), AbwError> {
         download_content(&self.client, content_url, key, session)
     }

@@ -25,13 +25,11 @@ mod wasm_tests {
     #[wasm_bindgen_test]
     async fn test_indexeddb_stress_lifecycle() {
         console_log::init_with_level(log::Level::Info).ok();
-        init_tileset_cache().await;
+        init_tileset_cache();
 
         println!("Starting IndexedDB stress test...");
 
-        let Some(cache) = get_tileset_cache() else {
-            panic!("Cache not initialized");
-        };
+        let cache = get_tileset_cache();
 
         let content_type = "application/octet-stream";
         let base_value = Bytes::from_static(b"stress-test-payload");
@@ -41,31 +39,29 @@ mod wasm_tests {
         for i in 0..1000 {
             let key = random_key("stress", i);
             let val = Bytes::from(vec![(i % 255) as u8; 64]);
-            cache
-                .insert(key.clone(), content_type.to_string(), val.clone())
-                .await;
+            cache.insert(key.clone(), content_type.to_string(), val.clone());
         }
 
         // Insert a known key
         let control_key = "stress-control-key";
         let control_value = Bytes::from_static(b"CONTROL-DATA-123456");
-        cache
-            .insert(
-                control_key.to_string(),
-                content_type.to_string(),
-                control_value.clone(),
-            )
-            .await;
+        cache.insert(
+            control_key.to_string(),
+            content_type.to_string(),
+            control_value.clone(),
+        );
 
         // Evict memory
         {
-            let mut map = cache.map.lock().await;
-            map.clear();
+            cache.map.invalidate_all();
         }
 
         // Restore control key
         info!("Fetching control key from IndexedDB after memory clear...");
-        let result = cache.get(control_key).await;
+        let result = cache
+            .get(control_key)
+            .await
+            .expect("Failed to get control key from IndexedDB");
         assert!(result.is_some(), "Control key should be recoverable");
         let (ct, val) = result.unwrap();
         assert_eq!(ct, content_type);
@@ -77,50 +73,65 @@ mod wasm_tests {
         let utf_key = "unicode-ключ🗝️";
         let empty_payload = Bytes::new();
 
-        cache
-            .insert(
-                empty_key.to_string(),
-                content_type.to_string(),
-                empty_payload.clone(),
-            )
-            .await;
-        cache
-            .insert(
-                utf_key.to_string(),
-                content_type.to_string(),
-                base_value.clone(),
-            )
-            .await;
+        cache.insert(
+            empty_key.to_string(),
+            content_type.to_string(),
+            empty_payload.clone(),
+        );
+        cache.insert(
+            utf_key.to_string(),
+            content_type.to_string(),
+            base_value.clone(),
+        );
 
-        let (ct_empty, val_empty) = cache.get(empty_key).await.unwrap();
+        let result = cache
+            .get(empty_key)
+            .await
+            .expect("Failed to get empty key from IndexedDB");
+        let (ct_empty, val_empty) = match result {
+            Some((ct, val)) => (ct, val),
+            None => panic!("Expected Some for empty_key, got None"),
+        };
         assert_eq!(ct_empty, content_type);
         assert_eq!(val_empty, empty_payload);
 
-        let (ct_utf, val_utf) = cache.get(utf_key).await.unwrap();
+        let result = cache
+            .get(utf_key)
+            .await
+            .expect("Failed to get utf_key from IndexedDB");
+        let (ct_utf, val_utf) = match result {
+            Some((ct, val)) => (ct, val),
+            None => panic!("Expected Some for utf_key, got None"),
+        };
         assert_eq!(ct_utf, content_type);
         assert_eq!(val_utf, base_value);
 
         // Overwrite an existing key
         info!("Overwriting existing key...");
         let new_val = Bytes::from_static(b"new-overwritten-value");
-        cache
-            .insert(
-                control_key.to_string(),
-                content_type.to_string(),
-                new_val.clone(),
-            )
-            .await;
+        cache.insert(
+            control_key.to_string(),
+            content_type.to_string(),
+            new_val.clone(),
+        );
 
-        let (ct_overwritten, val_overwritten) = cache.get(control_key).await.unwrap();
+        let (ct_overwritten, val_overwritten) = cache
+            .get(control_key)
+            .await
+            .expect("Failed to get overwritten key from IndexedDB")
+            .unwrap();
         assert_eq!(ct_overwritten, content_type);
         assert_eq!(val_overwritten, new_val);
 
         // Cleanup and verify
         info!("Cleaning up IndexedDB...");
-        cache.clear().await;
+        cache.clear();
 
         info!("Verifying post-cleanup...");
-        let post_cleanup = cache.get(control_key).await;
+        let post_cleanup = cache
+            .get(control_key)
+            .await
+            .expect("Failed to get post-cleanup key from IndexedDB");
         assert!(post_cleanup.is_none(), "Control key should be deleted");
 
         info!("✅ Intense IndexedDB + LRU cache test passed");

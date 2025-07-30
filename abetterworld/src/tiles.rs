@@ -12,18 +12,26 @@ use crate::importer::build_nodes;
 use crate::importer::parse_glb;
 use crate::importer::parse_textures_from_gltf;
 use crate::importer::upload_textures_to_gpu;
-use reqwest::blocking::Client;
+use bytes::Bytes;
 use wgpu::util::DeviceExt;
 
-fn download_content_for_tile(client: &Client, key: &str, load: &Tile) -> Result<Vec<u8>, AbwError> {
-    let (content_type, bytes) = download_content(&client, &load.uri, key, load.session.as_deref())?;
+#[cfg(wasm)]
+use reqwest::Client;
 
+#[cfg(not(wasm))]
+use reqwest::blocking::Client;
+
+fn download_content_for_tile_shared(
+    key: &str,
+    load: &Tile,
+    content_type: String,
+    bytes: Bytes,
+) -> Result<Vec<u8>, AbwError> {
     if content_type != "model/gltf-binary" {
         log::error!(
-            "Unsupported content type: URI: {}, Key: {}, Session: {}, Content-Type: {}, Bytes: {:?}",
+            "Unsupported content type: URI: {}, Key: {}, Content-Type: {}, Bytes: {:?}",
             load.uri,
             key,
-            load.session.as_deref().unwrap_or("None"),
             content_type,
             bytes
         );
@@ -34,6 +42,28 @@ fn download_content_for_tile(client: &Client, key: &str, load: &Tile) -> Result<
     }
 
     Ok(bytes.to_vec())
+}
+
+#[cfg(wasm)]
+async fn download_content_for_tile(
+    client: &Client,
+    key: &str,
+    load: &Tile,
+) -> Result<Vec<u8>, AbwError> {
+    let (content_type, bytes) = download_content(&client, &load.uri, key, &None).await?;
+
+    download_content_for_tile_shared(key, load, content_type, bytes)
+}
+
+#[cfg(not(wasm))]
+async fn download_content_for_tile(
+    client: &Client,
+    key: &str,
+    load: &Tile,
+) -> Result<Vec<u8>, AbwError> {
+    let (content_type, bytes) = download_content(&client, &load.uri, key, load.session.as_deref())?;
+
+    download_content_for_tile_shared(key, load, content_type, bytes)
 }
 
 fn process_content_bytes(load: &mut Tile, bytes: Vec<u8>) -> Result<(), AbwError> {
@@ -62,6 +92,19 @@ fn process_content_bytes(load: &mut Tile, bytes: Vec<u8>) -> Result<(), AbwError
     Ok(())
 }
 
+#[cfg(wasm)]
+pub async fn content_load(client: &Client, key: &str, tile: &mut Tile) -> Result<(), AbwError> {
+    if tile.state != TileState::ToLoad {
+        return Err(AbwError::TileLoading(format!(
+            "Tile is not in ToLoad state: {}",
+            tile.uri
+        )));
+    }
+    let data = download_content_for_tile(client, key, &tile).await?;
+    process_content_bytes(tile, data)
+}
+
+#[cfg(not(wasm))]
 pub fn content_load(client: &Client, key: &str, tile: &mut Tile) -> Result<(), AbwError> {
     if tile.state != TileState::ToLoad {
         return Err(AbwError::TileLoading(format!(
