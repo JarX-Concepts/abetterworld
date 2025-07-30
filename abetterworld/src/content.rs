@@ -11,7 +11,6 @@ pub struct Tile {
     pub parent: Option<u64>,
     pub id: u64,
     pub uri: String,
-    pub session: Option<String>,
     pub volume: BoundingVolume,
     pub state: TileState,
 }
@@ -27,14 +26,14 @@ pub enum TileState {
         textures: Vec<Texture>,
         materials: Vec<Material>,
     },
-    Renderable {
+    /*     Renderable {
         nodes: Vec<Node>,
         meshes: Vec<Mesh>,
         textures: Vec<TextureResource>,
         materials: Vec<Material>,
         unload: bool,
         culling_volume: BoundingBox,
-    },
+    }, */
 }
 
 #[derive(Debug, Clone, PartialEq)]

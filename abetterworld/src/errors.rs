@@ -15,7 +15,7 @@ pub enum AbwError {
     Gpu(#[from] wgpu::SurfaceError),
 
     #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
+    Io(String),
 
     #[error("Unexpected internal error: {0}")]
     Internal(String),
@@ -31,5 +31,18 @@ where
 {
     fn tile_loading(self, msg: &str) -> Result<T, AbwError> {
         self.map_err(|e| AbwError::TileLoading(format!("{}: {}", msg, e)))
+    }
+}
+
+pub trait IoContext<T> {
+    fn io(self, msg: &str) -> Result<T, AbwError>;
+}
+
+impl<T, E> IoContext<T> for Result<T, E>
+where
+    E: std::fmt::Display,
+{
+    fn io(self, msg: &str) -> Result<T, AbwError> {
+        self.map_err(|e| AbwError::Io(format!("{}: {}", msg, e)))
     }
 }
