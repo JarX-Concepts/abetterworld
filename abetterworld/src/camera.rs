@@ -283,7 +283,10 @@ pub fn init_camera() -> (Camera, Camera) {
     let radius = 6_378_137.0;
     let distance: f64 = radius * 2.0;
 
-    let eye = Point3::new(distance, 100.0, 100.0);
+    let main_eye = geodetic_to_ecef_z_up(34.4208, -119.6982, distance);
+    let debug_eye = geodetic_to_ecef_z_up(34.4208, -119.6982, 200.0);
+
+    let eye = Point3::new(main_eye.0, main_eye.1, main_eye.2);
     let target = Point3::new(0.0, 0.0, 0.0);
     let up = Vector3::unit_z();
     let camera = Camera::new(CameraUserPosition {
@@ -297,7 +300,6 @@ pub fn init_camera() -> (Camera, Camera) {
     });
     camera.update(None);
 
-    let debug_eye = geodetic_to_ecef_z_up(34.4208, -119.6982, 200.0);
     let debug_eye_pt: Point3<f64> = Point3::new(debug_eye.0, debug_eye.1, debug_eye.2);
     let debug_camera = Camera::new(CameraUserPosition {
         fovy: Deg(45.0),

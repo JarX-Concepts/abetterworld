@@ -1,9 +1,11 @@
 use std::mem;
 
 use crate::content::Mesh;
+use crate::content::RenderableState;
 use crate::content::Tile;
 use crate::content::TileState;
 use crate::download::download_content;
+use crate::download_client::Client;
 use crate::errors::AbwError;
 use crate::errors::TileLoadingContext;
 use crate::importer::build_materials;
@@ -12,14 +14,11 @@ use crate::importer::build_nodes;
 use crate::importer::parse_glb;
 use crate::importer::parse_textures_from_gltf;
 use crate::importer::upload_textures_to_gpu;
+use crate::tilesets::GOOGLE_API_KEY;
 use bytes::Bytes;
+use crossbeam_channel::Receiver;
+use crossbeam_channel::Sender;
 use wgpu::util::DeviceExt;
-
-#[cfg(wasm)]
-use reqwest::Client;
-
-#[cfg(not(wasm))]
-use reqwest::blocking::Client;
 
 fn download_content_for_tile_shared(
     key: &str,
@@ -44,24 +43,12 @@ fn download_content_for_tile_shared(
     Ok(bytes.to_vec())
 }
 
-#[cfg(wasm)]
 async fn download_content_for_tile(
     client: &Client,
     key: &str,
     load: &Tile,
 ) -> Result<Vec<u8>, AbwError> {
     let (content_type, bytes) = download_content(&client, &load.uri, key, &None).await?;
-
-    download_content_for_tile_shared(key, load, content_type, bytes)
-}
-
-#[cfg(not(wasm))]
-async fn download_content_for_tile(
-    client: &Client,
-    key: &str,
-    load: &Tile,
-) -> Result<Vec<u8>, AbwError> {
-    let (content_type, bytes) = download_content(&client, &load.uri, key, load.session.as_deref())?;
 
     download_content_for_tile_shared(key, load, content_type, bytes)
 }
@@ -92,7 +79,25 @@ fn process_content_bytes(load: &mut Tile, bytes: Vec<u8>) -> Result<(), AbwError
     Ok(())
 }
 
-#[cfg(wasm)]
+pub async fn wait_and_load_content(
+    client: &Client,
+    rx: &Receiver<Tile>,
+    render_time: &Sender<Tile>,
+) -> Result<(), AbwError> {
+    for mut tile in rx.iter() {
+        if tile.state == TileState::ToLoad {
+            if let Err(e) = content_load(&client, GOOGLE_API_KEY, &mut tile).await {
+                log::error!("load failed: {e}");
+                return Err(e);
+            }
+            if matches!(tile.state, TileState::Decoded { .. }) {
+                let _ = render_time.send(tile);
+            }
+        }
+    }
+    Ok(())
+}
+
 pub async fn content_load(client: &Client, key: &str, tile: &mut Tile) -> Result<(), AbwError> {
     if tile.state != TileState::ToLoad {
         return Err(AbwError::TileLoading(format!(
@@ -104,26 +109,14 @@ pub async fn content_load(client: &Client, key: &str, tile: &mut Tile) -> Result
     process_content_bytes(tile, data)
 }
 
-#[cfg(not(wasm))]
-pub fn content_load(client: &Client, key: &str, tile: &mut Tile) -> Result<(), AbwError> {
-    if tile.state != TileState::ToLoad {
-        return Err(AbwError::TileLoading(format!(
-            "Tile is not in ToLoad state: {}",
-            tile.uri
-        )));
-    }
-    let data = download_content_for_tile(client, key, &tile)?;
-    process_content_bytes(tile, data)
-}
-
 pub fn content_render_setup(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     texture_bind_group_layout: &wgpu::BindGroupLayout,
     tile: &mut Tile,
-) -> Result<(), AbwError> {
+) -> Result<RenderableState, AbwError> {
     // hacky way to get ownership of decoded tile state
-    let decoded = match mem::replace(&mut tile.state, TileState::Invalid) {
+    let decoded = match mem::replace(&mut tile.state, TileState::Renderable) {
         TileState::Decoded {
             nodes,
             meshes,
@@ -166,13 +159,13 @@ pub fn content_render_setup(
         })
         .collect();
 
-    tile.state = TileState::Renderable {
+    Ok(RenderableState {
         nodes,
         meshes: return_meshes,
         textures: textures.into_iter().map(|t| t.into()).collect(),
         materials,
         unload: false,
         culling_volume: tile.volume.to_aabb(),
-    };
-    Ok(())
+        tile: tile.to_owned(),
+    })
 }
