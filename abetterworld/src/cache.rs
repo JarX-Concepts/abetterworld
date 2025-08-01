@@ -1,23 +1,20 @@
-use crate::errors::IoContext;
+use crate::errors::{AbwError, IoContext};
+use crate::helpers::hash_uri;
 use bytes::Bytes;
 use moka::sync::Cache;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, OnceLock, RwLock};
 
-#[cfg(not(wasm))]
+#[cfg(not(target_arch = "wasm32"))]
 use std::{fs, path::Path};
 
-#[cfg(wasm)]
+#[cfg(target_arch = "wasm32")]
 use {
     idb::{Database, DatabaseEvent, Factory, KeyPath, ObjectStoreParams, TransactionMode},
     std::cell::RefCell,
     wasm_bindgen::JsValue,
     wasm_bindgen_futures::spawn_local,
 };
-
-#[cfg(wasm)]
-use crate::errors::AbwError;
-use crate::helpers::hash_uri;
 
 const TILESET_CACHE_DIR: &str = "./tilesets";
 const LRU_CACHE_CAPACITY: u64 = 512;
@@ -48,7 +45,7 @@ impl TilesetCache {
         };
     }
 
-    #[cfg(wasm)]
+    #[cfg(target_arch = "wasm32")]
     async fn get_idb_data(
         database: &Arc<Database>,
         id: JsValue,
@@ -78,7 +75,7 @@ impl TilesetCache {
         Ok(stored_employee)
     }
 
-    #[cfg(wasm)]
+    #[cfg(target_arch = "wasm32")]
     async fn insert_idb_data(
         database: &Database,
         entry: DiskCacheEntry,
@@ -110,30 +107,37 @@ impl TilesetCache {
         Ok(id)
     }
 
-    #[cfg(not(wasm))]
-    pub fn get(&self, key: &str) -> Option<(String, Bytes)> {
+    #[cfg(not(target_arch = "wasm32"))]
+    pub async fn get(&self, key: &str) -> Result<Option<(String, Bytes)>, AbwError> {
         let id = hash_uri(key);
         if let Some((ct, data)) = self.map.get(&id) {
-            return Some((ct, data));
+            return Ok(Some((ct, data)));
         }
 
         let filename = Self::disk_path_for(key);
         if Path::new(&filename).exists() {
-            let bytes = {
-                let _guard = self.file_lock.read().expect("cache get lock poisoned");
-                fs::read(&filename).ok()
-            }?;
-            let entry: DiskCacheEntry = serde_json::from_slice(&bytes).ok()?;
+            let _guard = self
+                .file_lock
+                .read()
+                .map_err(|_| AbwError::Io("cache get lock poisoned".into()))?;
+
+            let bytes = fs::read(&filename)
+                .map_err(|e| AbwError::Io(format!("Failed to read cache file: {e}")))?;
+
+            let entry: DiskCacheEntry = serde_json::from_slice(&bytes)
+                .map_err(|e| AbwError::Io(format!("Failed to deserialize cache entry: {e}")))?;
+
             let data = Bytes::from(entry.data.clone());
             self.map
                 .insert(id, (entry.content_type.clone(), data.clone()));
-            return Some((entry.content_type, data));
+
+            return Ok(Some((entry.content_type, data)));
         }
 
-        None
+        Ok(None)
     }
 
-    #[cfg(wasm)]
+    #[cfg(target_arch = "wasm32")]
     pub async fn get(&self, key: &str) -> Result<Option<(String, Bytes)>, AbwError> {
         let id = hash_uri(key);
         if let Some((ct, data)) = self.map.get(&id) {
@@ -157,7 +161,7 @@ impl TilesetCache {
         };
     }
 
-    pub fn insert(&self, key: String, content_type: String, bytes: Bytes) {
+    pub fn insert(&self, key: String, content_type: String, bytes: Bytes) -> Result<(), AbwError> {
         let id = hash_uri(&key);
         self.map.insert(id, (content_type.clone(), bytes.clone()));
 
@@ -167,15 +171,18 @@ impl TilesetCache {
             data: bytes.to_vec(),
         };
 
-        #[cfg(not(wasm))]
+        #[cfg(not(target_arch = "wasm32"))]
         {
             let filename = Self::disk_path_for(&key);
             let bytes = serde_json::to_vec(&entry).unwrap();
-            let _guard = self.file_lock.write().expect("cache insert lock poisoned");
+            let _guard = self
+                .file_lock
+                .write()
+                .map_err(|e| AbwError::Io(format!("Failed to acquire cache insert lock: {e}")))?;
             let _ = fs::write(filename, bytes);
         }
 
-        #[cfg(wasm)]
+        #[cfg(target_arch = "wasm32")]
         {
             with_db(|db| {
                 let db_cloned = db.clone();
@@ -187,6 +194,8 @@ impl TilesetCache {
                 });
             });
         }
+
+        Ok(())
     }
 
     pub fn clear(&self) -> Result<(), AbwError> {
@@ -194,14 +203,17 @@ impl TilesetCache {
 
         #[cfg(not(wasm))]
         {
-            let _guard = self.file_lock.write().expect("cache clear lock poisoned");
+            let _guard = self
+                .file_lock
+                .write()
+                .map_err(|_| AbwError::Io("cache get lock poisoned".into()))?;
             if Path::new(TILESET_CACHE_DIR).exists() {
                 fs::remove_dir_all(TILESET_CACHE_DIR).ok();
             }
             fs::create_dir_all(TILESET_CACHE_DIR).ok();
         }
 
-        #[cfg(wasm)]
+        #[cfg(target_arch = "wasm32")]
         {
             with_db(|database| {
                 let transaction = database
@@ -217,7 +229,7 @@ impl TilesetCache {
         Ok(())
     }
 
-    #[cfg(not(wasm))]
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn disk_path_for(key: &str) -> String {
         use crate::helpers::hash_uri;
 

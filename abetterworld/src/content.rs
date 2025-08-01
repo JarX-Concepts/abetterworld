@@ -26,14 +26,18 @@ pub enum TileState {
         textures: Vec<Texture>,
         materials: Vec<Material>,
     },
-    /*     Renderable {
-        nodes: Vec<Node>,
-        meshes: Vec<Mesh>,
-        textures: Vec<TextureResource>,
-        materials: Vec<Material>,
-        unload: bool,
-        culling_volume: BoundingBox,
-    }, */
+    Renderable,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RenderableState {
+    pub tile: Tile,
+    pub nodes: Vec<Node>,
+    pub meshes: Vec<Mesh>, // Mesh contains wgpu::Buffer
+    pub textures: Vec<TextureResource>,
+    pub materials: Vec<Material>,
+    pub unload: bool,
+    pub culling_volume: BoundingBox,
 }
 
 #[derive(Debug, Clone, PartialEq)]

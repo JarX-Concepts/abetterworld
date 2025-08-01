@@ -1,6 +1,7 @@
-use crate::camera::CameraRefinementData;
+use crate::camera::{Camera, CameraRefinementData};
 use crate::content::{Tile, TileState};
 use crate::download::download_content;
+use crate::download_client::Client;
 use crate::errors::{AbwError, TileLoadingContext};
 use crate::helpers::hash_uri;
 use crate::tile_manager::TileManager;
@@ -11,13 +12,12 @@ use crossbeam_channel::Sender;
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::thread;
+use std::time::Duration;
 use url::Url;
 
-#[cfg(wasm)]
-use reqwest::Client;
-
-#[cfg(not(wasm))]
-use reqwest::blocking::Client;
+pub const GOOGLE_API_KEY: &str = "AIzaSyD526Czd1rD44BZE2d2R70-fBEdDdf6vZQ";
+pub const GOOGLE_API_URL: &str = "https://tile.googleapis.com/v1/3dtiles/root.json";
 
 #[derive(Debug, Deserialize)]
 struct GltfTileset {
@@ -129,6 +129,32 @@ fn needs_refinement(
     sse > sse_threshold
 }
 
+pub async fn parser_thread(
+    cam: Arc<Camera>,
+    tile_mgr: Arc<TileManager>,
+    pager_tx: Sender<Tile>,
+    client: Client,
+) -> Result<(), AbwError> {
+    let mut pager = TileSetImporter::new(client, pager_tx.clone(), tile_mgr);
+
+    let mut last_cam_gen = 0;
+    loop {
+        let new_gen = cam.generation();
+        if new_gen != last_cam_gen {
+            let camera_data = cam.refinement_data();
+
+            if let Err(err) = pager.go(&camera_data, GOOGLE_API_URL, GOOGLE_API_KEY).await {
+                log::error!("Failed to run pager: {}", err);
+            }
+
+            last_cam_gen = new_gen;
+        } else {
+            // No camera movement, sleep briefly to avoid busy-waiting
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
+
 impl TileSetImporter {
     pub fn new(client: Client, sender: Sender<Tile>, tile_manager: Arc<TileManager>) -> Self {
         Self {
@@ -140,14 +166,16 @@ impl TileSetImporter {
         }
     }
 
-    #[cfg(wasm)]
     pub async fn go(
         &mut self,
         camera: &CameraRefinementData,
         url: &str,
         key: &str,
     ) -> Result<(), AbwError> {
+        log::info!("Starting TileSetImporter for URL: {}", url);
         let ret = self.import_tileset(camera, url, key).await;
+
+        log::info!("Finished TileSetImporter for URL: {}", url);
 
         // Compute tiles to unload
         let tiles_to_unload: Vec<u64> = self
@@ -157,19 +185,24 @@ impl TileSetImporter {
             .copied()
             .collect();
 
+        log::info!("Finished tiles_to_unload: {}", url);
+
         // Unload the ones not in the current pass
         if !tiles_to_unload.is_empty() {
             self.tile_manager.mark_tiles_unload(tiles_to_unload);
         }
 
+        log::info!("Finished mark_tiles_unload: {}", url);
+
         // Prepare for next pass
         self.last_pass_tiles = std::mem::take(&mut self.current_pass_tiles);
         self.current_pass_tiles.clear();
 
+        log::info!("Finished last_pass_tiles: {}", url);
+
         ret
     }
 
-    #[cfg(wasm)]
     async fn import_tileset(
         &mut self,
         camera: &CameraRefinementData,
@@ -199,7 +232,6 @@ impl TileSetImporter {
         }
     }
 
-    #[cfg(wasm)]
     async fn process_tileset(
         &mut self,
         camera: &CameraRefinementData,
@@ -270,6 +302,8 @@ impl TileSetImporter {
                                 state: TileState::ToLoad,
                             };
 
+                            self.tile_manager.add_tile(&new_tile);
+
                             self.sender
                                 .send(new_tile)
                                 .map_err(|e| AbwError::TileLoading(e.to_string()))?;
@@ -290,7 +324,6 @@ impl TileSetImporter {
         Ok(())
     }
 
-    #[cfg(wasm)]
     async fn download_content(
         &self,
         content_url: &str,
@@ -298,15 +331,5 @@ impl TileSetImporter {
         session: &Option<Arc<String>>,
     ) -> Result<(String, Bytes), AbwError> {
         download_content(&self.client, content_url, key, session).await
-    }
-
-    #[cfg(not(wasm))]
-    async fn download_content(
-        &self,
-        content_url: &str,
-        key: &str,
-        session: &Option<Arc<String>>,
-    ) -> Result<(String, Bytes), AbwError> {
-        download_content(&self.client, content_url, key, session)
     }
 }
