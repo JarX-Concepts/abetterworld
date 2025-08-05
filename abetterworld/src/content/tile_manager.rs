@@ -1,4 +1,7 @@
-use std::{collections::HashMap, sync::RwLock};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::RwLock,
+};
 
 use crate::content::types::{RenderableState, Tile};
 
@@ -13,6 +16,14 @@ impl TileManager {
         TileManager {
             tileset: RwLock::new(HashMap::new()),
             renderable: RwLock::new(HashMap::new()),
+        }
+    }
+
+    pub fn has_tile(&self, id: u64) -> bool {
+        if let Ok(tileset_read) = self.tileset.read() {
+            tileset_read.contains_key(&id)
+        } else {
+            false
         }
     }
 
@@ -40,14 +51,12 @@ impl TileManager {
         }
     }
 
-    pub fn mark_tiles_unload(&self, tiles: Vec<u64>) {
+    pub fn keep_these_tiles(&self, tiles: &HashSet<u64>) {
         if tiles.is_empty() {
             return;
         }
-
-        let tile_ids: std::collections::HashSet<u64> = tiles.into_iter().collect();
         let mut tileset = self.tileset.write().unwrap();
-        tileset.retain(|tile_id, _| !tile_ids.contains(tile_id));
+        tileset.retain(|tile_id, _| tiles.contains(tile_id));
     }
 
     pub fn unload_tiles(&self) {

@@ -19,11 +19,8 @@ pub async fn prioritize(
 ) -> Result<bool, AbwError> {
     let mut did_nothing_iter = true;
 
-    //if backlog.is_empty()
-    {
+    if backlog.is_empty() {
         //thread::sleep(Duration::from_secs(5));
-
-        log::info!("Waiting for new tiles from pager...");
 
         // No backlog, block wait for a tile
         let tile = pager_rx
@@ -59,7 +56,7 @@ pub async fn prioritize(
     // feed workers -----------------------------------------------------
     while let Some(tile) = backlog.last() {
         // ≈ cheapest (small dist) at back
-        log::info!("Send a priority tile");
+
         if loader_tx.try_send(tile.clone()).is_ok() {
             backlog.pop();
             did_nothing_iter = false;

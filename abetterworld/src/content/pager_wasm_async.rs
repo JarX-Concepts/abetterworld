@@ -55,16 +55,15 @@ pub fn update_pager(
 
     let pager_tx_clone = pager_tx.clone();
     spawn_local(async move {
+        use crate::content::parser_thread;
+
         ACTIVE_JOBS.fetch_add(1, Ordering::SeqCst);
 
-        use crate::content::parser_thread;
-        log::info!("Starting parser thread");
         if let Err(e) =
             parser_thread(pager_cam, tile_mgr, pager_tx_clone, client_clone, false).await
         {
             log::error!("Pager thread failed: {:?}", e);
         }
-        log::info!("Done parser thread");
 
         ACTIVE_JOBS.fetch_sub(1, Ordering::SeqCst);
     });
@@ -73,15 +72,14 @@ pub fn update_pager(
     let cam = Arc::clone(&camera_src);
     let mut loader_tx_clone = loader_tx.clone();
     spawn_local(async move {
+        use crate::content::tiles_priority::priortize_loop;
+
         ACTIVE_JOBS.fetch_add(1, Ordering::SeqCst);
 
-        log::info!("Start priortize_loop");
-        use crate::content::tiles_priority::priortize_loop;
         // this will run until the pager channel is closed
         if let Err(e) = priortize_loop(&cam, &mut pager_rx, &mut loader_tx_clone, false).await {
             log::error!("Prioritized loop thread failed: {:?}", e);
         }
-        log::info!("Done priortize_loop");
 
         ACTIVE_JOBS.fetch_sub(1, Ordering::SeqCst);
     });
@@ -105,8 +103,6 @@ pub fn update_pager(
 
                 ACTIVE_JOBS.fetch_sub(1, Ordering::SeqCst);
             });
-
-            log::info!("Download and decode a tile");
         }
 
         ACTIVE_JOBS.fetch_sub(1, Ordering::SeqCst);
