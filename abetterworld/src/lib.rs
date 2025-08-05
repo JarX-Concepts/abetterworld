@@ -17,7 +17,7 @@ use std::{
 
 use crate::{
     cache::init_tileset_cache,
-    content::{pager_wasm_async::update_pager, start_pager, DebugVertex, Ray, Tile, TileManager},
+    content::{pager_wasm_async::start_pager, DebugVertex, Ray, Tile, TileManager},
     helpers::{
         channel::{channel, Receiver, Sender},
         is_bounding_volume_visible, matrix, AbwError,
@@ -103,12 +103,6 @@ impl ABetterWorld {
 
         let _ = init();
         let _ = start_pager(
-            debug_camera_source.clone(),
-            tile_content.clone(),
-            loader_tx.clone(),
-        );
-
-        let _ = update_pager(
             debug_camera_source.clone(),
             tile_content.clone(),
             loader_tx.clone(),
@@ -286,11 +280,6 @@ impl ABetterWorld {
         const BUDGET: Duration = Duration::from_millis(20);
 
         if let Some(layout) = self.pipeline.texture_bind_group_layout.as_ref() {
-            /*             let _ = update_pager(
-                self.debug_camera.clone(),
-                self.content.clone(),
-                self.sender.clone(),
-            ); */
             self.content.unload_tiles();
 
             #[cfg(target_arch = "wasm32")]

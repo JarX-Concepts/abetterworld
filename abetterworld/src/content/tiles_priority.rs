@@ -57,7 +57,7 @@ pub async fn prioritize(
     while let Some(tile) = backlog.last() {
         // ≈ cheapest (small dist) at back
 
-        if loader_tx.try_send(tile.clone()).is_ok() {
+        if loader_tx.send(tile.clone()).await.is_ok() {
             backlog.pop();
             did_nothing_iter = false;
         } else {
