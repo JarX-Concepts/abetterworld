@@ -28,6 +28,8 @@ use crate::{
     },
 };
 
+const MAX_NEW_TILES_PER_FRAME: usize = 4;
+
 pub struct ABetterWorld {
     pipeline: RenderPipeline,
     debug_pipeline: RenderPipeline,
@@ -97,11 +99,16 @@ impl ABetterWorld {
         let camera_source = Arc::new(camera);
         let debug_camera_source = Arc::new(debug_camera);
 
-        const MAX_NEW_TILES_PER_FRAME: usize = 12;
-        let (loader_tx, render_rx) = channel::<Tile>(MAX_NEW_TILES_PER_FRAME);
+        let (loader_tx, render_rx) = channel::<Tile>(MAX_NEW_TILES_PER_FRAME * 2);
 
         let _ = init();
         let _ = start_pager(
+            debug_camera_source.clone(),
+            tile_content.clone(),
+            loader_tx.clone(),
+        );
+
+        let _ = update_pager(
             debug_camera_source.clone(),
             tile_content.clone(),
             loader_tx.clone(),
@@ -279,28 +286,24 @@ impl ABetterWorld {
         const BUDGET: Duration = Duration::from_millis(20);
 
         if let Some(layout) = self.pipeline.texture_bind_group_layout.as_ref() {
-            let _ = update_pager(
+            /*             let _ = update_pager(
                 self.debug_camera.clone(),
                 self.content.clone(),
                 self.sender.clone(),
-            );
+            ); */
             self.content.unload_tiles();
 
             #[cfg(target_arch = "wasm32")]
             {
-                let max_num_tiles = 3;
                 let mut current_num_tiles = 0;
-                // Pull tiles until either the channel is empty or we run out of time.
 
-                while current_num_tiles < max_num_tiles {
+                // Pull tiles until either the channel is empty or we run out of time.
+                while current_num_tiles < MAX_NEW_TILES_PER_FRAME {
                     current_num_tiles += 1;
 
                     match self.receiver.try_recv() {
                         Ok(mut tile) => {
                             use crate::content::tiles;
-
-                            log::info!("Received Rendering tile from receiver");
-
                             match tiles::content_render_setup(device, queue, layout, &mut tile) {
                                 Ok(renderable_state) => {
                                     self.content.add_renderable(renderable_state);

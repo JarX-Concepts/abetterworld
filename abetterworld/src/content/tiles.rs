@@ -85,10 +85,8 @@ pub async fn load_content(
             log::error!("load failed: {e}");
             return Err(e);
         }
-        log::info!("Tile ready for render");
-        if matches!(tile.state, TileState::Decoded { .. }) {
-            log::info!("Tile sent to sender");
 
+        if matches!(tile.state, TileState::Decoded { .. }) {
             // that's a bit hacky, but we want to avoid cloning the tile
             let _ = render_time.send(mem::replace(tile, Tile::default())).await;
         }
@@ -114,10 +112,8 @@ pub async fn content_load(client: &Client, key: &str, tile: &mut Tile) -> Result
             tile.uri
         )));
     }
-    log::info!("Download the tile");
-    let data = download_content_for_tile(client, key, &tile).await?;
 
-    log::info!("Decode the tile");
+    let data = download_content_for_tile(client, key, &tile).await?;
     process_content_bytes(tile, data)
 }
 

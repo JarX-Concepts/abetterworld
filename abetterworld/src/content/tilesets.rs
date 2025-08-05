@@ -41,7 +41,6 @@ pub struct TileSetImporter {
     client: Client,
     sender: Sender<Tile>,
     tile_manager: Arc<TileManager>,
-    last_pass_tiles: HashSet<u64>,
     current_pass_tiles: HashSet<u64>,
 }
 
@@ -162,7 +161,6 @@ impl TileSetImporter {
             client,
             sender,
             tile_manager: tile_manager,
-            last_pass_tiles: HashSet::new(),
             current_pass_tiles: HashSet::new(),
         }
     }
@@ -173,33 +171,12 @@ impl TileSetImporter {
         url: &str,
         key: &str,
     ) -> Result<(), AbwError> {
-        log::info!("Starting TileSetImporter for URL: {}", url);
         let ret = self.import_tileset(camera, url, key).await;
 
-        log::info!("Finished TileSetImporter for URL: {}", url);
-
-        // Compute tiles to unload
-        let tiles_to_unload: Vec<u64> = self
-            .last_pass_tiles
-            .iter()
-            .filter(|tile| !self.current_pass_tiles.contains(tile))
-            .copied()
-            .collect();
-
-        log::info!("Finished tiles_to_unload: {}", url);
-
-        // Unload the ones not in the current pass
-        if !tiles_to_unload.is_empty() {
-            self.tile_manager.mark_tiles_unload(tiles_to_unload);
-        }
-
-        log::info!("Finished mark_tiles_unload: {}", url);
+        self.tile_manager.keep_these_tiles(&self.current_pass_tiles);
 
         // Prepare for next pass
-        self.last_pass_tiles = std::mem::take(&mut self.current_pass_tiles);
         self.current_pass_tiles.clear();
-
-        log::info!("Finished last_pass_tiles: {}", url);
 
         ret
     }
@@ -293,7 +270,7 @@ impl TileSetImporter {
                     if !self.current_pass_tiles.contains(&tile_id) {
                         self.current_pass_tiles.insert(tile_id);
 
-                        if !self.last_pass_tiles.contains(&tile_id) {
+                        if !self.tile_manager.has_tile(tile_id) {
                             let new_tile = Tile {
                                 counter: self.current_pass_tiles.len() as u64,
                                 parent: None,
