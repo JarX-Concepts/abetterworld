@@ -1,7 +1,7 @@
 [workspace]
 members = [
     "abetterworld",
-    "apps/desktop"
+    "apps/web"
 ]
 resolver = "2"
 

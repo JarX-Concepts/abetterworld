@@ -36,6 +36,7 @@ dependencies = [
  "cxx",
  "dashmap",
  "futures",
+ "futures-channel",
  "futures-util",
  "gloo-timers",
  "hex",
@@ -58,7 +59,7 @@ dependencies = [
  "urlencoding",
  "uuid",
  "wasm-bindgen",
- "wasm-bindgen-spawn",
+ "wasm-bindgen-futures",
  "wasm-bindgen-test",
  "web-sys",
  "wgpu",
@@ -2030,12 +2031,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42f5e15c9953c5e4ccceeb2e7382a716482c34515315f7b03532b8b4e8393d2d"
 
 [[package]]
-name = "oneshot"
-version = "0.1.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4ce411919553d3f9fa53a0880544cda985a112117a0444d5ff1e870a893d6ea"
-
-[[package]]
 name = "openssl"
 version = "0.10.73"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3415,20 +3410,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wasm-bindgen-spawn"
-version = "0.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a5f531332efe19cd261421b954ae43eb092c8f7142b4c38a44f8f5b403982c32"
-dependencies = [
- "js-sys",
- "oneshot",
- "static_assertions",
- "thiserror 2.0.12",
- "wasm-bindgen",
- "wasm-bindgen-futures",
-]
-
-[[package]]
 name = "wasm-bindgen-test"
 version = "0.3.50"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3592,7 +3573,6 @@ dependencies = [
  "pollster",
  "wasm-bindgen",
  "wasm-bindgen-futures",
- "wasm-bindgen-spawn",
  "wasm-bindgen-test",
  "web-sys",
  "wgpu",

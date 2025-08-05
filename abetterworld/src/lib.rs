@@ -1,47 +1,28 @@
 mod cache;
-mod camera;
 mod content;
-mod coord_utils;
 mod decode;
-mod download;
-mod download_client;
-mod errors;
 mod helpers;
-mod importer;
-mod input;
-mod matrix;
-mod pager;
-mod platform;
-mod rendering;
-mod tests;
-mod tile_manager;
-mod tiles;
-mod tiles_priority;
-mod tilesets;
-mod volumes;
+mod render;
 
-use crate::{
-    camera::init_camera,
-    content::{DebugVertex, RenderableState, Tile},
-    errors::AbwError,
-    matrix::is_bounding_volume_visible,
-    pager::start_pager,
-    rendering::{
-        build_debug_pipeline, build_depth_buffer, build_frustum_render, build_pipeline,
-        FrustumRender, RenderPipeline, MAX_VOLUMES, SIZE_OF_VOLUME,
-    },
-    tile_manager::TileManager,
-    volumes::Ray,
-};
-use cache::init_tileset_cache;
-use camera::Camera;
 use cgmath::InnerSpace;
-use crossbeam_channel::{bounded, Receiver};
 use decode::init;
 use std::{
     ops::Deref,
     sync::Arc,
     time::{Duration, Instant},
+};
+
+use crate::{
+    cache::init_tileset_cache,
+    content::{pager_wasm_async::update_pager, start_pager, DebugVertex, Ray, Tile, TileManager},
+    helpers::{
+        channel::{channel, Receiver, Sender},
+        is_bounding_volume_visible, matrix, AbwError,
+    },
+    render::{
+        build_debug_pipeline, build_depth_buffer, build_frustum_render, build_pipeline,
+        init_camera, input, Camera, FrustumRender, RenderPipeline, MAX_VOLUMES, SIZE_OF_VOLUME,
+    },
 };
 
 pub struct ABetterWorld {
@@ -51,6 +32,7 @@ pub struct ABetterWorld {
     debug_camera: Arc<Camera>,
     depth_view: wgpu::TextureView,
     content: Arc<TileManager>,
+    sender: Sender<Tile>,
     receiver: Receiver<Tile>,
     input_state: input::InputState,
     frustum_render: FrustumRender,
@@ -113,10 +95,14 @@ impl ABetterWorld {
         let debug_camera_source = Arc::new(debug_camera);
 
         const MAX_NEW_TILES_PER_FRAME: usize = 12;
-        let (loader_tx, render_rx) = bounded::<Tile>(MAX_NEW_TILES_PER_FRAME);
+        let (loader_tx, render_rx) = channel::<Tile>(MAX_NEW_TILES_PER_FRAME);
 
         let _ = init();
-        let _ = start_pager(debug_camera_source.clone(), tile_content.clone(), loader_tx);
+        let _ = update_pager(
+            debug_camera_source.clone(),
+            tile_content.clone(),
+            loader_tx.clone(),
+        );
 
         Self {
             pipeline,
@@ -127,6 +113,7 @@ impl ABetterWorld {
             content: tile_content,
             input_state: input::InputState::new(),
             frustum_render,
+            sender: loader_tx,
             receiver: render_rx,
         }
     }
@@ -289,26 +276,63 @@ impl ABetterWorld {
         const BUDGET: Duration = Duration::from_millis(20);
 
         if let Some(layout) = self.pipeline.texture_bind_group_layout.as_ref() {
-            let deadline = Instant::now() + BUDGET;
-
+            /*             let _ = update_pager(
+                self.debug_camera.clone(),
+                self.content.clone(),
+                self.sender.clone(),
+            ); */
             self.content.unload_tiles();
 
-            // Pull tiles until either the channel is empty or we run out of time.
-            while Instant::now() < deadline {
-                match self.receiver.try_recv() {
-                    Ok(mut tile) => {
-                        match tiles::content_render_setup(device, queue, layout, &mut tile) {
-                            Ok(renderable_state) => {
-                                self.content.add_renderable(renderable_state);
-                            }
-                            Err(e) => {
-                                log::error!("Failed to set up tile for rendering: {e}");
-                                continue;
+            #[cfg(target_arch = "wasm32")]
+            {
+                let max_num_tiles = 3;
+                let mut current_num_tiles = 0;
+                // Pull tiles until either the channel is empty or we run out of time.
+
+                while current_num_tiles < max_num_tiles {
+                    current_num_tiles += 1;
+
+                    log::info!("Trying getting some render tiles");
+                    match self.receiver.try_recv() {
+                        Ok(mut tile) => {
+                            use crate::content::tiles;
+
+                            log::info!("Received Rendering tile from receiver");
+
+                            match tiles::content_render_setup(device, queue, layout, &mut tile) {
+                                Ok(renderable_state) => {
+                                    self.content.add_renderable(renderable_state);
+                                }
+                                Err(e) => {
+                                    log::error!("Failed to set up tile for rendering: {e}");
+                                    continue;
+                                }
                             }
                         }
+                        Err(_) => break, // nothing left
                     }
-                    Err(crossbeam_channel::TryRecvError::Empty) => break, // nothing left
-                    Err(crossbeam_channel::TryRecvError::Disconnected) => break, // sender gone
+                }
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let deadline = Instant::now() + BUDGET;
+                // Pull tiles until either the channel is empty or we run out of time.
+                while Instant::now() < deadline {
+                    match self.receiver.try_recv() {
+                        Ok(mut tile) => {
+                            match tiles::content_render_setup(device, queue, layout, &mut tile) {
+                                Ok(renderable_state) => {
+                                    self.content.add_renderable(renderable_state);
+                                }
+                                Err(e) => {
+                                    log::error!("Failed to set up tile for rendering: {e}");
+                                    continue;
+                                }
+                            }
+                        }
+                        Err(crossbeam_channel::TryRecvError::Empty) => break, // nothing left
+                        Err(crossbeam_channel::TryRecvError::Disconnected) => break, // sender gone
+                    }
                 }
             }
         }

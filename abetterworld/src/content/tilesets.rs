@@ -1,14 +1,10 @@
-use crate::camera::{Camera, CameraRefinementData};
-use crate::content::{Tile, TileState};
-use crate::download::download_content;
-use crate::download_client::Client;
-use crate::errors::{AbwError, TileLoadingContext};
-use crate::helpers::hash_uri;
-use crate::tile_manager::TileManager;
-use crate::volumes::BoundingVolume;
+use crate::content::types::{Tile, TileState};
+use crate::content::{download_content, BoundingVolume, Client, TileManager};
+use crate::helpers::channel::Sender;
+use crate::helpers::{hash_uri, AbwError, TileLoadingContext};
+use crate::render::{Camera, CameraRefinementData};
 use bytes::Bytes;
 use cgmath::InnerSpace;
-use crossbeam_channel::Sender;
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -134,11 +130,13 @@ pub async fn parser_thread(
     tile_mgr: Arc<TileManager>,
     pager_tx: Sender<Tile>,
     client: Client,
+    enable_sleep: bool,
 ) -> Result<(), AbwError> {
     let mut pager = TileSetImporter::new(client, pager_tx.clone(), tile_mgr);
 
     let mut last_cam_gen = 0;
-    loop {
+    //loop
+    {
         let new_gen = cam.generation();
         if new_gen != last_cam_gen {
             let camera_data = cam.refinement_data();
@@ -150,9 +148,12 @@ pub async fn parser_thread(
             last_cam_gen = new_gen;
         } else {
             // No camera movement, sleep briefly to avoid busy-waiting
-            thread::sleep(Duration::from_millis(10));
+            if enable_sleep {
+                thread::sleep(Duration::from_millis(10));
+            }
         }
     }
+    Ok(())
 }
 
 impl TileSetImporter {
@@ -304,9 +305,9 @@ impl TileSetImporter {
 
                             self.tile_manager.add_tile(&new_tile);
 
-                            self.sender
-                                .send(new_tile)
-                                .map_err(|e| AbwError::TileLoading(e.to_string()))?;
+                            self.sender.send(new_tile).await.map_err(|_| {
+                                AbwError::TileLoading("Failed to send new tile".into())
+                            })?;
                         }
                     }
                 }

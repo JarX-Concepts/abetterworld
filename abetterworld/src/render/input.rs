@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use cgmath::Deg;
 
-use crate::{camera::Camera, InputEvent, Key, MouseButton};
+use crate::{render::camera::Camera, InputEvent, Key, MouseButton};
 
 static ROTATION_SENSITIVITY: f64 = 0.000000005;
 
