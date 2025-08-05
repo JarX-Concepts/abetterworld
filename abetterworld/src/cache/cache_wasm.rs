@@ -82,7 +82,7 @@ impl TilesetCache {
 
         // Add data to object store
         let id = store
-            .add(&js_value, None)
+            .put(&js_value, None)
             .unwrap()
             .await
             .io("Failed to add data to object store")?;

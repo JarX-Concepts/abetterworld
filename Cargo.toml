@@ -1,9 +1,11 @@
 [workspace]
+resolver = "2"
 members = [
     "abetterworld",
-    "apps/web"
+    "apps/web",
+    "apps/desktop"
 ]
-resolver = "2"
+
 
 [workspace.dependencies]
 winit = { version = "0.29", features = ["android-native-activity"] }

@@ -75,24 +75,34 @@ fn process_content_bytes(load: &mut Tile, bytes: Vec<u8>) -> Result<(), AbwError
     Ok(())
 }
 
+pub async fn load_content(
+    client: &Client,
+    tile: &mut Tile,
+    render_time: &mut Sender<Tile>,
+) -> Result<(), AbwError> {
+    if tile.state == TileState::ToLoad {
+        if let Err(e) = content_load(&client, GOOGLE_API_KEY, tile).await {
+            log::error!("load failed: {e}");
+            return Err(e);
+        }
+        log::info!("Tile ready for render");
+        if matches!(tile.state, TileState::Decoded { .. }) {
+            log::info!("Tile sent to sender");
+
+            // that's a bit hacky, but we want to avoid cloning the tile
+            let _ = render_time.send(mem::replace(tile, Tile::default())).await;
+        }
+    }
+    Ok(())
+}
+
 pub async fn wait_and_load_content(
     client: &Client,
     rx: &mut Receiver<Tile>,
     render_time: &mut Sender<Tile>,
 ) -> Result<(), AbwError> {
     while let Ok(mut tile) = rx.recv().await {
-        log::info!("Download and decode a tile");
-        if tile.state == TileState::ToLoad {
-            if let Err(e) = content_load(&client, GOOGLE_API_KEY, &mut tile).await {
-                log::error!("load failed: {e}");
-                return Err(e);
-            }
-            log::info!("Tile ready for render");
-            if matches!(tile.state, TileState::Decoded { .. }) {
-                log::info!("Tile sent to sender");
-                let _ = render_time.send(tile);
-            }
-        }
+        load_content(client, &mut tile, render_time).await?;
     }
     Ok(())
 }
