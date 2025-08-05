@@ -5,14 +5,12 @@ use crate::content::Tile;
 use crate::helpers::channel::channel;
 use crate::helpers::channel::Sender;
 use crate::{content::TileManager, helpers::AbwError, render::Camera};
+use gloo_timers::future::TimeoutFuture;
 use once_cell::sync::Lazy;
-use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicI32;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use wasm_bindgen_futures::spawn_local;
-
-static PAGER_RUNNING: Lazy<AtomicBool> = Lazy::new(|| AtomicBool::new(false));
 
 static ACTIVE_JOBS: Lazy<AtomicI32> = Lazy::new(|| AtomicI32::new(0));
 
@@ -26,12 +24,26 @@ pub fn start_pager(
             Ok(_) => log::info!("Initialized IndexedDB"),
             Err(e) => log::error!("Failed to initialize IndexedDB: {:?}", e),
         }
+
+        // run update_pager every 2 seconds
+        loop {
+            if let Err(e) = update_pager(_camera_src.clone(), _tile_mgr.clone(), _render_tx.clone())
+                .map_err(|e| {
+                    log::error!("Failed to update pager: {:?}", e);
+                    e
+                })
+            {
+                log::error!("update_pager error: {:?}", e);
+            }
+            // wait 2 seconds
+            TimeoutFuture::new(2000).await;
+        }
     });
 
     Ok(())
 }
 
-pub fn update_pager(
+fn update_pager(
     camera_src: Arc<Camera>,
     tile_mgr: Arc<TileManager>,
     render_tx: Sender<Tile>,
@@ -59,6 +71,7 @@ pub fn update_pager(
 
         ACTIVE_JOBS.fetch_add(1, Ordering::SeqCst);
 
+        log::info!("Starting pager");
         if let Err(e) =
             parser_thread(pager_cam, tile_mgr, pager_tx_clone, client_clone, false).await
         {
@@ -75,6 +88,8 @@ pub fn update_pager(
         use crate::content::tiles_priority::priortize_loop;
 
         ACTIVE_JOBS.fetch_add(1, Ordering::SeqCst);
+
+        log::info!("Starting prioritized loop");
 
         // this will run until the pager channel is closed
         if let Err(e) = priortize_loop(&cam, &mut pager_rx, &mut loader_tx_clone, false).await {
