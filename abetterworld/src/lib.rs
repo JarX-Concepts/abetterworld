@@ -4,6 +4,9 @@ mod decode;
 mod helpers;
 mod render;
 
+#[cfg(test)]
+mod tests;
+
 use cgmath::InnerSpace;
 use decode::init;
 use std::{
@@ -98,7 +101,7 @@ impl ABetterWorld {
         let (loader_tx, render_rx) = channel::<Tile>(MAX_NEW_TILES_PER_FRAME);
 
         let _ = init();
-        let _ = update_pager(
+        let _ = start_pager(
             debug_camera_source.clone(),
             tile_content.clone(),
             loader_tx.clone(),
@@ -276,11 +279,11 @@ impl ABetterWorld {
         const BUDGET: Duration = Duration::from_millis(20);
 
         if let Some(layout) = self.pipeline.texture_bind_group_layout.as_ref() {
-            /*             let _ = update_pager(
+            let _ = update_pager(
                 self.debug_camera.clone(),
                 self.content.clone(),
                 self.sender.clone(),
-            ); */
+            );
             self.content.unload_tiles();
 
             #[cfg(target_arch = "wasm32")]
@@ -292,7 +295,6 @@ impl ABetterWorld {
                 while current_num_tiles < max_num_tiles {
                     current_num_tiles += 1;
 
-                    log::info!("Trying getting some render tiles");
                     match self.receiver.try_recv() {
                         Ok(mut tile) => {
                             use crate::content::tiles;

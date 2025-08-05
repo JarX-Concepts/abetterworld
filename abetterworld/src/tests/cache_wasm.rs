@@ -45,8 +45,8 @@ mod wasm_tests {
         let base_value = Bytes::from_static(b"stress-test-payload");
 
         // Insert a bunch of entries
-        info!("Inserting 1000 entries...");
-        for i in 0..1000 {
+        info!("Inserting 1001 entries...");
+        for i in 0..1001 {
             let key = random_key("stress", i);
             let val = Bytes::from(vec![(i % 255) as u8; 64]);
             cache
@@ -151,7 +151,7 @@ mod wasm_tests {
 
         // Cleanup and verify
         info!("Cleaning up IndexedDB...");
-        cache.clear();
+        cache.clear().await.expect("Failed to clear IndexedDB");
 
         info!("Verifying post-cleanup...");
         let post_cleanup = cache

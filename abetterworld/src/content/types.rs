@@ -29,6 +29,19 @@ pub enum TileState {
     Renderable,
 }
 
+impl Tile {
+    pub fn default() -> Self {
+        Tile {
+            counter: 0,
+            parent: None,
+            id: 0,
+            uri: String::new(),
+            volume: BoundingVolume::default(),
+            state: TileState::Invalid,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct RenderableState {
     pub tile: Tile,
