@@ -1,6 +1,6 @@
 use crate::{
+    content::{BoundingBox, BoundingVolume},
     decode::OwnedDecodedMesh,
-    volumes::{BoundingBox, BoundingVolume},
 };
 use cgmath::Matrix4;
 use std::mem;

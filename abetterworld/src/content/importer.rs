@@ -1,5 +1,7 @@
-use crate::content::{Material, Node, Texture, TextureResource};
-use crate::decode::{decode, OwnedDecodedMesh};
+use crate::{
+    content::types::{Material, Node, Texture, TextureResource},
+    decode::{decode, OwnedDecodedMesh},
+};
 use byteorder::{LittleEndian, ReadBytesExt};
 use cgmath::{Deg, Matrix4, One, Quaternion, Vector3, Vector4};
 use image::GenericImageView;

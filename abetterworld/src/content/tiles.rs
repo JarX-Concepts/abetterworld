@@ -1,23 +1,19 @@
-use std::mem;
+// ─── Crate: content ────────────────────────────────────────────────────────────
+use crate::content::{
+    build_materials, build_meshes, build_nodes, download_content, parse_glb,
+    parse_textures_from_gltf, upload_textures_to_gpu, Client, GOOGLE_API_KEY,
+};
 
-use crate::content::Mesh;
-use crate::content::RenderableState;
-use crate::content::Tile;
-use crate::content::TileState;
-use crate::download::download_content;
-use crate::download_client::Client;
-use crate::errors::AbwError;
-use crate::errors::TileLoadingContext;
-use crate::importer::build_materials;
-use crate::importer::build_meshes;
-use crate::importer::build_nodes;
-use crate::importer::parse_glb;
-use crate::importer::parse_textures_from_gltf;
-use crate::importer::upload_textures_to_gpu;
-use crate::tilesets::GOOGLE_API_KEY;
+// ─── Crate: content::types ─────────────────────────────────────────────────────
+use crate::content::types::{Mesh, RenderableState, Tile, TileState};
+
+use crate::helpers::channel::{Receiver, Sender};
+// ─── Crate: helpers ────────────────────────────────────────────────────────────
+use crate::helpers::{AbwError, TileLoadingContext};
+
+// ─── External ──────────────────────────────────────────────────────────────────
 use bytes::Bytes;
-use crossbeam_channel::Receiver;
-use crossbeam_channel::Sender;
+use std::mem;
 use wgpu::util::DeviceExt;
 
 fn download_content_for_tile_shared(
@@ -81,16 +77,19 @@ fn process_content_bytes(load: &mut Tile, bytes: Vec<u8>) -> Result<(), AbwError
 
 pub async fn wait_and_load_content(
     client: &Client,
-    rx: &Receiver<Tile>,
-    render_time: &Sender<Tile>,
+    rx: &mut Receiver<Tile>,
+    render_time: &mut Sender<Tile>,
 ) -> Result<(), AbwError> {
-    for mut tile in rx.iter() {
+    while let Ok(mut tile) = rx.recv().await {
+        log::info!("Download and decode a tile");
         if tile.state == TileState::ToLoad {
             if let Err(e) = content_load(&client, GOOGLE_API_KEY, &mut tile).await {
                 log::error!("load failed: {e}");
                 return Err(e);
             }
+            log::info!("Tile ready for render");
             if matches!(tile.state, TileState::Decoded { .. }) {
+                log::info!("Tile sent to sender");
                 let _ = render_time.send(tile);
             }
         }
@@ -105,7 +104,10 @@ pub async fn content_load(client: &Client, key: &str, tile: &mut Tile) -> Result
             tile.uri
         )));
     }
+    log::info!("Download the tile");
     let data = download_content_for_tile(client, key, &tile).await?;
+
+    log::info!("Decode the tile");
     process_content_bytes(tile, data)
 }
 

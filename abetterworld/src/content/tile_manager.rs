@@ -1,5 +1,6 @@
-use crate::content::{RenderableState, Tile, TileState};
 use std::{collections::HashMap, sync::RwLock};
+
+use crate::content::types::{RenderableState, Tile};
 
 #[derive(Debug)]
 pub struct TileManager {

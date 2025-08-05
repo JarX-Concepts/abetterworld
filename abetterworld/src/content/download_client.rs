@@ -1,11 +1,11 @@
-use crate::errors::AbwError;
+use crate::helpers::AbwError;
 use cfg_if::cfg_if;
 
 cfg_if! {
     if #[cfg(target_arch = "wasm32")] {
         use reqwest::{Client as InnerClient, RequestBuilder};
         use reqwest::{Response as InnerResponse, Error};
-        use reqwest::header::{HeaderName, HeaderValue, HeaderMap};
+        use reqwest::header::{HeaderMap};
         use bytes::Bytes;
 
         #[derive(Debug, Clone)]
@@ -44,15 +44,6 @@ cfg_if! {
         impl Request {
             pub fn query<T: serde::Serialize + ?Sized>(mut self, query: &T) -> Self {
                 self.inner = self.inner.query(query);
-                self
-            }
-
-            pub fn header(
-                mut self,
-                key: impl Into<HeaderName>,
-                value: impl Into<HeaderValue>,
-            ) -> Self {
-                self.inner = self.inner.header(key, value);
                 self
             }
 

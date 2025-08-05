@@ -1,7 +1,7 @@
 use bytemuck::{Pod, Zeroable};
 use cgmath::{InnerSpace, Matrix, Matrix4, SquareMatrix, Vector3, Vector4, Zero};
 
-use crate::volumes::{BoundingBox, BoundingVolume};
+use crate::content::BoundingBox;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
@@ -39,7 +39,7 @@ pub fn decompose_matrix64_to_uniform(mat: &Matrix4<f64>) -> Uniforms {
 
     // Subtract the coarse offset from the translation
     let offset_as_f64 = Vector3::new(offset.x as f64, offset.y as f64, offset.z as f64);
-    let remainder_translation = translation - offset_as_f64;
+    let _remainder_translation = translation - offset_as_f64;
 
     // Convert the whole matrix to f32
     let mat32 = [

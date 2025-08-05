@@ -27,7 +27,7 @@ pub fn start_pager(
         let client_clone = client.clone();
         let pager_cam = Arc::clone(&camera_src);
         thread::spawn(move || {
-            parser_thread(pager_cam, tile_mgr, pager_tx, client_clone)
+            parser_thread(pager_cam, tile_mgr, pager_tx, client_clone, true)
                 .platform_await()
                 .expect("Failed to start parser thread");
         });
@@ -57,6 +57,20 @@ pub fn start_pager(
     }
 
     Ok(())
+}
+
+pub fn pager_iter(
+    camera_src: Arc<Camera>,
+    tile_mgr: Arc<TileManager>,
+    render_tx: crossbeam_channel::Sender<Tile>,
+) -> Result<(), AbwError> {
+    // This is a blocking iterator that runs the pager loop
+    start_pager(camera_src, tile_mgr, render_tx)?;
+
+    // Keep the main thread alive to allow async tasks to run
+    loop {
+        thread::park();
+    }
 }
 
 fn build_client(threads: usize) -> Result<Client, AbwError> {

@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use crate::{
     cache::get_tileset_cache,
-    download_client::Client,
-    errors::{AbwError, TileLoadingContext},
+    content::Client,
+    helpers::{AbwError, TileLoadingContext},
 };
 
 pub async fn download_content(
@@ -27,12 +27,22 @@ pub async fn download_content(
         query_params.push(("session", session.as_str()));
     }
 
-    let response = client
+    let response_result = client
         .get(content_url)
         .query(&query_params)
         .send()
         .await
-        .tile_loading(&format!("Failed to download content from {}", content_url))?;
+        .tile_loading(&format!("Failed to download content from {}", content_url));
+
+    if let Err(e) = &response_result {
+        log::error!("Failed to download content from {}: {:?}", content_url, e);
+        return Err(AbwError::Network(format!(
+            "Failed to download content from {}: {:?}",
+            content_url, e
+        )));
+    }
+
+    let response = response_result.unwrap();
 
     let content_type = response
         .headers()
@@ -63,7 +73,9 @@ pub async fn download_content(
     }
 
     let cache = get_tileset_cache();
-    cache.insert(content_url.to_string(), content_type.clone(), bytes.clone());
+    cache
+        .insert(content_url.to_string(), content_type.clone(), bytes.clone())
+        .await?;
 
     Ok((content_type, bytes))
 }

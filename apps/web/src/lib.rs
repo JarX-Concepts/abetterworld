@@ -1,10 +1,10 @@
-use abetterworld::{InputEvent, Key, MouseButton, SphereRenderer};
+use abetterworld::{ABetterWorld, InputEvent, MouseButton};
 use std::sync::Arc;
 use wasm_bindgen::prelude::*;
 use winit::platform::web::WindowExtWebSys;
 use winit::{
     event::{ElementState, Event, WindowEvent},
-    event_loop::{ControlFlow, EventLoop},
+    event_loop::EventLoop,
     keyboard::{KeyCode, PhysicalKey},
     window::WindowBuilder,
 };
@@ -29,7 +29,7 @@ struct State<'window> {
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     size: winit::dpi::PhysicalSize<u32>,
-    sphere_renderer: SphereRenderer,
+    world: ABetterWorld,
 }
 
 impl<'window> State<'window> {
@@ -111,7 +111,7 @@ impl<'window> State<'window> {
         surface.configure(&device, &config);
 
         // Initialize the sphere renderer from render_lib.
-        let sphere_renderer = SphereRenderer::new(&device, &queue, &config).await;
+        let world = ABetterWorld::new(&device, &config);
 
         Self {
             surface,
@@ -119,7 +119,7 @@ impl<'window> State<'window> {
             queue,
             config,
             size,
-            sphere_renderer,
+            world,
         }
     }
 
@@ -149,11 +149,11 @@ impl<'window> State<'window> {
 
     fn input(&mut self, event: InputEvent) {
         // No dynamic updates for now.
-        self.sphere_renderer.input(event);
+        self.world.input(event);
     }
 
     fn update(&mut self) {
-        self.sphere_renderer.update(&mut &self.device, &self.queue);
+        self.world.update(&mut &self.device, &self.queue);
     }
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
@@ -184,7 +184,7 @@ impl<'window> State<'window> {
                     },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: self.sphere_renderer.get_depth_view(),
+                    view: self.world.get_depth_view(),
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0), // far plane
                         store: wgpu::StoreOp::Discard,
@@ -195,7 +195,7 @@ impl<'window> State<'window> {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            self.sphere_renderer
+            self.world
                 .render(&mut render_pass, &self.queue, &self.device);
         }
 

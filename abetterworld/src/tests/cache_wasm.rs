@@ -1,10 +1,12 @@
 #[cfg(target_arch = "wasm32")]
 mod wasm_tests {
-    use crate::cache::{get_tileset_cache, init_tileset_cache};
     use bytes::Bytes;
     use js_sys::Math;
     use log::info;
+    use std::{thread, time::Duration};
     use wasm_bindgen_test::*;
+
+    use crate::cache::{get_tileset_cache, init_tileset_cache, init_wasm_indexdb_on_every_thread};
 
     fn random_id(len: usize) -> String {
         const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -25,9 +27,17 @@ mod wasm_tests {
     #[wasm_bindgen_test]
     async fn test_indexeddb_stress_lifecycle() {
         console_log::init_with_level(log::Level::Info).ok();
+        info!("Starting IndexedDB stress test...");
+
         init_tileset_cache();
 
-        println!("Starting IndexedDB stress test...");
+        let _ = init_wasm_indexdb_on_every_thread()
+            .await
+            .expect("Should init IndexedDB");
+
+        info!("Loaded db...");
+
+        info!("Initialized tileset cache...");
 
         let cache = get_tileset_cache();
 
@@ -39,17 +49,23 @@ mod wasm_tests {
         for i in 0..1000 {
             let key = random_key("stress", i);
             let val = Bytes::from(vec![(i % 255) as u8; 64]);
-            cache.insert(key.clone(), content_type.to_string(), val.clone());
+            cache
+                .insert(key.clone(), content_type.to_string(), val.clone())
+                .await
+                .expect("Failed to insert stress test entry");
         }
 
         // Insert a known key
         let control_key = "stress-control-key";
         let control_value = Bytes::from_static(b"CONTROL-DATA-123456");
-        cache.insert(
-            control_key.to_string(),
-            content_type.to_string(),
-            control_value.clone(),
-        );
+        cache
+            .insert(
+                control_key.to_string(),
+                content_type.to_string(),
+                control_value.clone(),
+            )
+            .await
+            .expect("Failed to insert control key into IndexedDB");
 
         // Evict memory
         {
@@ -62,6 +78,7 @@ mod wasm_tests {
             .get(control_key)
             .await
             .expect("Failed to get control key from IndexedDB");
+
         assert!(result.is_some(), "Control key should be recoverable");
         let (ct, val) = result.unwrap();
         assert_eq!(ct, content_type);
@@ -73,16 +90,22 @@ mod wasm_tests {
         let utf_key = "unicode-ключ🗝️";
         let empty_payload = Bytes::new();
 
-        cache.insert(
-            empty_key.to_string(),
-            content_type.to_string(),
-            empty_payload.clone(),
-        );
-        cache.insert(
-            utf_key.to_string(),
-            content_type.to_string(),
-            base_value.clone(),
-        );
+        cache
+            .insert(
+                empty_key.to_string(),
+                content_type.to_string(),
+                empty_payload.clone(),
+            )
+            .await
+            .expect("Failed to insert empty key into IndexedDB");
+        cache
+            .insert(
+                utf_key.to_string(),
+                content_type.to_string(),
+                base_value.clone(),
+            )
+            .await
+            .expect("Failed to insert utf_key into IndexedDB");
 
         let result = cache
             .get(empty_key)
@@ -109,11 +132,14 @@ mod wasm_tests {
         // Overwrite an existing key
         info!("Overwriting existing key...");
         let new_val = Bytes::from_static(b"new-overwritten-value");
-        cache.insert(
-            control_key.to_string(),
-            content_type.to_string(),
-            new_val.clone(),
-        );
+        cache
+            .insert(
+                control_key.to_string(),
+                content_type.to_string(),
+                new_val.clone(),
+            )
+            .await
+            .expect("Failed to overwrite control key in IndexedDB");
 
         let (ct_overwritten, val_overwritten) = cache
             .get(control_key)

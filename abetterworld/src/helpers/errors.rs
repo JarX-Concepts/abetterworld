@@ -8,6 +8,9 @@ pub enum AbwError {
     #[error("Tile loading failed: {0}")]
     TileLoading(String),
 
+    #[error("Paging closed: {0}")]
+    Paging(String),
+
     #[error("Network failure: {0}")]
     Network(String),
 
