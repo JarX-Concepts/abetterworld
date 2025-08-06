@@ -1,8 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::cache::{get_tileset_cache, init_tileset_cache, TilesetCache};
-    use crate::helpers::hash_uri;
-    use crate::platform::PlatformAwait;
+    use crate::helpers::{hash_uri, PlatformAwait};
 
     use bytes::Bytes;
     use std::fs;
@@ -18,11 +17,14 @@ mod tests {
         let value = Bytes::from_static(b"hello-payload");
 
         // Insert a key
-        if let Err(e) = cache.insert(
-            base_key.to_string(),
-            content_type.to_string(),
-            value.clone(),
-        ) {
+        if let Err(e) = cache
+            .insert(
+                base_key.to_string(),
+                content_type.to_string(),
+                value.clone(),
+            )
+            .platform_await()
+        {
             eprintln!("Failed to insert into cache: {}", e);
             panic!("Cache insert failed");
         }
@@ -38,7 +40,10 @@ mod tests {
         for i in 0..1024 {
             let key = format!("key-{}", i);
             let val = Bytes::from(vec![i as u8; 32]);
-            if let Err(e) = cache.insert(key.clone(), "application/test".to_string(), val.clone()) {
+            if let Err(e) = cache
+                .insert(key.clone(), "application/test".to_string(), val.clone())
+                .platform_await()
+            {
                 eprintln!("Failed to insert into cache: {}", e);
                 panic!("Cache insert failed");
             }
@@ -49,7 +54,7 @@ mod tests {
 
         let in_memory = {
             let id = hash_uri(&base_key);
-            cache.map.get(&id)
+            cache.map.get(id)
         };
         assert!(
             in_memory.is_none(),

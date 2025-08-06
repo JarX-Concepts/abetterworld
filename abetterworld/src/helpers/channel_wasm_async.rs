@@ -33,17 +33,11 @@ pub mod channel {
             self.inner.next().await.ok_or(())
         }
 
-        pub fn try_next(&mut self) -> Result<Option<T>, AbwError> {
+        pub fn try_recv(&mut self) -> Result<T, AbwError> {
             self.inner
                 .try_next()
-                .map_err(|_| AbwError::Paging("Failed to receive item".to_string()))
-        }
-
-        pub fn try_recv(&mut self) -> Result<T, AbwError> {
-            match self.try_next()? {
-                Some(item) => Ok(item),
-                None => Err(AbwError::Paging("Received nothing".to_string())),
-            }
+                .map_err(|_| AbwError::Paging("Failed to receive item".to_string()))?
+                .ok_or(AbwError::Paging("Channel closed".to_string()))
         }
 
         // Optional non-blocking poll
