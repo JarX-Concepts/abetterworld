@@ -1,4 +1,4 @@
-name: Rust
+name: A Better World CI
 
 on:
   push:
@@ -10,18 +10,37 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
+  build-and-test:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
-      - name: Build Library
+      - name: 📦 Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🦀 Set up Rust
+        uses: actions/setup-rust@v1
+        with:
+          rust-version: stable
+
+      - name: 📡 Add WebAssembly target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: 🔧 Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      # --- Build Steps ---
+      - name: 🧱 Build Core Library (abetterworld)
         run: cargo build -p abetterworld --verbose
-      - name: Build Desktop
+
+      - name: 🧱 Build Desktop App
         run: cargo build -p desktop --verbose
-      - name: Build Web
+
+      - name: 🧱 Build Web App
         run: make build-web
-      - name: Run Native Tests
+
+      # --- Test Steps ---
+      - name: ✅ Run Native Tests
         run: cargo test --manifest-path abetterworld/Cargo.toml --features paging_test -- --test-threads=1
-      - name: Run Web Tests
+
+      - name: 🌐 Run Web Tests (Firefox Headless)
         run: make test-web
