@@ -25,8 +25,10 @@ pub mod channel {
     }
 
     impl<T> Receiver<T> {
-        pub async fn recv(&self) -> Result<T, ()> {
-            self.inner.recv().map_err(|_| ())
+        pub async fn recv(&self) -> Result<T, AbwError> {
+            self.inner
+                .recv()
+                .map_err(|_| AbwError::Paging("Failed to receive item".to_string()))
         }
 
         pub fn try_recv(&self) -> Result<T, AbwError> {

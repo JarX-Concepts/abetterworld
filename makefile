@@ -6,3 +6,6 @@ build-web:
 
 run-web:
 	cd apps/web && python3 -m http.server 8080
+
+test-web:
+	cd abetterworld && wasm-pack test --firefox --headless

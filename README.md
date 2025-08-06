@@ -26,13 +26,6 @@ cd abetterworld
 cargo build -p abetterworld
 cargo build -p abetterworld --release
 
-# Run Unit Tests on Desktop
-cargo test -p abetterworld
-
-# Run Unit Tests on Web
-cargo test -p abetterworld
-
-
 # Run sample desktop app (mac, windows, linux)
 cargo run -p desktop
 
@@ -41,6 +34,12 @@ make build-web
 make run-web
 
 #ios & android TODO
+
+# Run Unit Tests on Desktop
+cargo test -p abetterworld
+
+# Run Unit Tests on Web
+make test-web
 
 ```
 
