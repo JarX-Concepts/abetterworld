@@ -22,14 +22,26 @@ Clone the repository and build the project in release or debug mode:
 git clone https://github.com/your-username/abetterworld.git
 cd abetterworld
 
-# Build in debug mode
-cargo build
+# Build library
+cargo build -p abetterworld
+cargo build -p abetterworld --release
 
-# Or build in release mode
-cargo build --release
+# Run Unit Tests on Desktop
+cargo test -p abetterworld
 
-# Run the application
-cargo run
+# Run Unit Tests on Web
+cargo test -p abetterworld
+
+
+# Run sample desktop app (mac, windows, linux)
+cargo run -p desktop
+
+# Run sample web app
+make build-web
+make run-web
+
+#ios & android TODO
+
 ```
 
 ---

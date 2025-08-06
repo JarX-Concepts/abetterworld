@@ -3,6 +3,19 @@ use std::env;
 use std::path::PathBuf;
 
 fn main() {
+    println!("cargo::rustc-check-cfg=cfg(wasm)");
+    cfg_aliases::cfg_aliases! {
+        wasm: { all(target_arch = "wasm32", target_os = "unknown") },
+    }
+
+    let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+
+    if target_arch == "wasm32" && target_os == "unknown" {
+        // This is a WASM build, skip native build steps
+        return;
+    }
+
     // ---------- 1. Build Draco with CMake ----------
     let draco_src = "./draco";
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());

@@ -20,6 +20,12 @@
 </head>
 <body>
   <script src="https://www.gstatic.com/draco/versioned/decoders/1.5.7/draco_wasm_wrapper.js"></script>
-  <script src="/js/draco-wrapper.js"></script>
+  <script type="module">
+  import init from './pkg/web.js';
+
+  init().then(() => {
+    console.log("WASM initialized");
+  });
+</script>
 </body>
 </html>

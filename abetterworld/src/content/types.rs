@@ -1,6 +1,6 @@
 use crate::{
+    content::{BoundingBox, BoundingVolume},
     decode::OwnedDecodedMesh,
-    volumes::{BoundingBox, BoundingVolume},
 };
 use cgmath::Matrix4;
 use std::mem;
@@ -11,7 +11,6 @@ pub struct Tile {
     pub parent: Option<u64>,
     pub id: u64,
     pub uri: String,
-    pub session: Option<String>,
     pub volume: BoundingVolume,
     pub state: TileState,
 }
@@ -27,14 +26,31 @@ pub enum TileState {
         textures: Vec<Texture>,
         materials: Vec<Material>,
     },
-    Renderable {
-        nodes: Vec<Node>,
-        meshes: Vec<Mesh>,
-        textures: Vec<TextureResource>,
-        materials: Vec<Material>,
-        unload: bool,
-        culling_volume: BoundingBox,
-    },
+    Renderable,
+}
+
+impl Tile {
+    pub fn default() -> Self {
+        Tile {
+            counter: 0,
+            parent: None,
+            id: 0,
+            uri: String::new(),
+            volume: BoundingVolume::default(),
+            state: TileState::Invalid,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RenderableState {
+    pub tile: Tile,
+    pub nodes: Vec<Node>,
+    pub meshes: Vec<Mesh>, // Mesh contains wgpu::Buffer
+    pub textures: Vec<TextureResource>,
+    pub materials: Vec<Material>,
+    pub unload: bool,
+    pub culling_volume: BoundingBox,
 }
 
 #[derive(Debug, Clone, PartialEq)]

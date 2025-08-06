@@ -1,36 +1,48 @@
 use bytes::Bytes;
-use reqwest::blocking::Client;
+use std::sync::Arc;
 
 use crate::{
     cache::get_tileset_cache,
-    errors::{AbwError, TileLoadingContext},
+    content::Client,
+    helpers::{AbwError, TileLoadingContext},
 };
 
-pub fn download_content(
+pub async fn download_content(
     client: &Client,
     content_url: &str,
     key: &str,
-    session: Option<&str>,
+    session: &Option<Arc<String>>,
 ) -> Result<(String, Bytes), AbwError> {
     // Try cache first
     let cache = get_tileset_cache();
-    if let Some((content_type, bytes)) = cache.get(content_url) {
+    if let Some((content_type, bytes)) = cache.get(content_url).await? {
         return Ok((content_type, bytes));
     }
 
-    //log::info!("Downloading content from: {}", content_url);
+    log::info!("Downloading content from {}", content_url);
 
     let mut query_params = vec![("key", key)];
 
     if let Some(session) = session.as_deref() {
-        query_params.push(("session", session));
+        query_params.push(("session", session.as_str()));
     }
 
-    let response = client
+    let response_result = client
         .get(content_url)
         .query(&query_params)
         .send()
-        .tile_loading(&format!("Failed to download content from {}", content_url))?;
+        .await
+        .tile_loading(&format!("Failed to download content from {}", content_url));
+
+    if let Err(e) = &response_result {
+        log::error!("Failed to download content from {}: {:?}", content_url, e);
+        return Err(AbwError::Network(format!(
+            "Failed to download content from {}: {:?}",
+            content_url, e
+        )));
+    }
+
+    let response = response_result.unwrap();
 
     let content_type = response
         .headers()
@@ -45,7 +57,7 @@ pub fn download_content(
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.parse::<usize>().ok());
 
-    let bytes = response.bytes().tile_loading(&format!(
+    let bytes = response.bytes().await.tile_loading(&format!(
         "Failed to access byte content from {}",
         content_url
     ))?;
@@ -60,7 +72,10 @@ pub fn download_content(
         }
     }
 
-    cache.insert(content_url.to_string(), content_type.clone(), bytes.clone());
+    let cache = get_tileset_cache();
+    cache
+        .insert(content_url.to_string(), content_type.clone(), bytes.clone())
+        .await?;
 
     Ok((content_type, bytes))
 }

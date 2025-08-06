@@ -1,16 +1,14 @@
+use cgmath::{
+    Deg, EuclideanSpace, InnerSpace, Matrix4, Point3, Quaternion, Rotation, Rotation3,
+    SquareMatrix, Vector2, Vector3, Vector4, Zero,
+};
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
     RwLock,
 };
 
-use crate::{
-    coord_utils::geodetic_to_ecef_z_up,
-    matrix::{decompose_matrix64_to_uniform, extract_frustum_planes, Uniforms},
-    volumes::BoundingVolume,
-};
-use cgmath::{
-    Deg, EuclideanSpace, InnerSpace, Matrix, Matrix4, Point3, Quaternion, Rotation, Rotation3,
-    SquareMatrix, Vector2, Vector3, Vector4, Zero,
+use crate::helpers::{
+    decompose_matrix64_to_uniform, extract_frustum_planes, geodetic_to_ecef_z_up, Uniforms,
 };
 
 const EARTH_MIN_RADIUS_M: f64 = 6_350_000.0; // Conservative, accounting for sea-level radius
@@ -283,14 +281,16 @@ pub fn init_camera() -> (Camera, Camera) {
     let radius = 6_378_137.0;
     let distance: f64 = radius * 2.0;
 
-    let debug_eye = geodetic_to_ecef_z_up(34.4208, -119.6982, 200.0);
-    let eye = geodetic_to_ecef_z_up(34.4208, -119.6982, distance);
+    let main_eye = geodetic_to_ecef_z_up(34.4208, -119.6982, distance);
+    let debug_eye = geodetic_to_ecef_z_up(34.4208, -119.6982, 50000.0);
+
+    let eye = Point3::new(main_eye.0, main_eye.1, main_eye.2);
     let target = Point3::new(0.0, 0.0, 0.0);
     let up = Vector3::unit_z();
     let camera = Camera::new(CameraUserPosition {
         fovy: Deg(45.0),
         aspect: 1.0,
-        eye: Point3::new(eye.0, eye.1, eye.2),
+        eye,
         target,
         up,
         near: None,
