@@ -10,9 +10,31 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build-and-test:
+  native:
+    name: 🖥️ Native Build & Test
     runs-on: ubuntu-latest
+    steps:
+      - name: 📦 Checkout repository
+        uses: actions/checkout@v4
 
+      - name: 🦀 Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: 🧱 Build Core Library (abetterworld)
+        run: cargo build -p abetterworld --verbose
+
+      - name: 🧱 Build Desktop App
+        run: cargo build -p desktop --verbose
+
+      - name: ✅ Run Native Tests
+        run: cargo test --manifest-path abetterworld/Cargo.toml --features paging_test -- --test-threads=1
+
+  web:
+    name: 🌐 Web Build & Test (WASM)
+    runs-on: ubuntu-latest
     steps:
       - name: 📦 Checkout repository
         uses: actions/checkout@v4
@@ -32,19 +54,8 @@ jobs:
       - name: 📦 Install wasm-bindgen-cli
         run: cargo install wasm-bindgen-cli
 
-      # --- Build Steps ---
-      - name: 🧱 Build Core Library (abetterworld)
-        run: cargo build -p abetterworld --verbose
-
-      - name: 🧱 Build Desktop App
-        run: cargo build -p desktop --verbose
-
       - name: 🧱 Build Web App
         run: make build-web
-
-      # --- Test Steps ---
-      - name: ✅ Run Native Tests
-        run: cargo test --manifest-path abetterworld/Cargo.toml --features paging_test -- --test-threads=1
 
       - name: 🌐 Run Web Tests (Firefox Headless)
         run: make test-web
