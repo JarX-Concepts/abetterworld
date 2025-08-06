@@ -29,6 +29,9 @@ jobs:
       - name: 🔧 Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
+      - name: 📦 Install wasm-bindgen-cli
+        run: cargo install wasm-bindgen-cli
+
       # --- Build Steps ---
       - name: 🧱 Build Core Library (abetterworld)
         run: cargo build -p abetterworld --verbose
