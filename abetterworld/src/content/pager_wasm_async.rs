@@ -1,7 +1,10 @@
 use crate::cache::init_wasm_indexdb_on_every_thread;
+use crate::content::parser_iteration;
 use crate::content::tiles::load_content;
+use crate::content::tiles_priority::priortize_loop;
 use crate::content::Client;
 use crate::content::Tile;
+use crate::content::TileSetImporter;
 use crate::helpers::channel::channel;
 use crate::helpers::channel::Sender;
 use crate::{content::TileManager, helpers::AbwError, render::Camera};
@@ -67,14 +70,15 @@ fn update_pager(
 
     let pager_tx_clone = pager_tx.clone();
     spawn_local(async move {
-        use crate::content::parser_thread;
-
         ACTIVE_JOBS.fetch_add(1, Ordering::SeqCst);
 
         log::info!("Starting pager");
-        if let Err(e) =
-            parser_thread(pager_cam, tile_mgr, pager_tx_clone, client_clone, false).await
-        {
+
+        let mut pager = TileSetImporter::new(client_clone, pager_tx_clone, tile_mgr);
+
+        // this should compare the current camera state generation to avoid redundant work
+        let camera_data = pager_cam.refinement_data();
+        if let Err(e) = parser_iteration(&camera_data, &mut pager).await {
             log::error!("Pager thread failed: {:?}", e);
         }
 
@@ -85,8 +89,6 @@ fn update_pager(
     let cam = Arc::clone(&camera_src);
     let mut loader_tx_clone = loader_tx.clone();
     spawn_local(async move {
-        use crate::content::tiles_priority::priortize_loop;
-
         ACTIVE_JOBS.fetch_add(1, Ordering::SeqCst);
 
         log::info!("Starting prioritized loop");

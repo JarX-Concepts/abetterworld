@@ -1,4 +1,6 @@
-#[cfg(not(target_arch = "wasm32"))]
+use crate::cache::cache_native::TilesetMemoryCache;
+use bytes::Bytes;
+
 pub struct NativeCache {
     inner: moka::sync::Cache<u64, (String, Bytes)>,
 }

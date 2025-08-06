@@ -1,25 +1,26 @@
-use crate::camera::Camera;
-use crate::content::Tile;
-use crate::download_client::Client;
-use crate::errors::AbwError;
-use crate::platform::PlatformAwait;
-use crate::tile_manager::TileManager;
-use crate::tiles::wait_and_load_content;
-use crate::tiles_priority::priortize_loop;
-use crate::tilesets::parser_thread;
-use crossbeam_channel::{bounded, unbounded};
+use crate::{
+    content::{
+        parser_thread, tiles::wait_and_load_content, tiles_priority::priortize_loop, Client, Tile,
+        TileManager,
+    },
+    helpers::{
+        channel::{channel, Sender},
+        AbwError, PlatformAwait,
+    },
+    render::Camera,
+};
 use std::{sync::Arc, thread};
 
 pub fn start_pager(
     camera_src: Arc<Camera>,
     tile_mgr: Arc<TileManager>,
-    render_tx: crossbeam_channel::Sender<Tile>,
+    render_tx: Sender<Tile>,
 ) -> Result<(), AbwError> {
     const LOADER_THREADS: usize = 1;
     // unbounded: pager -> prioritizer
-    let (pager_tx, pager_rx) = unbounded::<Tile>();
+    let (pager_tx, mut pager_rx) = channel::<Tile>(1000);
     // bounded:   prioritizer -> workers  (back-pressure)
-    let (loader_tx, loader_rx) = bounded::<Tile>(LOADER_THREADS * 2);
+    let (mut loader_tx, loader_rx) = channel::<Tile>(LOADER_THREADS * 2);
     let client = build_client(LOADER_THREADS)?;
 
     // ---------- 1. Pager (discovers tiles) ----------
@@ -37,7 +38,9 @@ pub fn start_pager(
     {
         let cam = Arc::clone(&camera_src);
         thread::spawn(move || {
-            priortize_loop(&cam, &pager_rx, &loader_tx);
+            priortize_loop(&cam, &mut pager_rx, &mut loader_tx, true)
+                .platform_await()
+                .expect("Failed to run prioritizer loop");
         });
     }
 
@@ -45,11 +48,11 @@ pub fn start_pager(
     {
         for _ in 0..LOADER_THREADS {
             let client_clone = client.clone();
-            let render_time = render_tx.clone();
-            let rx = loader_rx.clone();
+            let mut render_time = render_tx.clone();
+            let mut rx = loader_rx.clone();
 
             thread::spawn(move || {
-                wait_and_load_content(&client_clone, &rx, &render_time)
+                wait_and_load_content(&client_clone, &mut rx, &mut render_time)
                     .platform_await()
                     .expect("Failed to load content in worker thread");
             });
@@ -57,20 +60,6 @@ pub fn start_pager(
     }
 
     Ok(())
-}
-
-pub fn pager_iter(
-    camera_src: Arc<Camera>,
-    tile_mgr: Arc<TileManager>,
-    render_tx: crossbeam_channel::Sender<Tile>,
-) -> Result<(), AbwError> {
-    // This is a blocking iterator that runs the pager loop
-    start_pager(camera_src, tile_mgr, render_tx)?;
-
-    // Keep the main thread alive to allow async tasks to run
-    loop {
-        thread::park();
-    }
 }
 
 fn build_client(threads: usize) -> Result<Client, AbwError> {

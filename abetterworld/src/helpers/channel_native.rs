@@ -1,10 +1,14 @@
 pub mod channel {
     use crossbeam_channel::{bounded, Receiver as CbReceiver, Sender as CbSender};
 
+    use crate::helpers::AbwError;
+
+    #[derive(Clone, Debug)]
     pub struct Sender<T> {
         inner: CbSender<T>,
     }
 
+    #[derive(Clone, Debug)]
     pub struct Receiver<T> {
         inner: CbReceiver<T>,
     }
@@ -15,19 +19,20 @@ pub mod channel {
     }
 
     impl<T> Sender<T> {
-        pub fn send(&self, item: T) -> Result<(), ()> {
+        pub async fn send(&self, item: T) -> Result<(), ()> {
             self.inner.send(item).map_err(|_| ())
         }
     }
 
     impl<T> Receiver<T> {
-        pub fn recv(&self) -> Result<T, ()> {
+        pub async fn recv(&self) -> Result<T, ()> {
             self.inner.recv().map_err(|_| ())
         }
 
-        // Optional non-blocking poll
-        pub fn try_recv(&self) -> Result<T, ()> {
-            self.inner.try_recv().map_err(|_| ())
+        pub fn try_recv(&self) -> Result<T, AbwError> {
+            self.inner
+                .try_recv()
+                .map_err(|_| AbwError::Paging("Failed to receive item".to_string()))
         }
     }
 }

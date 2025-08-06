@@ -1,7 +1,6 @@
-use crate::errors::{AbwError, IoContext};
-use crate::helpers::hash_uri;
+use crate::cache::cache_lru_native::NativeCache;
+use crate::helpers::{hash_uri, AbwError};
 use bytes::Bytes;
-use moka::sync::Cache;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, OnceLock, RwLock};
 use std::{fs, path::Path};
@@ -41,7 +40,7 @@ impl TilesetCache {
 
     pub async fn get(&self, key: &str) -> Result<Option<(String, Bytes)>, AbwError> {
         let id = hash_uri(key);
-        if let Some((ct, data)) = self.map.get(&id) {
+        if let Some((ct, data)) = self.map.get(id) {
             return Ok(Some((ct, data)));
         }
 

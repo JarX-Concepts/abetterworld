@@ -17,7 +17,7 @@ use std::{
 
 use crate::{
     cache::init_tileset_cache,
-    content::{pager_wasm_async::start_pager, DebugVertex, Ray, Tile, TileManager},
+    content::{start_pager, DebugVertex, Ray, Tile, TileManager},
     helpers::{
         channel::{channel, Receiver, Sender},
         is_bounding_volume_visible, matrix, AbwError,
@@ -314,6 +314,8 @@ impl ABetterWorld {
                 while Instant::now() < deadline {
                     match self.receiver.try_recv() {
                         Ok(mut tile) => {
+                            use crate::content::tiles;
+
                             match tiles::content_render_setup(device, queue, layout, &mut tile) {
                                 Ok(renderable_state) => {
                                     self.content.add_renderable(renderable_state);
@@ -324,8 +326,7 @@ impl ABetterWorld {
                                 }
                             }
                         }
-                        Err(crossbeam_channel::TryRecvError::Empty) => break, // nothing left
-                        Err(crossbeam_channel::TryRecvError::Disconnected) => break, // sender gone
+                        Err(_) => break, // nothing left
                     }
                 }
             }

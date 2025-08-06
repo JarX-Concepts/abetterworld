@@ -12,6 +12,9 @@ use std::thread;
 use std::time::Duration;
 use url::Url;
 
+#[cfg(target_arch = "wasm32")]
+use gloo_timers::future::TimeoutFuture;
+
 pub const GOOGLE_API_KEY: &str = "AIzaSyD526Czd1rD44BZE2d2R70-fBEdDdf6vZQ";
 pub const GOOGLE_API_URL: &str = "https://tile.googleapis.com/v1/3dtiles/root.json";
 
@@ -124,6 +127,17 @@ fn needs_refinement(
     sse > sse_threshold
 }
 
+pub async fn parser_iteration(
+    camera_data: &CameraRefinementData,
+    pager: &mut TileSetImporter,
+) -> Result<(), AbwError> {
+    if let Err(err) = pager.go(&camera_data, GOOGLE_API_URL, GOOGLE_API_KEY).await {
+        log::error!("Failed to run pager: {}", err);
+    }
+
+    Ok(())
+}
+
 pub async fn parser_thread(
     cam: Arc<Camera>,
     tile_mgr: Arc<TileManager>,
@@ -134,15 +148,11 @@ pub async fn parser_thread(
     let mut pager = TileSetImporter::new(client, pager_tx.clone(), tile_mgr);
 
     let mut last_cam_gen = 0;
-    //loop
-    {
+    loop {
         let new_gen = cam.generation();
         if new_gen != last_cam_gen {
             let camera_data = cam.refinement_data();
-
-            if let Err(err) = pager.go(&camera_data, GOOGLE_API_URL, GOOGLE_API_KEY).await {
-                log::error!("Failed to run pager: {}", err);
-            }
+            parser_iteration(&camera_data, &mut pager).await;
 
             last_cam_gen = new_gen;
         } else {
@@ -152,7 +162,6 @@ pub async fn parser_thread(
             }
         }
     }
-    Ok(())
 }
 
 impl TileSetImporter {
@@ -285,6 +294,10 @@ impl TileSetImporter {
                             self.sender.send(new_tile).await.map_err(|_| {
                                 AbwError::TileLoading("Failed to send new tile".into())
                             })?;
+                        } else {
+                            // give up CPU time to other tasks
+                            #[cfg(target_arch = "wasm32")]
+                            TimeoutFuture::new(1).await;
                         }
                     }
                 }

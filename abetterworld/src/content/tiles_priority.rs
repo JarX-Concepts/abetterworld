@@ -22,7 +22,7 @@ pub async fn prioritize(
     if backlog.is_empty() {
         //thread::sleep(Duration::from_secs(5));
 
-        // No backlog, block wait for a tile
+        // No backlog, block wait for a tile (or bail if channel closed)
         let tile = pager_rx
             .recv()
             .await
@@ -34,7 +34,7 @@ pub async fn prioritize(
     }
 
     // ingest new tiles -------------------------------------------------
-    while let Ok(Some(tile)) = pager_rx.try_next() {
+    while let Ok(tile) = pager_rx.try_recv() {
         if tile.state == TileState::ToLoad {
             backlog.push(tile);
             did_nothing_iter = false;
