@@ -3,7 +3,8 @@ resolver = "2"
 members = [
     "abetterworld",
     "apps/web",
-    "apps/desktop"
+    "apps/desktop",
+    "apps/ios"
 ]
 
 

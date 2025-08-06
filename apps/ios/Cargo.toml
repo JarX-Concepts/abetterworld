@@ -1,0 +1,30 @@
+[package]
+name = "abetterworld_ios"
+version = "0.1.0"
+edition = "2021"
+description = "A Better World renderer for iOS using wgpu with Metal backend"
+
+[lib]
+name = "abetterworld_ios"
+crate-type = ["staticlib", "cdylib"]
+
+[dependencies]
+wgpu = { workspace = true }
+winit = { workspace = true }
+abetterworld = { path = "../../abetterworld" }
+log = "0.4"
+env_logger = "0.10"
+pollster = "0.3"
+cfg-if = "1.0"
+objc = "0.2"
+cocoa-foundation = "0.1"
+foreign-types = "0.5"
+metal = "0.24"
+core-graphics = "0.22"
+raw-window-handle = "0.5.0"
+ctrlc = "3.2"
+cocoa = "0.24"
+
+[features]
+metal = ["wgpu/metal"]
+default = ["metal"] 

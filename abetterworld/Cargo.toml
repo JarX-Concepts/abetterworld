@@ -10,6 +10,9 @@ include = [
     "Cargo.toml",
 ]
 
+[lib]
+crate-type = ["cdylib", "rlib", "staticlib"]
+
 [package.metadata.cfg_aliases]
 wasm = 'all(target_arch = "wasm32", target_os = "unknown")'
 
