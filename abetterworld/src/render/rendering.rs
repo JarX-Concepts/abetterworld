@@ -137,7 +137,7 @@ pub fn build_pipeline(
     // Load WGSL shader from file.
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("Sphere Shader"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
+        source: wgpu::ShaderSource::Wgsl(include_str!("../../assets/shader.wgsl").into()),
     });
 
     // Create the render pipeline.
@@ -155,7 +155,7 @@ pub fn build_pipeline(
             entry_point: Some("fs_main"),
             targets: &[Some(wgpu::ColorTargetState {
                 format: config.format,
-                blend: Some(wgpu::BlendState::REPLACE),
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                 write_mask: wgpu::ColorWrites::ALL,
             })],
             compilation_options: Default::default(),
@@ -241,7 +241,7 @@ pub fn build_debug_pipeline(
 ) -> RenderPipeline {
     let debug_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("Sphere Shader"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("debug_shader.wgsl").into()),
+        source: wgpu::ShaderSource::Wgsl(include_str!("../../assets/debug_shader.wgsl").into()),
     });
 
     // Size of one matrix
@@ -316,11 +316,11 @@ pub fn build_debug_pipeline(
             conservative: false,
         },
         depth_stencil: Some(wgpu::DepthStencilState {
-            format: wgpu::TextureFormat::Depth24Plus, // match your texture
-            depth_write_enabled: false,               // write to the depth buffer
-            depth_compare: wgpu::CompareFunction::Less, // typical for 3D
-            stencil: wgpu::StencilState::default(),   // usually default
-            bias: wgpu::DepthBiasState::default(),    // optional slope‐bias
+            format: wgpu::TextureFormat::Depth24Plus,
+            depth_write_enabled: true,
+            depth_compare: wgpu::CompareFunction::Less,
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
         }),
         multisample: wgpu::MultisampleState {
             count: 1,

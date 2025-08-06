@@ -213,6 +213,8 @@ pub extern "C" fn abetterworld_ios_resize(ptr: *mut ABetterWorldiOS, width: f64,
 pub extern "C" fn abetterworld_ios_render(ptr: *mut ABetterWorldiOS) {
     let state = get_state_inner(ptr);
 
+    state.sphere_renderer.update(&state.device, &state.queue);
+
     // Get the next drawable first to ensure we have a valid target
     let drawable = unsafe {
         let drawable: *mut Object = msg_send![state.metal_layer, nextDrawable];
@@ -234,14 +236,6 @@ pub extern "C" fn abetterworld_ios_render(ptr: *mut ABetterWorldiOS) {
         let height: u64 = msg_send![texture, height];
         (texture, width, height)
     };
-
-    log::info!(
-        "Rendering frame - WGPU texture: {}x{}, Metal drawable: {}x{}",
-        state.texture.size().width,
-        state.texture.size().height,
-        texture_width,
-        texture_height
-    );
 
     // Check if we need to resize our WGPU texture
     if state.texture.size().width != texture_width as u32

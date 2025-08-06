@@ -205,8 +205,9 @@ impl ABetterWorld {
             }
         }
 
-        self.draw_debug_camera(render_pass, queue);
         self.draw_all_tile_volumes(render_pass, queue);
+
+        self.draw_debug_camera(render_pass, queue);
     }
 
     fn draw_all_tile_volumes(&self, render_pass: &mut wgpu::RenderPass, queue: &wgpu::Queue) {

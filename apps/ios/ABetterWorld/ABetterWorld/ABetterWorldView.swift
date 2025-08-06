@@ -140,11 +140,11 @@ public class ABetterWorldViewDelegate: NSObject, MTKViewDelegate {
     }
     
     public func draw(in view: MTKView) {
-        print("Drawing frame...")
+     
         // Toggle between Rust and fallback
         if !UserDefaults.standard.bool(forKey: "useFallback") {
             renderer?.render()
-            print("Rust Frame rendered")
+            
         } else {
             (renderer as? ABetterWorldRenderer)?.renderFallback()
             print("Fallback frame rendered")
