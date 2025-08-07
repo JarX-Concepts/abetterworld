@@ -80,3 +80,6 @@ rustflags = ["-C", "target-feature=+atomics"]
 
 [unstable]
 build-std = ["panic_abort", "std"]
+
+[target.'cfg(target_os = "android")'.dependencies]
+openssl = { version = "0.10", features = ["vendored"] }

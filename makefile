@@ -76,7 +76,7 @@ build-android:
 
 	@for TARGET in $(ANDROID_TARGETS); do \
 		echo "🔨 Building for $$TARGET..."; \
-		cargo ndk -t $$TARGET -o target/android/$(BUILD_TYPE)/ $$CARGO_FLAGS build --package $(CRATE_ANDROID); \
+		cargo ndk -t $$TARGET -o target/android/$(BUILD_TYPE)/ $$CARGO_FLAGS build --package $(CRATE_ANDROID); --features vendored-openssl; \
 	done
 
 	@echo "✅ Android builds complete."	

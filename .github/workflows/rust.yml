@@ -93,7 +93,8 @@ jobs:
 
       - name: 📱 Build for Android
         env:
-          PKG_CONFIG_PATH: "/usr/lib/x86_64-linux-gnu/pkgconfig"
+          OPENSSL_STATIC: "1"
+          OPENSSL_NO_VENDOR: "0"
         run: make build-android-debug
 
   ios:
