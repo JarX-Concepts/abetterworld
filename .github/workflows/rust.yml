@@ -11,7 +11,7 @@ env:
 
 jobs:
   desktop:
-    name: 🖥️ Native Build & Test
+    name: 🖥️ Desktop Build & Test
     runs-on: ubuntu-latest
     steps:
       - name: 📦 Checkout repository
@@ -85,10 +85,11 @@ jobs:
         with:
           ndk-version: r26d
 
+      - name: 🛠 Fix NDK env for cargo-ndk
+        run: echo "ANDROID_NDK_HOME=$ANDROID_NDK_ROOT" >> $GITHUB_ENV
+
       - name: 📱 Build for Android
         run: make build-android-debug
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
 
   ios:
     name: 🍎 iOS Build
