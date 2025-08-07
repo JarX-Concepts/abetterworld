@@ -88,11 +88,17 @@ jobs:
       - name: 🛠 Fix NDK env for cargo-ndk
         run: echo "ANDROID_NDK_HOME=$ANDROID_NDK_ROOT" >> $GITHUB_ENV
 
-      - name: 📱 Build for Android
+      - name: 📱 Build for Android (debug)
         env:
           OPENSSL_STATIC: "1"
           OPENSSL_NO_VENDOR: "0"
         run: make build-android-debug
+
+      - name: 📱 Build for Android (release)
+        env:
+          OPENSSL_STATIC: "1"
+          OPENSSL_NO_VENDOR: "0"
+        run: make build-android-release
 
   ios:
     name: 🍎 iOS Build
@@ -113,3 +119,6 @@ jobs:
 
       - name: 🧱 Build iOS xcframework (Debug)
         run: make build-ios-debug
+
+      - name: 🧱 Build iOS xcframework (Release)
+        run: make build-ios-release
