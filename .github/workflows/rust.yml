@@ -88,10 +88,12 @@ jobs:
       - name: 🛠 Fix NDK env for cargo-ndk
         run: echo "ANDROID_NDK_HOME=$ANDROID_NDK_ROOT" >> $GITHUB_ENV
 
+      - name: 🧰 Install OpenSSL 3
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev
+
       - name: 📱 Build for Android
         env:
-          OPENSSL_STATIC: "1"
-          OPENSSL_NO_VENDOR: "0"
+          PKG_CONFIG_PATH: "/usr/lib/x86_64-linux-gnu/pkgconfig"
         run: make build-android-debug
 
   ios:
