@@ -89,6 +89,9 @@ jobs:
         run: echo "ANDROID_NDK_HOME=$ANDROID_NDK_ROOT" >> $GITHUB_ENV
 
       - name: 📱 Build for Android
+        env:
+          OPENSSL_STATIC: "1"
+          OPENSSL_NO_VENDOR: "0"
         run: make build-android-debug
 
   ios:
