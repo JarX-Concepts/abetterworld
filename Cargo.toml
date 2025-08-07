@@ -4,7 +4,8 @@ members = [
     "abetterworld",
     "apps/web",
     "apps/desktop",
-    "apps/ios"
+    "apps/ios",
+    "apps/android"
 ]
 
 

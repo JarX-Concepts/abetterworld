@@ -1,0 +1,15 @@
+[package]
+name = "abetterworld_android"
+version = "0.1.0"
+edition = "2021"
+description = "A Better World renderer for Android"
+
+[lib]
+name = "abetterworld_android"
+crate-type = [ "cdylib"]
+
+[dependencies]
+wgpu = { workspace = true }
+winit = { workspace = true }
+abetterworld = { path = "../../abetterworld" }
+log = "0.4"

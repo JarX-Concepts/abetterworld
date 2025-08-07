@@ -1,5 +1,6 @@
 use std::env;
 use std::path::PathBuf;
+use std::process::Command;
 
 fn main() {
     println!("cargo::rustc-check-cfg=cfg(wasm)");
@@ -11,7 +12,12 @@ fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
 
     let is_wasm = target == "wasm32-unknown-unknown";
-    let is_ios = target.contains("apple-ios");
+    let is_ios = target.contains("apple");
+    let is_android = target.contains("android");
+
+    println!("is wasm: {}", is_wasm);
+    println!("is ios: {}", is_ios);
+    println!("is android: {}", is_android);
 
     if is_wasm {
         println!("cargo:warning=Skipping Draco for wasm");
@@ -20,7 +26,7 @@ fn main() {
 
     let draco_src = "./draco";
 
-    // ========== Step 1: Build Draco ========== //
+    // ========== Step 1: Build Draco via CMake ========== //
     let mut cmake_cfg = cmake::Config::new(draco_src);
 
     cmake_cfg
@@ -35,9 +41,10 @@ fn main() {
         .out_dir(&out_dir);
 
     if is_ios {
-        // Use custom toolchain file and arch
         cmake_cfg
+            .define("CMAKE_SYSTEM_NAME", "iOS")
             .define("CMAKE_OSX_SYSROOT", get_apple_sdk_path(&target))
+            .define("CMAKE_OSX_DEPLOYMENT_TARGET", "12.0")
             .define(
                 "CMAKE_OSX_ARCHITECTURES",
                 if target.starts_with("aarch64") {
@@ -46,8 +53,6 @@ fn main() {
                     "x86_64"
                 },
             )
-            .define("CMAKE_SYSTEM_NAME", "iOS")
-            .define("CMAKE_OSX_DEPLOYMENT_TARGET", "12.0")
             .define(
                 "CMAKE_SYSTEM_PROCESSOR",
                 if target.starts_with("aarch64") {
@@ -56,7 +61,39 @@ fn main() {
                     "x86_64"
                 },
             )
-            .generator("Unix Makefiles"); // Ensure portable makefiles for iOS
+            .generator("Unix Makefiles");
+    } else if is_android {
+        // Only apply this logic if building for Android
+        let ndk_home = env::var("ANDROID_NDK_HOME")
+            .expect("Set ANDROID_NDK_HOME to build for Android targets");
+
+        let toolchain_file = format!("{}/build/cmake/android.toolchain.cmake", ndk_home);
+
+        cmake_cfg
+            .define("CMAKE_SYSTEM_NAME", "Android")
+            .define("CMAKE_SYSTEM_VERSION", "21")
+            .define("CMAKE_ANDROID_NDK", &ndk_home)
+            .define("CMAKE_TOOLCHAIN_FILE", &toolchain_file)
+            .define(
+                "CMAKE_ANDROID_ARCH_ABI",
+                match target.as_str() {
+                    t if t.starts_with("aarch64") => "arm64-v8a",
+                    t if t.starts_with("armv7") => "armeabi-v7a",
+                    t if t.starts_with("x86_64") => "x86_64",
+                    _ => panic!("Unsupported Android target: {}", target),
+                },
+            )
+            .define(
+                "ANDROID_ABI",
+                match target.as_str() {
+                    t if t.starts_with("aarch64") => "arm64-v8a",
+                    t if t.starts_with("armv7") => "armeabi-v7a",
+                    t if t.starts_with("x86_64") => "x86_64",
+                    _ => panic!("Unsupported Android target: {}", target),
+                },
+            )
+            .define("ANDROID_PLATFORM", "android-21")
+            .generator("Unix Makefiles");
     }
 
     let dst = cmake_cfg.build();
@@ -81,6 +118,11 @@ fn main() {
             } else {
                 "x86_64"
             });
+    } else if is_android {
+        cc_build
+            .flag("-DANDROID")
+            .flag("-fPIC")
+            .flag("--target=aarch64-linux-android"); // optional, refine per ABI if needed
     }
 
     cc_build.compile("draco_wrapper");
@@ -114,10 +156,8 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
 }
 
-// Helper to get Apple SDK path
+// Only used for iOS
 fn get_apple_sdk_path(target: &str) -> String {
-    use std::process::Command;
-
     let sdk = if target.contains("sim") || target.contains("x86_64") {
         "iphonesimulator"
     } else {

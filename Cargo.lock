@@ -68,6 +68,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "abetterworld_android"
+version = "0.1.0"
+dependencies = [
+ "abetterworld",
+ "log",
+ "wgpu",
+ "winit",
+]
+
+[[package]]
 name = "abetterworld_ios"
 version = "0.1.0"
 dependencies = [

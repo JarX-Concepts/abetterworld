@@ -10,7 +10,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  native:
+  desktop:
     name: 🖥️ Native Build & Test
     runs-on: ubuntu-latest
     steps:
@@ -59,3 +59,53 @@ jobs:
 
       - name: 🌐 Run Web Tests (Firefox Headless)
         run: make test-web
+
+  android:
+    name: 🤖 Android Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📦 Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🦀 Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: 📦 Install cargo-ndk
+        run: cargo install cargo-ndk
+
+      - name: 📦 Add Android targets
+        run: |
+          rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+
+      - name: 📦 Set up Android NDK
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r26d
+
+      - name: 📱 Build for Android
+        run: make build-android-debug
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
+
+  ios:
+    name: 🍎 iOS Build
+    runs-on: self-hosted
+    steps:
+      - name: 📦 Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🦀 Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: 📦 Add iOS targets
+        run: |
+          rustup target add aarch64-apple-ios x86_64-apple-ios aarch64-apple-ios-sim
+
+      - name: 🧱 Build iOS xcframework (Debug)
+        run: make build-ios-debug

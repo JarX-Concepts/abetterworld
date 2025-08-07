@@ -13,7 +13,7 @@ test-web:
 
 .PHONY: build-ios-debug build-ios-release
 
-CRATE = abetterworld_ios
+CRATE_IOS = abetterworld_ios
 
 build-ios-debug:
 	$(MAKE) build-ios-xcframework BUILD_TYPE=debug
@@ -32,9 +32,11 @@ endif
 build-ios-xcframework:
 	@echo "🔨 Building $(BUILD_TYPE) for iOS + Simulator (unified xcframework)..."
 
-	cargo build --package $(CRATE) --target aarch64-apple-ios $(CARGO_FLAGS)
-	cargo build --package $(CRATE) --target x86_64-apple-ios $(CARGO_FLAGS)
-	cargo build --package $(CRATE) --target aarch64-apple-ios-sim $(CARGO_FLAGS)
+	cargo build --package $(CRATE_IOS) --target aarch64-apple-ios $(CARGO_FLAGS)
+	cargo build --package $(CRATE_IOS) --target x86_64-apple-ios $(CARGO_FLAGS)
+	cargo build --package $(CRATE_IOS) --target aarch64-apple-ios-sim $(CARGO_FLAGS)
+
+	mkdir -p target/universal/$(BUILD_TYPE)
 
 	lipo -create \
 		target/aarch64-apple-ios-sim/$(BUILD_TYPE)/libabetterworld_ios.a \
@@ -51,4 +53,30 @@ build-ios-xcframework:
 		-headers apps/ios/src \
 		-output target/xcframework/$(BUILD_TYPE)/abetterworld_ios.xcframework
 
-	@echo "✅ XCFramework created: target/xcframework/$(BUILD_TYPE)/$(CRATE).xcframework"
+	@echo "✅ XCFramework created: target/xcframework/$(BUILD_TYPE)/$(CRATE_IOS).xcframework"
+
+
+.PHONY: build-android-debug build-android-release
+
+ANDROID_TARGETS = \
+	aarch64-linux-android \
+	armv7-linux-androideabi \
+	x86_64-linux-android
+
+CRATE_ANDROID = abetterworld_android
+
+build-android-debug:
+	$(MAKE) build-android BUILD_TYPE=debug
+
+build-android-release:
+	$(MAKE) build-android BUILD_TYPE=release
+
+build-android:
+	@echo "📱 Building $(BUILD_TYPE) for Android targets..."
+
+	@for TARGET in $(ANDROID_TARGETS); do \
+		echo "🔨 Building for $$TARGET..."; \
+		cargo ndk -t $$TARGET -o target/android/$(BUILD_TYPE)/ $$CARGO_FLAGS build --package $(CRATE_ANDROID); \
+	done
+
+	@echo "✅ Android builds complete."	
