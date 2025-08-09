@@ -73,6 +73,7 @@ name = "abetterworld_android"
 version = "0.1.0"
 dependencies = [
  "abetterworld",
+ "jni",
  "log",
  "wgpu",
  "winit",

@@ -13,3 +13,4 @@ wgpu = { workspace = true }
 winit = { workspace = true }
 abetterworld = { path = "../../abetterworld" }
 log = "0.4"
+jni = "0.21"
