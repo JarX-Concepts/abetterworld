@@ -111,10 +111,32 @@ NDK_PREBUILT := $(or \
   $(wildcard $(NDK)/toolchains/llvm/prebuilt/darwin), \
   $(firstword $(wildcard $(NDK)/toolchains/llvm/prebuilt/*)) \
 )
-ifeq ($(NDK_PREBUILT),)
-  $(error ❌ Could not find NDK prebuilt under $(NDK)/toolchains/llvm/prebuilt/)
+
+# --- Detect if we're building any Android target on this invocation ---
+ANDROID_GOALS := build-android build-android-debug build-android-release build-android-cbindgen copy-android-libs
+NEEDS_ANDROID := $(filter $(ANDROID_GOALS),$(MAKECMDGOALS))
+
+# --- Only do NDK detection when an Android goal is present ---
+ifeq ($(NEEDS_ANDROID),)
+  # Not an Android build; skip NDK checks/vars entirely
+else
+  # NDK autodetect (runs only for Android goals)
+  NDK := $(or $(ANDROID_NDK_HOME),$(ANDROID_NDK_ROOT),$(ANDROID_NDK))
+  NDK_PREBUILT := $(or \
+    $(wildcard $(NDK)/toolchains/llvm/prebuilt/darwin-arm64), \
+    $(wildcard $(NDK)/toolchains/llvm/prebuilt/darwin-x86_64), \
+    $(wildcard $(NDK)/toolchains/llvm/prebuilt/darwin), \
+    $(firstword $(wildcard $(NDK)/toolchains/llvm/prebuilt/*)) \
+  )
+  ifeq ($(NDK_PREBUILT),)
+    $(error ❌ Could not find NDK prebuilt under $(NDK)/toolchains/llvm/prebuilt/ (set ANDROID_NDK_HOME))
+  endif
+
+  # Optional: strip in release only
+  ifeq ($(BUILD_TYPE),release)
+    STRIP := $(NDK_PREBUILT)/bin/llvm-strip
+  endif
 endif
-@echo "✅ NDK prebuilt found: $(NDK_PREBUILT)"
 
 # Optional: strip release libs (only if tool exists)
 STRIP ?=

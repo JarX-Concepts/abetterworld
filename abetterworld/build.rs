@@ -4,7 +4,9 @@ use std::process::Command;
 
 fn main() {
     println!("cargo::rustc-check-cfg=cfg(wasm)");
-    cfg_aliases::cfg_aliases! { wasm: { all(target_arch = "wasm32", target_os = "unknown") }, }
+    cfg_aliases::cfg_aliases! {
+        wasm: { all(target_arch = "wasm32", target_os = "unknown") },
+    }
 
     let target = env::var("TARGET").unwrap();
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
@@ -14,25 +16,9 @@ fn main() {
     let is_macos = target.contains("apple-darwin");
     let is_android = target.contains("android");
 
-    let is_sim = target.contains("ios-sim") || target.starts_with("x86_64-apple-ios");
-    // e.g. aarch64-apple-ios-sim OR x86_64-apple-ios  => simulator
-    let (sdk_name, arch) = if is_sim {
-        (
-            "iphonesimulator",
-            if target.starts_with("aarch64") {
-                "arm64"
-            } else {
-                "x86_64"
-            },
-        )
-    } else {
-        ("iphoneos", "arm64")
-    };
-    let sdk_path = apple_sdk_path(sdk_name);
-
-    println!("is wasm: {}", is_wasm);
-    println!("is ios: {}", is_ios);
-    println!("is android: {}", is_android);
+    println!("is wasm: {is_wasm}");
+    println!("is ios: {is_ios}");
+    println!("is android: {is_android}");
 
     if is_wasm {
         println!("cargo:warning=Skipping Draco for wasm");
@@ -55,8 +41,24 @@ fn main() {
         .out_dir(&out_dir);
 
     if is_ios {
+        // Determine sim vs device ONLY for iOS
+        let is_sim = target.contains("ios-sim") || target.starts_with("x86_64-apple-ios");
+        let (sdk_name, arch) = if is_sim {
+            (
+                "iphonesimulator",
+                if target.starts_with("aarch64") {
+                    "arm64"
+                } else {
+                    "x86_64"
+                },
+            )
+        } else {
+            ("iphoneos", "arm64")
+        };
+        let sdk_path = apple_sdk_path(sdk_name);
+
         cmake_cfg
-            .always_configure(true) // important: blow away cached wrong SDK
+            .always_configure(true)
             .define("CMAKE_SYSTEM_NAME", "iOS")
             .define("CMAKE_OSX_SYSROOT", &sdk_path)
             .define("CMAKE_OSX_DEPLOYMENT_TARGET", "12.0")
@@ -106,6 +108,22 @@ fn main() {
         .flag_if_supported("-std=c++17");
 
     if is_ios {
+        // recompute minimal bits for cc flags
+        let is_sim = target.contains("ios-sim") || target.starts_with("x86_64-apple-ios");
+        let (sdk_name, arch) = if is_sim {
+            (
+                "iphonesimulator",
+                if target.starts_with("aarch64") {
+                    "arm64"
+                } else {
+                    "x86_64"
+                },
+            )
+        } else {
+            ("iphoneos", "arm64")
+        };
+        let sdk_path = apple_sdk_path(sdk_name);
+
         cc_build
             .flag("-isysroot")
             .flag(&sdk_path)
@@ -120,7 +138,6 @@ fn main() {
             .flag("arm64")
             .flag("-mmacosx-version-min=15.0");
     } else if is_android {
-        // Match --target to the Rust target triple
         let cc_target = if target.starts_with("aarch64") {
             "aarch64-linux-android"
         } else if target.starts_with("armv7") {
@@ -147,7 +164,6 @@ fn main() {
         println!("cargo:rustc-link-lib=static=draco");
         println!("cargo:rustc-link-lib=c++");
     } else if is_macos {
-        // Force-load to pull in all objects from static lib on macOS
         println!("cargo:rustc-link-arg=-Wl,-force_load,{}/libdraco.a", libdir);
         println!("cargo:rustc-link-lib=static=draco_wrapper");
         println!("cargo:rustc-link-lib=static=draco");
