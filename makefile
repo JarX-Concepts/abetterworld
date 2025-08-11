@@ -158,7 +158,8 @@ build-android:
 	@echo "📱 Building $(BUILD_TYPE) for Android targets..."
 	@for TARGET in $(ANDROID_TARGETS); do \
 		echo "🔨 cargo ndk for $$TARGET..."; \
-		$(ANDROID_ENV) cargo ndk -t $$TARGET -o target/android/$(BUILD_TYPE)/ $(CARGO_FLAGS) build --package $(CRATE_ANDROID); \
+		$(ANDROID_ENV) cargo ndk -t $$TARGET -o target/android/$(BUILD_TYPE)/ \
+			build $(CARGO_BUILD_FLAGS) --package $(CRATE_ANDROID); \
 	done
 	$(MAKE) copy-android-libs BUILD_TYPE=$(BUILD_TYPE)
 
