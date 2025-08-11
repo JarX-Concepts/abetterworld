@@ -5,6 +5,7 @@ use abetterworld::ABetterWorld;
 use jni::objects::{JClass, JObject};
 use jni::sys::{jint, jlong, jobject};
 use jni::JNIEnv;
+use wgpu::Error;
 
 use ndk::native_window::NativeWindow;
 use wgpu::{self, util::DeviceExt};
@@ -66,7 +67,12 @@ pub extern "C" fn Java_com_jarxconcepts_abetterworld_Renderer_nativeCreateState(
     _env: JNIEnv,
     _class: JClass,
 ) -> jlong {
+    std::env::set_var(
+        "RUST_LOG",
+        "wgpu_core=trace,wgpu_hal=trace,wgpu=trace,naga=info",
+    );
     let _ = init_logger().expect("Logger initialization failed");
+
     log::info!("Creating native state for Android A Better World");
 
     let state = Box::new(State { gfx: None });
@@ -109,7 +115,7 @@ pub extern "C" fn Java_com_jarxconcepts_abetterworld_Renderer_nativeInitRenderer
     //let instance = wgpu::Instance::default();
 
     let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::GL,        // <- force GLES on Android/emulator
+        backends: wgpu::Backends::VULKAN, // <- force GLES on Android/emulator
         flags: wgpu::InstanceFlags::empty(), // <- don't ask for validation layers
         ..Default::default()
     });
@@ -135,13 +141,25 @@ pub extern "C" fn Java_com_jarxconcepts_abetterworld_Renderer_nativeInitRenderer
 
     // 5) Device/Queue
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        label: Some("Device"),
+        label: Some("Android Device"),
         required_features: wgpu::Features::empty(),
-        required_limits: wgpu::Limits::downlevel_webgl2_defaults(), // <- safer for GLES
+        required_limits: wgpu::Limits::downlevel_webgl2_defaults(),
         memory_hints: wgpu::MemoryHints::Performance,
-        trace: wgpu::Trace::Off,
+        trace: wgpu::Trace::Off, // consider enabling later
     }))
-    .expect("request_device failed");
+    .unwrap();
+
+    device.on_uncaptured_error(Box::new(move |e: Error| match e {
+        Error::Validation { description, .. } => {
+            log::error!("WGPU validation error: {description}");
+        }
+        Error::OutOfMemory { source } => {
+            log::error!("WGPU OOM: {source:?}");
+        }
+        other => {
+            log::error!("WGPU uncaptured error: {other:?}");
+        }
+    }));
 
     // 6) Surface config (choose supported format/modes)
     let caps = surface.get_capabilities(&adapter);
@@ -166,7 +184,7 @@ pub extern "C" fn Java_com_jarxconcepts_abetterworld_Renderer_nativeInitRenderer
         .unwrap_or(caps.formats[0]);
 
     let present_mode = wgpu::PresentMode::Fifo;
-    let alpha_mode = wgpu::CompositeAlphaMode::Opaque;
+    let alpha_mode = wgpu::CompositeAlphaMode::Inherit;
 
     // After you have `adapter`
     let limits = adapter.limits(); // SupportedLimits
@@ -292,13 +310,23 @@ pub extern "C" fn Java_com_jarxconcepts_abetterworld_Renderer_nativeRender(
                     store: wgpu::StoreOp::Store,
                 },
             })],
-            depth_stencil_attachment: None,
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: g.abw.get_depth_view(),
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0), // far plane
+                    store: wgpu::StoreOp::Discard,
+                }),
+                stencil_ops: None,
+            }),
+
             occlusion_query_set: None,
             timestamp_writes: None,
         });
 
         g.abw.render(&mut rp, &g.queue, &g.device);
     }
+
     g.queue.submit([encoder.finish()]);
+
     frame.present();
 }
