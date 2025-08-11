@@ -13,3 +13,7 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# Ignore all jniLibs in Android modules
+**/jniLibs/**
+*.so
