@@ -68,38 +68,115 @@ build-ios-xcframework:
 
 	@echo "✅ XCFramework created: target/xcframework/$(BUILD_DIR)/$(CRATE_IOS).xcframework"
 
-.PHONY: build-android-debug build-android-release
+.PHONY: build-android-debug build-android-release build-android build-android-cbindgen \
+        copy-android-libs clean-android-jniLibs
 
+# ---- Config ----
 ANDROID_TARGETS = \
 	aarch64-linux-android \
 	armv7-linux-androideabi \
 	x86_64-linux-android
 
-CRATE_ANDROID = abetterworld_android
+CRATE_ANDROID := abetterworld_android
+BUILD_TYPE    ?= debug
 
+# Your Android project/module path (matches screenshot)
+ANDROID_PROJECT := apps/android/android
+ANDROID_APP     := $(ANDROID_PROJECT)/app
+APP_JNILIBS     := $(ANDROID_APP)/src/main/jniLibs
+
+ANDROID_ENV := env -u SDKROOT -u MACOSX_DEPLOYMENT_TARGET -u CPATH -u C_INCLUDE_PATH -u CPLUS_INCLUDE_PATH -u CFLAGS -u CPPFLAGS
+
+# Map rust triple -> Android ABI dir
+define MAP_TRIPLE_TO_ABI
+case "$1" in \
+  aarch64-linux-android)   echo "arm64-v8a" ;; \
+  armv7-linux-androideabi) echo "armeabi-v7a" ;; \
+  x86_64-linux-android)    echo "x86_64" ;; \
+  *) echo "unknown"; exit 1 ;; \
+esac
+endef
+
+# Optional: strip release libs a bit (uses NDK llvm-strip if available)
+STRIP ?=
+ifeq ($(BUILD_TYPE),release)
+  STRIP := $${ANDROID_NDK_HOME:+$${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/darwin-arm64/bin/llvm-strip}
+endif
+
+# --- NDK autodetect (works with darwin-x86_64, darwin-arm64, darwin, etc.) ---
+NDK := $(or $(ANDROID_NDK_HOME),$(ANDROID_NDK_ROOT),$(ANDROID_NDK))
+NDK_PREBUILT := $(or \
+  $(wildcard $(NDK)/toolchains/llvm/prebuilt/darwin-arm64), \
+  $(wildcard $(NDK)/toolchains/llvm/prebuilt/darwin-x86_64), \
+  $(wildcard $(NDK)/toolchains/llvm/prebuilt/darwin), \
+  $(firstword $(wildcard $(NDK)/toolchains/llvm/prebuilt/*)) \
+)
+ifeq ($(NDK_PREBUILT),)
+  $(error ❌ Could not find NDK prebuilt under $(NDK)/toolchains/llvm/prebuilt/)
+endif
+@echo "✅ NDK prebuilt found: $(NDK_PREBUILT)"
+
+# Optional: strip release libs (only if tool exists)
+STRIP ?=
+ifeq ($(BUILD_TYPE),release)
+  STRIP := $(NDK_PREBUILT)/bin/llvm-strip
+endif
+
+# ---- Public targets ----
 build-android-debug:
 	$(MAKE) build-android BUILD_TYPE=debug
-	$(MAKE) build-android-cbindgen B
+	$(MAKE) build-android-cbindgen
 
 build-android-release:
 	$(MAKE) build-android BUILD_TYPE=release
+	$(MAKE) build-android-cbindgen
 
+# ---- Rust build + copy ----
+build-android:
+	@echo "📱 Building $(BUILD_TYPE) for Android targets..."
+	@for TARGET in $(ANDROID_TARGETS); do \
+		echo "🔨 cargo ndk for $$TARGET..."; \
+		$(ANDROID_ENV) cargo ndk -t $$TARGET -o target/android/$(BUILD_TYPE)/ $(CARGO_FLAGS) build --package $(CRATE_ANDROID); \
+	done
+	$(MAKE) copy-android-libs BUILD_TYPE=$(BUILD_TYPE)
+
+# ---- Header (optional) ----
 build-android-cbindgen:
 	@echo "🔨 Building android header with cbindgen..."
 	@command -v cbindgen >/dev/null 2>&1 || cargo install --locked cbindgen
 	mkdir -p target/headers
-
-	# Generate a single header we’ll attach to all slices
 	cbindgen apps/android -o target/headers/abetterworld_android.h
 	@echo "✅ Header generated: target/headers/abetterworld_android.h"
 
-
-build-android:
-	@echo "📱 Building $(BUILD_TYPE) for Android targets..."
-
-	@for TARGET in $(ANDROID_TARGETS); do \
-		echo "🔨 Building for $$TARGET..."; \
-		cargo ndk -t $$TARGET -o target/android/$(BUILD_TYPE)/ $$CARGO_FLAGS build --package $(CRATE_ANDROID); \
+# ---- Housekeeping ----
+# --- copy libs: Rust .so + libc++_shared.so ---
+copy-android-libs: clean-android-jniLibs
+	@echo "📦 Copying .so files into $(APP_JNILIBS) (including libc++_shared.so)..."
+	@for target in $(ANDROID_TARGETS); do \
+		case $$target in \
+			aarch64-linux-android)   abi="arm64-v8a";   ndk_triple="aarch64-linux-android" ;; \
+			armv7-linux-androideabi) abi="armeabi-v7a"; ndk_triple="arm-linux-androideabi" ;; \
+			x86_64-linux-android)    abi="x86_64";      ndk_triple="x86_64-linux-android" ;; \
+			*) echo "Unknown target: $$target"; exit 1 ;; \
+		esac; \
+		dst="$(APP_JNILIBS)/$$abi"; \
+		src_rust="target/android/$(BUILD_TYPE)/$$abi/lib$(CRATE_ANDROID).so"; \
+		echo "  → $$abi"; \
+		mkdir -p "$$dst"; \
+		if [ -f "$$src_rust" ]; then \
+			cp -f "$$src_rust" "$$dst/"; \
+			if [ -n "$(STRIP)" ] && [ -x "$(STRIP)" ]; then $(STRIP) -S "$$dst/lib$(CRATE_ANDROID).so" || true; fi; \
+		else \
+			echo "    ⚠️  missing $$src_rust"; \
+		fi; \
+		src_libcxx="$(NDK_PREBUILT)/sysroot/usr/lib/$$ndk_triple/libc++_shared.so"; \
+		if [ ! -f "$$src_libcxx" ]; then \
+			src_libcxx=$$(find "$(NDK_PREBUILT)/sysroot/usr/lib/$$ndk_triple" -name libc++_shared.so 2>/dev/null | head -n1); \
+		fi; \
+		if [ -n "$$src_libcxx" ] && [ -f "$$src_libcxx" ]; then \
+			cp -f "$$src_libcxx" "$$dst/"; \
+		else \
+			echo "    ⚠️  libc++_shared.so not found for $$ndk_triple under $(NDK_PREBUILT)"; \
+		fi; \
 	done
-
-	@echo "✅ Android builds complete."	
+	@echo "✅ jniLibs refreshed for $(BUILD_TYPE)"

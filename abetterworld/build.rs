@@ -4,16 +4,31 @@ use std::process::Command;
 
 fn main() {
     println!("cargo::rustc-check-cfg=cfg(wasm)");
-    cfg_aliases::cfg_aliases! {
-        wasm: { all(target_arch = "wasm32", target_os = "unknown") },
-    }
+    cfg_aliases::cfg_aliases! { wasm: { all(target_arch = "wasm32", target_os = "unknown") }, }
 
     let target = env::var("TARGET").unwrap();
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
 
     let is_wasm = target == "wasm32-unknown-unknown";
-    let is_ios = target.contains("apple");
+    let is_ios = target.contains("apple-ios");
+    let is_macos = target.contains("apple-darwin");
     let is_android = target.contains("android");
+
+    let is_sim = target.contains("ios-sim") || target.starts_with("x86_64-apple-ios");
+    // e.g. aarch64-apple-ios-sim OR x86_64-apple-ios  => simulator
+    let (sdk_name, arch) = if is_sim {
+        (
+            "iphonesimulator",
+            if target.starts_with("aarch64") {
+                "arm64"
+            } else {
+                "x86_64"
+            },
+        )
+    } else {
+        ("iphoneos", "arm64")
+    };
+    let sdk_path = apple_sdk_path(sdk_name);
 
     println!("is wasm: {}", is_wasm);
     println!("is ios: {}", is_ios);
@@ -26,9 +41,8 @@ fn main() {
 
     let draco_src = "./draco";
 
-    // ========== Step 1: Build Draco via CMake ========== //
+    // ===== CMake (Draco) =====
     let mut cmake_cfg = cmake::Config::new(draco_src);
-
     cmake_cfg
         .define("CMAKE_POSITION_INDEPENDENT_CODE", "ON")
         .define("BUILD_SHARED_LIBS", "OFF")
@@ -42,64 +56,47 @@ fn main() {
 
     if is_ios {
         cmake_cfg
+            .always_configure(true) // important: blow away cached wrong SDK
             .define("CMAKE_SYSTEM_NAME", "iOS")
-            .define("CMAKE_OSX_SYSROOT", get_apple_sdk_path(&target))
+            .define("CMAKE_OSX_SYSROOT", &sdk_path)
             .define("CMAKE_OSX_DEPLOYMENT_TARGET", "12.0")
-            .define(
-                "CMAKE_OSX_ARCHITECTURES",
-                if target.starts_with("aarch64") {
-                    "arm64"
-                } else {
-                    "x86_64"
-                },
-            )
-            .define(
-                "CMAKE_SYSTEM_PROCESSOR",
-                if target.starts_with("aarch64") {
-                    "arm64"
-                } else {
-                    "x86_64"
-                },
-            )
+            .define("CMAKE_OSX_ARCHITECTURES", arch)
+            .define("CMAKE_SYSTEM_PROCESSOR", arch)
+            .generator("Unix Makefiles");
+    } else if is_macos {
+        let sdk = apple_sdk_path("macosx");
+        cmake_cfg
+            .define("CMAKE_SYSTEM_NAME", "Darwin")
+            .define("CMAKE_OSX_SYSROOT", &sdk)
+            .define("CMAKE_OSX_DEPLOYMENT_TARGET", "15.0")
+            .define("CMAKE_OSX_ARCHITECTURES", "arm64")
             .generator("Unix Makefiles");
     } else if is_android {
-        // Only apply this logic if building for Android
         let ndk_home = env::var("ANDROID_NDK_HOME")
             .expect("Set ANDROID_NDK_HOME to build for Android targets");
-
         let toolchain_file = format!("{}/build/cmake/android.toolchain.cmake", ndk_home);
+
+        let (abi, platform) = match target.as_str() {
+            t if t.starts_with("aarch64") => ("arm64-v8a", "android-24"),
+            t if t.starts_with("armv7") => ("armeabi-v7a", "android-24"),
+            t if t.starts_with("x86_64") => ("x86_64", "android-24"),
+            _ => panic!("Unsupported Android target: {target}"),
+        };
 
         cmake_cfg
             .define("CMAKE_SYSTEM_NAME", "Android")
-            .define("CMAKE_SYSTEM_VERSION", "21")
-            .define("CMAKE_ANDROID_NDK", &ndk_home)
             .define("CMAKE_TOOLCHAIN_FILE", &toolchain_file)
-            .define(
-                "CMAKE_ANDROID_ARCH_ABI",
-                match target.as_str() {
-                    t if t.starts_with("aarch64") => "arm64-v8a",
-                    t if t.starts_with("armv7") => "armeabi-v7a",
-                    t if t.starts_with("x86_64") => "x86_64",
-                    _ => panic!("Unsupported Android target: {}", target),
-                },
-            )
-            .define(
-                "ANDROID_ABI",
-                match target.as_str() {
-                    t if t.starts_with("aarch64") => "arm64-v8a",
-                    t if t.starts_with("armv7") => "armeabi-v7a",
-                    t if t.starts_with("x86_64") => "x86_64",
-                    _ => panic!("Unsupported Android target: {}", target),
-                },
-            )
-            .define("ANDROID_PLATFORM", "android-21")
+            .define("CMAKE_ANDROID_NDK", &ndk_home)
+            .define("ANDROID_ABI", abi)
+            .define("CMAKE_ANDROID_ARCH_ABI", abi)
+            .define("ANDROID_PLATFORM", platform)
             .generator("Unix Makefiles");
     }
 
     let dst = cmake_cfg.build();
     let libdir = format!("{}/lib", dst.display());
 
-    // ========== Step 2: Build C++ wrapper ========== //
+    // ===== C++ wrapper (cc) =====
     let mut cc_build = cc::Build::new();
     cc_build
         .cpp(true)
@@ -111,31 +108,46 @@ fn main() {
     if is_ios {
         cc_build
             .flag("-isysroot")
-            .flag(&get_apple_sdk_path(&target))
+            .flag(&sdk_path)
             .flag("-arch")
-            .flag(if target.starts_with("aarch64") {
-                "arm64"
-            } else {
-                "x86_64"
-            });
+            .flag(arch);
+    } else if is_macos {
+        let sdk = apple_sdk_path("macosx");
+        cc_build
+            .flag("-isysroot")
+            .flag(&sdk)
+            .flag("-arch")
+            .flag("arm64")
+            .flag("-mmacosx-version-min=15.0");
     } else if is_android {
+        // Match --target to the Rust target triple
+        let cc_target = if target.starts_with("aarch64") {
+            "aarch64-linux-android"
+        } else if target.starts_with("armv7") {
+            "armv7-linux-androideabi"
+        } else if target.starts_with("x86_64") {
+            "x86_64-linux-android"
+        } else {
+            panic!("Unsupported Android target: {target}");
+        };
         cc_build
             .flag("-DANDROID")
             .flag("-fPIC")
-            .flag("--target=aarch64-linux-android"); // optional, refine per ABI if needed
+            .flag(&format!("--target={cc_target}"));
     }
 
     cc_build.compile("draco_wrapper");
 
-    // ========== Step 3: Link ========== //
+    // ===== Link =====
     println!("cargo:rustc-link-search=native={}", libdir);
     println!("cargo:rustc-link-search=native={}", out_dir.display());
 
     if is_ios {
         println!("cargo:rustc-link-lib=static=draco_wrapper");
         println!("cargo:rustc-link-lib=static=draco");
-        println!("cargo:rustc-link-lib=c++"); // libc++ on iOS
-    } else if target.contains("apple-darwin") {
+        println!("cargo:rustc-link-lib=c++");
+    } else if is_macos {
+        // Force-load to pull in all objects from static lib on macOS
         println!("cargo:rustc-link-arg=-Wl,-force_load,{}/libdraco.a", libdir);
         println!("cargo:rustc-link-lib=static=draco_wrapper");
         println!("cargo:rustc-link-lib=static=draco");
@@ -145,6 +157,7 @@ fn main() {
         println!("cargo:rustc-link-lib=static=draco");
         println!("cargo:rustc-link-lib=dylib=stdc++");
     } else {
+        // Linux/Android
         println!("cargo:rustc-link-arg=-Wl,--start-group");
         println!("cargo:rustc-link-lib=static=draco_wrapper");
         println!("cargo:rustc-link-lib=static=draco");
@@ -156,21 +169,10 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
 }
 
-// Only used for iOS
-fn get_apple_sdk_path(target: &str) -> String {
-    let sdk = if target.contains("sim") || target.contains("x86_64") {
-        "iphonesimulator"
-    } else {
-        "iphoneos"
-    };
-
-    let output = Command::new("xcrun")
+fn apple_sdk_path(sdk: &str) -> String {
+    let out = Command::new("xcrun")
         .args(["--sdk", sdk, "--show-sdk-path"])
         .output()
-        .expect("Failed to get SDK path via xcrun");
-
-    String::from_utf8(output.stdout)
-        .expect("Invalid UTF-8 from xcrun")
-        .trim()
-        .to_string()
+        .expect("xcrun failed");
+    String::from_utf8(out.stdout).unwrap().trim().to_string()
 }

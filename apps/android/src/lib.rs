@@ -1,80 +1,304 @@
-use std::ffi::CString;
-use std::os::raw::c_char;
+// src/lib.rs
+#![allow(non_snake_case)]
 
 use abetterworld::ABetterWorld;
-use jni::objects::{JClass, JObject, JString};
-use jni::sys::{jlong, jstring};
+use jni::objects::{JClass, JObject};
+use jni::sys::{jint, jlong, jobject};
 use jni::JNIEnv;
-use wgpu::{Device, Queue};
 
-#[repr(C)]
-pub struct ABetterWorldAndroid {
-    _private: [u8; 0], // Hide internals from JNI
+use ndk::native_window::NativeWindow;
+use wgpu::{self, util::DeviceExt};
+
+use std::ffi::c_void;
+use std::ptr::NonNull;
+
+use crate::logging::init_logger;
+mod logging;
+
+use raw_window_handle::{
+    AndroidDisplayHandle, AndroidNdkWindowHandle, DisplayHandle, HandleError, HasDisplayHandle,
+    HasWindowHandle, RawDisplayHandle, RawWindowHandle, WindowHandle,
+};
+
+struct AndroidWindow {
+    native_window: NativeWindow, // keep alive as long as the surface lives
+}
+
+impl HasWindowHandle for AndroidWindow {
+    fn window_handle(&self) -> Result<WindowHandle<'_>, HandleError> {
+        // SAFETY: ndk::NativeWindow guarantees a valid non-null ANativeWindow*
+        let nn = unsafe {
+            NonNull::new(self.native_window.ptr().as_ptr().cast::<c_void>())
+                .ok_or(HandleError::Unavailable)?
+        };
+        let wnd = AndroidNdkWindowHandle::new(nn);
+        // SAFETY: the returned handle borrows from &self; self outlives the borrow
+        Ok(unsafe { WindowHandle::borrow_raw(RawWindowHandle::AndroidNdk(wnd)) })
+    }
+}
+
+impl HasDisplayHandle for AndroidWindow {
+    fn display_handle(&self) -> Result<DisplayHandle<'_>, HandleError> {
+        let dh = AndroidDisplayHandle::new();
+        // SAFETY: borrows from &self (lifetime is tied to &self)
+        Ok(unsafe { DisplayHandle::borrow_raw(RawDisplayHandle::Android(dh)) })
+    }
+}
+
+struct GfxState {
+    _instance: wgpu::Instance,
+    surface: wgpu::Surface<'static>,
+    adapter: wgpu::Adapter,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    config: wgpu::SurfaceConfiguration,
+    // Keep window alive so surface handle stays valid
+    _window: Box<AndroidWindow>,
+    abw: ABetterWorld,
 }
 
 pub struct State {
-    pub renderer: Option<ABetterWorld>,
+    gfx: Option<GfxState>,
 }
 
 #[no_mangle]
 pub extern "C" fn Java_com_jarxconcepts_abetterworld_Renderer_nativeCreateState(
-    env: JNIEnv,
+    _env: JNIEnv,
     _class: JClass,
 ) -> jlong {
-    let state = Box::new(State {
-        renderer: None, // Will be initialized later
-    });
+    let _ = init_logger().expect("Logger initialization failed");
+    log::info!("Creating native state for Android A Better World");
+
+    let state = Box::new(State { gfx: None });
     Box::into_raw(state) as jlong
 }
 
 #[no_mangle]
 pub extern "C" fn Java_com_jarxconcepts_abetterworld_Renderer_nativeDestroyState(
-    env: JNIEnv,
+    _env: JNIEnv,
     _class: JClass,
     state_ptr: jlong,
 ) {
-    if state_ptr != 0 {
-        unsafe {
-            drop(Box::from_raw(state_ptr as *mut State));
-        }
+    if state_ptr == 0 {
+        return;
+    }
+    unsafe {
+        let _ = Box::from_raw(state_ptr as *mut State);
     }
 }
 
 #[no_mangle]
 pub extern "C" fn Java_com_jarxconcepts_abetterworld_Renderer_nativeInitRenderer(
-    env: JNIEnv,
+    mut env: JNIEnv,
     _class: JClass,
     state_ptr: jlong,
-    width: i32,
-    height: i32,
+    surface_obj: jobject, // android.view.Surface
+    width: jint,
+    height: jint,
 ) {
     let state = unsafe { &mut *(state_ptr as *mut State) };
 
-    // Mock example of device + queue creation
-    let instance = wgpu::Instance::default();
-    let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
-    let (device, queue) =
-        pollster::block_on(adapter.request_device(&Default::default(), None)).unwrap();
+    // In nativeInitRenderer: build the NativeWindow correctly
+    let native_window = unsafe {
+        // use raw JNI pointers as required by ndk
+        NativeWindow::from_surface(env.get_raw(), surface_obj)
+            .expect("ANativeWindow_fromSurface failed")
+    };
+    let window = Box::new(AndroidWindow { native_window });
 
-    let config = wgpu::SurfaceConfiguration {
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-        format: wgpu::TextureFormat::Rgba8Unorm,
-        width: width as u32,
-        height: height as u32,
-        present_mode: wgpu::PresentMode::Fifo,
+    //let instance = wgpu::Instance::default();
+
+    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+        backends: wgpu::Backends::GL,        // <- force GLES on Android/emulator
+        flags: wgpu::InstanceFlags::empty(), // <- don't ask for validation layers
         ..Default::default()
+    });
+
+    // Surface creation: unwrap the Result from from_window
+    let target = unsafe {
+        wgpu::SurfaceTargetUnsafe::from_window(&*window)
+            .expect("from_window handle creation failed")
+    };
+    let surface = unsafe {
+        instance
+            .create_surface_unsafe(target)
+            .expect("create_surface_unsafe failed")
     };
 
-    let renderer = ABetterWorld::new(&device, &config);
-    state.renderer = Some(renderer);
+    // 4) Pick adapter compatible with this surface
+    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::HighPerformance,
+        compatible_surface: Some(&surface),
+        force_fallback_adapter: false,
+    }))
+    .expect("No suitable adapter");
+
+    // 5) Device/Queue
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        label: Some("Device"),
+        required_features: wgpu::Features::empty(),
+        required_limits: wgpu::Limits::downlevel_webgl2_defaults(), // <- safer for GLES
+        memory_hints: wgpu::MemoryHints::Performance,
+        trace: wgpu::Trace::Off,
+    }))
+    .expect("request_device failed");
+
+    // 6) Surface config (choose supported format/modes)
+    let caps = surface.get_capabilities(&adapter);
+
+    log::info!(
+        "caps: formats={:?} present_modes={:?} alpha_modes={:?}",
+        caps.formats,
+        caps.present_modes,
+        caps.alpha_modes
+    );
+
+    let format = caps
+        .formats
+        .iter()
+        .copied()
+        .find(|f| {
+            matches!(
+                f,
+                wgpu::TextureFormat::Rgba8Unorm | wgpu::TextureFormat::Bgra8Unorm
+            )
+        })
+        .unwrap_or(caps.formats[0]);
+
+    let present_mode = wgpu::PresentMode::Fifo;
+    let alpha_mode = wgpu::CompositeAlphaMode::Opaque;
+
+    // After you have `adapter`
+    let limits = adapter.limits(); // SupportedLimits
+    let max_dim = 2048;
+
+    let mut w = (width as u32).max(1);
+    let mut h = (height as u32).max(1);
+
+    if w > max_dim || h > max_dim {
+        let scale = f32::min(max_dim as f32 / w as f32, max_dim as f32 / h as f32);
+        w = ((w as f32) * scale).floor() as u32;
+        h = ((h as f32) * scale).floor() as u32;
+        log::warn!(
+            "Clamping surface from {}x{} to {}x{} (max_dim={})",
+            width,
+            height,
+            w,
+            h,
+            max_dim
+        );
+    }
+
+    // Diagnose configure-time validation errors explicitly
+    device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let mut config = wgpu::SurfaceConfiguration {
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        format,
+        width: w,
+        height: h,
+        present_mode,
+        alpha_mode,
+        view_formats: vec![], // <-- IMPORTANT on GL
+        desired_maximum_frame_latency: 1,
+    };
+    surface.configure(&device, &config);
+    if let Some(err) = pollster::block_on(device.pop_error_scope()) {
+        log::error!("surface.configure validation error: {err}");
+    }
+
+    let abw = ABetterWorld::new(&device, &config);
+
+    state.gfx = Some(GfxState {
+        _instance: instance,
+        surface,
+        adapter,
+        device,
+        queue,
+        config,
+        _window: window, // keep alive
+        abw,
+    });
 }
 
 #[no_mangle]
-pub extern "C" fn Java_com_jarxconcepts_abetterworld_Renderer_nativeVersion(
-    env: JNIEnv,
+pub extern "C" fn Java_com_jarxconcepts_abetterworld_Renderer_nativeResize(
+    _env: JNIEnv,
     _class: JClass,
-) -> jstring {
-    let version_str = format!("Blue Sphere Android v{}", env!("CARGO_PKG_VERSION"));
-    let output = env.new_string(version_str).unwrap();
-    output.into_raw()
+    state_ptr: jlong,
+    width: jint,
+    height: jint,
+) {
+    let state = unsafe { &mut *(state_ptr as *mut State) };
+    let Some(g) = &mut state.gfx else {
+        return;
+    };
+
+    if width <= 0 || height <= 0 {
+        return;
+    }
+    g.config.width = width as u32;
+    g.config.height = height as u32;
+    g.surface.configure(&g.device, &g.config);
+}
+
+#[no_mangle]
+pub extern "C" fn Java_com_jarxconcepts_abetterworld_Renderer_nativeRender(
+    _env: JNIEnv,
+    _class: JClass,
+    state_ptr: jlong,
+) {
+    let state = unsafe { &mut *(state_ptr as *mut State) };
+
+    let Some(g) = &mut state.gfx else {
+        return;
+    };
+
+    g.abw.update(&g.device, &g.queue);
+
+    // Acquire a frame
+    let frame = match g.surface.get_current_texture() {
+        Ok(f) => f,
+        Err(e) => {
+            // Reconfigure on Outdated/Lost
+            log::warn!("get_current_texture failed: {e:?}; reconfiguring");
+            g.surface.configure(&g.device, &g.config);
+            match g.surface.get_current_texture() {
+                Ok(f) => f,
+                Err(_) => return,
+            }
+        }
+    };
+    let view = frame
+        .texture
+        .create_view(&wgpu::TextureViewDescriptor::default());
+
+    // Simple clear pass
+    let mut encoder = g
+        .device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+    {
+        let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("clear"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color {
+                        r: 0.1,
+                        g: 0.2,
+                        b: 0.3,
+                        a: 1.0,
+                    }),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        });
+
+        g.abw.render(&mut rp, &g.queue, &g.device);
+    }
+    g.queue.submit([encoder.finish()]);
+    frame.present();
 }

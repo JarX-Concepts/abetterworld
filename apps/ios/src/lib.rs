@@ -7,7 +7,6 @@ use objc::{self, msg_send, runtime::Object, sel, sel_impl};
 use wgpu::{self};
 
 use crate::logging::init_logger;
-
 mod logging;
 
 #[repr(C)]

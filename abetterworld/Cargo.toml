@@ -20,7 +20,7 @@ wasm = 'all(target_arch = "wasm32", target_os = "unknown")'
 bytemuck = { version = "1.10", features = ["derive"] }
 cgmath = "0.18"
 wgpu = {version = "25.0.2", features = ["webgpu"]}
-reqwest = { version = "0.12", features = ["json", "gzip", "blocking"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "gzip", "blocking", "http2", "rustls-tls-webpki-roots"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 url = "2"
@@ -80,6 +80,3 @@ rustflags = ["-C", "target-feature=+atomics"]
 
 [unstable]
 build-std = ["panic_abort", "std"]
-
-[target.'cfg(target_os = "android")'.dependencies]
-openssl = { version = "0.10", features = ["vendored"] }
