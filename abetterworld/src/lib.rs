@@ -1,6 +1,7 @@
 mod cache;
 mod content;
 mod decode;
+mod dynamics;
 mod helpers;
 mod render;
 
@@ -18,13 +19,14 @@ use std::{
 use crate::{
     cache::init_tileset_cache,
     content::{start_pager, DebugVertex, Ray, Tile, TileManager},
+    dynamics::{init_camera, Camera, Dynamics, InputState},
     helpers::{
         channel::{channel, Receiver, Sender},
         is_bounding_volume_visible, matrix, AbwError,
     },
     render::{
         build_debug_pipeline, build_depth_buffer, build_frustum_render, build_pipeline,
-        init_camera, input, Camera, FrustumRender, RenderPipeline, MAX_VOLUMES, SIZE_OF_VOLUME,
+        FrustumRender, RenderPipeline, MAX_VOLUMES, SIZE_OF_VOLUME,
     },
 };
 
@@ -34,12 +36,13 @@ pub struct ABetterWorld {
     pipeline: RenderPipeline,
     debug_pipeline: RenderPipeline,
     camera: Arc<Camera>,
+    dynamics: Dynamics,
     debug_camera: Arc<Camera>,
     depth_view: wgpu::TextureView,
     content: Arc<TileManager>,
     sender: Sender<Tile>,
     receiver: Receiver<Tile>,
-    input_state: input::InputState,
+    input_state: InputState,
     frustum_render: FrustumRender,
 }
 
@@ -109,13 +112,14 @@ impl ABetterWorld {
         );
 
         Self {
+            dynamics: { Dynamics::new(camera_source.position()) },
             pipeline,
             debug_pipeline,
             camera: camera_source,
             debug_camera: debug_camera_source,
             depth_view: depth.view,
             content: tile_content,
-            input_state: input::InputState::new(),
+            input_state: InputState::new(),
             frustum_render,
             sender: loader_tx,
             receiver: render_rx,
@@ -276,6 +280,9 @@ impl ABetterWorld {
     }
 
     pub fn update(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> Result<(), AbwError> {
+        self.dynamics
+            .update(&core::time::Duration::from_millis(16), &self.camera);
+
         self.debug_camera.deref().update(None);
 
         const BUDGET: Duration = Duration::from_millis(20);
@@ -406,6 +413,6 @@ impl ABetterWorld {
     }
 
     pub fn input(&mut self, event: InputEvent) {
-        self.input_state.process_input(&self.camera, event);
+        self.input_state.process_input(&self.dynamics, event);
     }
 }

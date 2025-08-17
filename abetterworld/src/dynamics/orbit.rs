@@ -1,8 +1,6 @@
 use std::sync::Arc;
 
-use cgmath::Deg;
-
-use crate::{render::camera::Camera, InputEvent, Key, MouseButton};
+use crate::{dynamics::Dynamics, InputEvent, Key, MouseButton};
 
 static ROTATION_SENSITIVITY: f64 = 0.000000005;
 
@@ -27,39 +25,31 @@ impl InputState {
         self.mouse_position = (0.0, 0.0);
     }
 
-    pub fn process_input(&mut self, camera: &Arc<Camera>, event: InputEvent) {
-        let height = camera.height_above_terrain();
-
+    pub fn process_input(&mut self, dynamics: &Dynamics, event: InputEvent) {
         match event {
             // Keyboard events
             InputEvent::KeyPressed(key) => {
                 println!("Key pressed: {:?}", key);
                 match key {
                     Key::ZoomIn => {
-                        let zoom_amount = height * 0.1;
-                        camera.zoom(zoom_amount);
+                        dynamics.zoom(1.0, true);
                     }
                     Key::ZoomOut => {
-                        let zoom_amount = -height * 0.1;
-                        camera.zoom(zoom_amount);
+                        dynamics.zoom(1.0, false);
                     }
 
                     Key::ArrowUp => {
-                        let pan_amount = -height * ROTATION_SENSITIVITY;
-                        camera.tilt(Deg(pan_amount as f64));
+                        dynamics.tilt(1.0, true);
                     }
                     Key::ArrowDown => {
-                        let pan_amount = height * ROTATION_SENSITIVITY;
-                        camera.tilt(Deg(pan_amount as f64));
+                        dynamics.tilt(1.0, false);
                     }
 
                     Key::ArrowLeft => {
-                        let pan_amount = -height * ROTATION_SENSITIVITY;
-                        camera.yaw(Deg(pan_amount as f64));
+                        dynamics.yaw(1.0, true);
                     }
                     Key::ArrowRight => {
-                        let pan_amount = height * ROTATION_SENSITIVITY;
-                        camera.yaw(Deg(pan_amount as f64));
+                        dynamics.yaw(1.0, false);
                     }
                     _ => {}
                 }
@@ -78,12 +68,8 @@ impl InputState {
                     let delta_x = (x - last_x) as f64;
                     let delta_y = (y - last_y) as f64;
 
-                    let height = camera.height_above_terrain();
-                    let delta_yaw = -delta_x * ROTATION_SENSITIVITY * height;
-                    let delta_pitch = -delta_y * ROTATION_SENSITIVITY * height;
-
-                    camera.yaw(Deg(delta_yaw));
-                    camera.tilt(Deg(delta_pitch));
+                    dynamics.yaw(delta_x.abs(), delta_x > 0.0);
+                    dynamics.tilt(delta_y.abs(), delta_y > 0.0);
 
                     // Update last mouse position
                     self.last_mouse_position = (x, y);
@@ -91,8 +77,7 @@ impl InputState {
             }
 
             InputEvent::MouseScrolled(delta) => {
-                let zoom_amount = (delta as f64) * height * 0.001;
-                camera.zoom(zoom_amount);
+                dynamics.zoom((delta.abs() as f64) * 0.1, delta > 0.0);
             }
 
             InputEvent::MouseButtonPressed(button) => {

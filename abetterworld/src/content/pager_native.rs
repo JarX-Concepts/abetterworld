@@ -3,11 +3,11 @@ use crate::{
         parser_thread, tiles::wait_and_load_content, tiles_priority::priortize_loop, Client, Tile,
         TileManager,
     },
+    dynamics::Camera,
     helpers::{
         channel::{channel, Sender},
         AbwError, PlatformAwait,
     },
-    render::Camera,
 };
 use std::{sync::Arc, thread};
 

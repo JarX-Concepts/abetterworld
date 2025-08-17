@@ -6,8 +6,8 @@ mod tests {
         cache::init_tileset_cache,
         content::{start_pager, Tile, TileManager},
         decode::init,
+        dynamics::init_camera,
         helpers::{channel::channel, PlatformAwait},
-        render::init_camera,
     };
 
     #[test]

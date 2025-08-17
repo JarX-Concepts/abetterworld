@@ -2,11 +2,11 @@ use std::{sync::Arc, thread, time::Duration};
 
 use crate::{
     content::types::{Tile, TileState},
+    dynamics::Camera,
     helpers::{
         channel::{Receiver, Sender},
         AbwError,
     },
-    render::Camera,
 };
 use cgmath::MetricSpace;
 

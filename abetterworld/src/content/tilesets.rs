@@ -1,8 +1,8 @@
 use crate::content::types::{Tile, TileState};
 use crate::content::{download_content, BoundingVolume, Client, TileManager};
+use crate::dynamics::{Camera, CameraRefinementData};
 use crate::helpers::channel::Sender;
 use crate::helpers::{hash_uri, AbwError, TileLoadingContext};
-use crate::render::{Camera, CameraRefinementData};
 use bytes::Bytes;
 use cgmath::InnerSpace;
 use serde::Deserialize;

@@ -7,7 +7,7 @@ use crate::content::Tile;
 use crate::content::TileSetImporter;
 use crate::helpers::channel::channel;
 use crate::helpers::channel::Sender;
-use crate::{content::TileManager, helpers::AbwError, render::Camera};
+use crate::{content::TileManager, dynamics::Camera, helpers::AbwError};
 use gloo_timers::future::TimeoutFuture;
 use once_cell::sync::Lazy;
 use std::sync::atomic::AtomicI32;
