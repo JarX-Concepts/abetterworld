@@ -206,6 +206,10 @@ pub extern "C" fn abetterworld_ios_resize(ptr: *mut ABetterWorldiOS, width: f64,
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
     }
+
+    state
+        .abw
+        .resize(&state.device, state.config.width, state.config.height);
 }
 
 #[no_mangle]

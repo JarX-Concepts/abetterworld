@@ -100,6 +100,10 @@ impl Camera {
         self.user_state.read().unwrap().position.eye.to_vec()
     }
 
+    pub fn set_aspect(&self, aspect: f64) {
+        self.user_state.write().unwrap().aspect = aspect;
+    }
+
     pub fn update_dynamic_state(&self, new_state: &PositionState) {
         let mut updated_state = self.user_state.write().unwrap();
         updated_state.position = new_state.clone();

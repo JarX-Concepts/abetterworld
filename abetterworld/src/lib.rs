@@ -25,12 +25,19 @@ use crate::{
         is_bounding_volume_visible, matrix, AbwError,
     },
     render::{
-        build_debug_pipeline, build_depth_buffer, build_frustum_render, build_pipeline,
-        FrustumRender, RenderPipeline, MAX_VOLUMES, SIZE_OF_VOLUME,
+        build_debug_pipeline, build_frustum_render, build_pipeline, FrustumRender, RenderPipeline,
+        MAX_VOLUMES, SIZE_OF_VOLUME,
     },
 };
 
 const MAX_NEW_TILES_PER_FRAME: usize = 4;
+
+pub struct DepthBuffer {
+    pub texture: wgpu::Texture,
+    pub view: wgpu::TextureView,
+    pub format: wgpu::TextureFormat,
+    pub sample_count: u32,
+}
 
 pub struct ABetterWorld {
     pipeline: RenderPipeline,
@@ -38,7 +45,7 @@ pub struct ABetterWorld {
     camera: Arc<Camera>,
     dynamics: Dynamics,
     debug_camera: Arc<Camera>,
-    depth_view: wgpu::TextureView,
+    depth: DepthBuffer,
     content: Arc<TileManager>,
     sender: Sender<Tile>,
     receiver: Receiver<Tile>,
@@ -120,19 +127,27 @@ pub enum InputEvent {
 impl ABetterWorld {
     /// Creates a new ABetterWorld.
     pub fn new(device: &wgpu::Device, config: &wgpu::SurfaceConfiguration) -> Self {
-        //download_test();
         init_tileset_cache();
 
         let (camera, debug_camera) = init_camera();
 
         let pipeline = build_pipeline(device, config);
         let debug_pipeline = build_debug_pipeline(device, config);
-        let depth = build_depth_buffer(device, config);
+        let depth = DepthBuffer::new(
+            device,
+            config.width,
+            config.height,
+            wgpu::TextureFormat::Depth24Plus,
+            1,
+        );
         let frustum_render = build_frustum_render(device);
 
         let tile_content = Arc::new(TileManager::new());
         let camera_source = Arc::new(camera);
         let debug_camera_source = Arc::new(debug_camera);
+
+        camera_source.set_aspect(config.width as f64 / config.height as f64);
+        debug_camera_source.set_aspect(config.width as f64 / config.height as f64);
 
         let (loader_tx, render_rx) = channel::<Tile>(MAX_NEW_TILES_PER_FRAME * 2);
 
@@ -149,7 +164,7 @@ impl ABetterWorld {
             debug_pipeline,
             camera: camera_source,
             debug_camera: debug_camera_source,
-            depth_view: depth.view,
+            depth,
             content: tile_content,
             input_state: InputState::new(),
             frustum_render,
@@ -159,7 +174,24 @@ impl ABetterWorld {
     }
 
     pub fn get_depth_view(&self) -> &wgpu::TextureView {
-        &self.depth_view
+        &self.depth.view
+    }
+
+    pub fn set_aspect(&self, aspect: f64) {
+        self.camera.set_aspect(aspect);
+    }
+
+    pub fn resize(&mut self, device: &wgpu::Device, new_width: u32, new_height: u32) {
+        if new_width == 0 || new_height == 0 {
+            return;
+        }
+
+        // 2) Recreate depth buffer to match new size
+        self.depth.resize(device, new_width, new_height);
+
+        self.set_aspect(new_width as f64 / new_height as f64);
+
+        // 3) (If using MSAA) also recreate your MSAA color target here
     }
 
     pub fn render(

@@ -69,8 +69,8 @@ public class ABetterWorldRenderer {
             self.renderer,
             Unmanaged.passUnretained(device).toOpaque(),
             Unmanaged.passUnretained(layer).toOpaque(),
-            1320,
-            2868
+            metalView.drawableSize.width,
+            metalView.drawableSize.height   
         )
         
         print("Rust renderer initialized")

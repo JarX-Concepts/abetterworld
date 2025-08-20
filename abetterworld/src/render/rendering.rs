@@ -201,40 +201,6 @@ pub fn build_pipeline(
     }
 }
 
-pub struct DepthBuffer {
-    pub texture: wgpu::Texture,
-    pub view: wgpu::TextureView,
-}
-
-pub fn build_depth_buffer(
-    device: &wgpu::Device,
-    config: &wgpu::SurfaceConfiguration,
-) -> DepthBuffer {
-    let depth_size = wgpu::Extent3d {
-        width: config.width,
-        height: config.height,
-        depth_or_array_layers: 1,
-    };
-
-    let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("Depth Texture"),
-        size: depth_size,
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Depth24Plus, // or Depth32Float
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-        view_formats: &[wgpu::TextureFormat::Depth24Plus],
-    });
-
-    let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-    DepthBuffer {
-        texture: depth_texture,
-        view: depth_view,
-    }
-}
-
 pub fn build_debug_pipeline(
     device: &wgpu::Device,
     config: &wgpu::SurfaceConfiguration,
