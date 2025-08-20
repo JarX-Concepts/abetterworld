@@ -68,8 +68,8 @@ impl InputState {
                     let delta_x = (x - last_x) as f64;
                     let delta_y = (y - last_y) as f64;
 
-                    dynamics.yaw(delta_x.abs(), delta_x > 0.0);
-                    dynamics.tilt(delta_y.abs(), delta_y > 0.0);
+                    dynamics.yaw(delta_x.abs(), delta_x < 0.0);
+                    dynamics.tilt(delta_y.abs(), delta_y < 0.0);
 
                     // Update last mouse position
                     self.last_mouse_position = (x, y);
@@ -77,7 +77,7 @@ impl InputState {
             }
 
             InputEvent::MouseScrolled(delta) => {
-                dynamics.zoom((delta.abs() as f64) * 0.1, delta > 0.0);
+                dynamics.zoom(delta.abs() as f64, delta > 0.0);
             }
 
             InputEvent::MouseButtonPressed(button) => {
