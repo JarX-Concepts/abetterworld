@@ -23,6 +23,37 @@ fn setup_console_log() {
     });
 }
 
+fn logical_window_size() -> (u32, u32) {
+    let win = web_sys::window().unwrap();
+    let w = win
+        .inner_width()
+        .unwrap()
+        .as_f64()
+        .unwrap()
+        .round()
+        .max(1.0) as u32;
+    let h = win
+        .inner_height()
+        .unwrap()
+        .as_f64()
+        .unwrap()
+        .round()
+        .max(1.0) as u32;
+    (w, h)
+}
+fn device_pixel_ratio() -> f64 {
+    web_sys::window().unwrap().device_pixel_ratio()
+}
+fn size_canvas_backing_store(canvas: &web_sys::HtmlCanvasElement) -> winit::dpi::PhysicalSize<u32> {
+    let (lw, lh) = logical_window_size();
+    let dpr = device_pixel_ratio();
+    let pw = ((lw as f64) * dpr).round().max(1.0) as u32;
+    let ph = ((lh as f64) * dpr).round().max(1.0) as u32;
+    canvas.set_width(pw);
+    canvas.set_height(ph);
+    winit::dpi::PhysicalSize::new(pw, ph)
+}
+
 struct State<'window> {
     surface: wgpu::Surface<'window>,
     device: wgpu::Device,
@@ -33,19 +64,13 @@ struct State<'window> {
 }
 
 impl<'window> State<'window> {
-    async fn new(window: &'window winit::window::Window) -> Self {
-        // Get the initial size from the window - ensure it's non-zero
-        let mut size = window.inner_size();
-
-        web_sys::console::log_1(
-            &format!(
-                "Initial window size in State::new: {}x{}",
-                size.width, size.height
-            )
-            .into(),
-        );
-
-        // Ensure size is not zero (important for WebGPU)
+    // ⬇️ add `canvas` param
+    async fn new(
+        window: &'window winit::window::Window,
+        canvas: &web_sys::HtmlCanvasElement,
+    ) -> Self {
+        // Prefer the canvas’ backing size; winit’s inner_size may be 0 on web.
+        let mut size = winit::dpi::PhysicalSize::new(canvas.width(), canvas.height());
         if size.width == 0 || size.height == 0 {
             size = winit::dpi::PhysicalSize::new(800, 600);
             web_sys::console::log_1(&"Using default size (800x600) in State::new".into());
@@ -58,14 +83,12 @@ impl<'window> State<'window> {
         };
         let instance = wgpu::Instance::new(&desc);
 
-        // Create a surface from the canvas.
-        let surface = unsafe {
-            instance
-                .create_surface(window)
-                .expect("Failed to create surface")
-        };
+        // ✅ Create the surface from THIS canvas (avoids “single canvas” panic)
+        let surface = instance
+            .create_surface(wgpu::SurfaceTarget::Canvas(canvas.clone()))
+            .expect("Failed to create surface from canvas"); // <-- no `unsafe`, no from_canvas()
 
-        // Request an adapter.
+        // Request adapter/device as before
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::default(),
@@ -75,7 +98,6 @@ impl<'window> State<'window> {
             .await
             .unwrap();
 
-        // Request the device and queue.
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 required_features: wgpu::Features::empty(),
@@ -87,7 +109,6 @@ impl<'window> State<'window> {
             .await
             .unwrap();
 
-        // Get the list of supported formats.
         let surface_caps = surface.get_capabilities(&adapter);
         let surface_format = surface_caps
             .formats
@@ -96,7 +117,6 @@ impl<'window> State<'window> {
             .find(|f| f.is_srgb())
             .unwrap_or(surface_caps.formats[0]);
 
-        // Configure the surface.
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
@@ -110,7 +130,6 @@ impl<'window> State<'window> {
 
         surface.configure(&device, &config);
 
-        // Initialize the sphere renderer from render_lib.
         let world = ABetterWorld::new(&device, &config);
 
         Self {
@@ -145,6 +164,8 @@ impl<'window> State<'window> {
         );
 
         self.surface.configure(&self.device, &self.config);
+        self.world
+            .resize(&self.device, self.config.width, self.config.height);
     }
 
     fn input(&mut self, event: InputEvent) {
@@ -209,88 +230,52 @@ impl<'window> State<'window> {
 #[wasm_bindgen(start)]
 pub async fn start() -> Result<(), JsValue> {
     setup_console_log();
-
     println!("Starting Blue Sphere WASM...");
 
-    // Set up better panic messages for debugging.
-    console_error_panic_hook::set_once();
-
-    // Create an event loop.
     let event_loop = EventLoop::new().unwrap();
-
-    // Build the window with a default size
     let window = WindowBuilder::new()
         .with_title("Blue Sphere WASM")
-        .with_inner_size(winit::dpi::PhysicalSize::new(800, 600))
+        .with_inner_size(winit::dpi::PhysicalSize::new(800, 600)) // harmless placeholder on web
         .build(&event_loop)
         .unwrap();
 
     let canvas = window.canvas().expect("Failed to get canvas");
     canvas.set_id("canvas");
 
-    // Set explicit canvas size
-    canvas.set_width(800);
-    canvas.set_height(600);
-
     let document = web_sys::window().unwrap().document().unwrap();
     document.body().unwrap().append_child(&canvas).unwrap();
 
-    // Get a reference to the canvas after it's been appended
-    let canvas = document
+    let canvas: web_sys::HtmlCanvasElement = document
         .get_element_by_id("canvas")
         .unwrap()
         .dyn_into::<web_sys::HtmlCanvasElement>()
         .unwrap();
 
-    // Add some basic styling to the canvas
+    // Keep CSS fluid; no fixed px. Just ensure block layout.
     canvas.style().set_property("display", "block").unwrap();
-    canvas.style().set_property("margin", "auto").unwrap();
+    canvas.style().set_property("margin", "0").unwrap();
 
-    // Force the dimensions to be applied and give browser a moment to update
-    let size_str = format!("{}px", 800);
-    canvas.style().set_property("width", &size_str).unwrap();
-    canvas.style().set_property("height", &size_str).unwrap();
-
-    // Log the actual canvas size for debugging
+    // 🔧 Set initial backing-store (physical pixel) size from window × DPR
+    let physical_size = size_canvas_backing_store(&canvas);
     web_sys::console::log_1(
-        &format!("Canvas dimensions: {}x{}", canvas.width(), canvas.height()).into(),
+        &format!(
+            "Canvas backing size: {}x{}",
+            canvas.width(),
+            canvas.height()
+        )
+        .into(),
     );
 
     let window = Arc::new(window);
     let window_clone = Arc::clone(&window);
 
-    // Get the window size or use fallback instead of asserting
-    let mut size = window.inner_size();
-    if size.width == 0 || size.height == 0 {
-        // Use fallback size if window inner_size reports zero
-        size = winit::dpi::PhysicalSize::new(800, 600);
-        #[cfg(target_arch = "wasm32")]
-        web_sys::console::log_1(&"Using fallback window size (800x600)".into());
-    }
+    // ✅ Create State with the canvas reference
+    let mut state = State::new(&window, &canvas).await;
 
-    web_sys::console::log_1(
-        &format!(
-            "Size for WebGPU initialization: {}x{}",
-            size.width, size.height
-        )
-        .into(),
-    );
+    // Apply initial size to WGPU
+    state.resize(physical_size);
 
-    // Create State using our forced dimensions
-    let mut state = State::new(&window).await;
-
-    // Make sure to resize with our explicitly set dimensions
-    state.resize(size);
-
-    web_sys::console::log_1(
-        &format!(
-            "After resize: {}x{}",
-            state.config.width, state.config.height
-        )
-        .into(),
-    );
-
-    // Run the event loop.
+    // Event loop
     event_loop
         .run(move |event, target| match event {
             Event::WindowEvent {
@@ -298,12 +283,13 @@ pub async fn start() -> Result<(), JsValue> {
                 window_id,
             } if window_id == window_clone.id() => match event {
                 WindowEvent::CloseRequested => target.exit(),
-                WindowEvent::Resized(physical_size) => {
-                    //state.resize(*physical_size);
+
+                // ⬇️ Recompute canvas backing store on size/DPR changes
+                WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
+                    let new_physical = size_canvas_backing_store(&canvas);
+                    state.resize(new_physical);
                 }
-                WindowEvent::ScaleFactorChanged { .. } => {
-                    //state.resize(window_clone.inner_size());
-                }
+
                 WindowEvent::KeyboardInput {
                     event:
                         winit::event::KeyEvent {
