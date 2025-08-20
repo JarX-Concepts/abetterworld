@@ -1,6 +1,6 @@
 use std::ffi::c_void;
 
-use abetterworld::ABetterWorld;
+use abetterworld::{ABetterWorld, InputEvent};
 use core_graphics::geometry::CGSize;
 use metal::{self, MTLRegion};
 use objc::{self, msg_send, runtime::Object, sel, sel_impl};
@@ -23,7 +23,7 @@ struct StateInner {
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     size: (u32, u32),
-    sphere_renderer: ABetterWorld,
+    abw: ABetterWorld,
     texture: wgpu::Texture,
     texture_view: wgpu::TextureView,
     metal_layer: *mut Object,
@@ -150,13 +150,13 @@ pub extern "C" fn abetterworld_ios_init(
     };
 
     // Initialize sphere renderer with device and config
-    let sphere_renderer = ABetterWorld::new(&device, &config);
+    let abw = ABetterWorld::new(&device, &config);
 
     state.inner = Some(StateInner {
         device,
         queue,
         config,
-        sphere_renderer,
+        abw,
         size: drawable_size,
         texture,
         texture_view,
@@ -212,7 +212,7 @@ pub extern "C" fn abetterworld_ios_resize(ptr: *mut ABetterWorldiOS, width: f64,
 pub extern "C" fn abetterworld_ios_render(ptr: *mut ABetterWorldiOS) {
     let state = get_state_inner(ptr);
 
-    state.sphere_renderer.update(&state.device, &state.queue);
+    state.abw.update(&state.device, &state.queue);
 
     // Get the next drawable first to ensure we have a valid target
     let drawable = unsafe {
@@ -286,7 +286,7 @@ pub extern "C" fn abetterworld_ios_render(ptr: *mut ABetterWorldiOS) {
             })],
 
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: state.sphere_renderer.get_depth_view(),
+                view: state.abw.get_depth_view(),
                 depth_ops: Some(wgpu::Operations {
                     load: wgpu::LoadOp::Clear(1.0), // far plane
                     store: wgpu::StoreOp::Discard,
@@ -299,7 +299,7 @@ pub extern "C" fn abetterworld_ios_render(ptr: *mut ABetterWorldiOS) {
         });
 
         state
-            .sphere_renderer
+            .abw
             .render(&mut render_pass, &state.queue, &state.device);
     }
 
@@ -373,4 +373,91 @@ pub extern "C" fn abetterworld_ios_render(ptr: *mut ABetterWorldiOS) {
 pub extern "C" fn abetterworld_ios_version() -> *const std::os::raw::c_char {
     let version = concat!("Blue Sphere iOS v", env!("CARGO_PKG_VERSION"), "\0");
     version.as_ptr() as *const std::os::raw::c_char
+}
+
+#[no_mangle]
+pub extern "C" fn abetterworld_ios_gesture_pinch(
+    ptr: *mut ABetterWorldiOS,
+    begin: bool,
+    scale: f64,
+    velocity: f64,
+) {
+    let state = get_state_inner(ptr);
+    state.abw.input(InputEvent::GesturePinch {
+        begin,
+        scale,
+        velocity,
+    });
+}
+
+#[no_mangle]
+pub extern "C" fn abetterworld_ios_gesture_pan_orbit(
+    ptr: *mut ABetterWorldiOS,
+    begin: bool,
+    dx: f64,
+    dy: f64,
+    vx: f64,
+    vy: f64,
+) {
+    let state = get_state_inner(ptr);
+    state.abw.input(InputEvent::GestureOrbit {
+        begin,
+        dx,
+        dy,
+        vx,
+        vy,
+    });
+}
+
+#[no_mangle]
+pub extern "C" fn abetterworld_ios_gesture_pan_translate(
+    ptr: *mut ABetterWorldiOS,
+    begin: bool,
+    dx: f64,
+    dy: f64,
+    vx: f64,
+    vy: f64,
+) {
+    let state = get_state_inner(ptr);
+    state.abw.input(InputEvent::GestureTranslate {
+        begin,
+        dx,
+        dy,
+        vx,
+        vy,
+    });
+}
+
+#[no_mangle]
+pub extern "C" fn abetterworld_ios_gesture_rotate(
+    ptr: *mut ABetterWorldiOS,
+    begin: bool,
+    radians: f64,
+    velocity: f64,
+) {
+    let state = get_state_inner(ptr);
+    state.abw.input(InputEvent::GestureRotate {
+        begin,
+        radians,
+        velocity,
+    });
+}
+
+#[no_mangle]
+pub extern "C" fn abetterworld_ios_gesture_double_tap(ptr: *mut ABetterWorldiOS, x: f64, y: f64) {
+    let state = get_state_inner(ptr);
+    state.abw.input(InputEvent::GestureDoubleTap { x, y });
+}
+
+#[no_mangle]
+pub extern "C" fn abetterworld_ios_touch_down(
+    ptr: *mut ABetterWorldiOS,
+    active: bool,
+    x: f64,
+    y: f64,
+) {
+    let state = get_state_inner(ptr);
+    state
+        .abw
+        .input(InputEvent::GestureTouchDown { active, x, y });
 }

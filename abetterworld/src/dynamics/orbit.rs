@@ -1,8 +1,4 @@
-use std::sync::Arc;
-
 use crate::{dynamics::Dynamics, InputEvent, Key, MouseButton};
-
-static ROTATION_SENSITIVITY: f64 = 0.000000005;
 
 pub struct InputState {
     pub mouse_left_down: bool,
@@ -93,20 +89,54 @@ impl InputState {
                 }
             }
 
-            // Touch events
-            InputEvent::TouchStart { id, position } => {
-                println!("Touch start: id={}, position={:?}", id, position);
-                // start tracking touch gesture
+            // --- gestures ---
+            InputEvent::GesturePinch {
+                begin,
+                scale,
+                velocity,
+            } => {
+                dynamics.gesture_pinch(begin, scale, velocity);
             }
 
-            InputEvent::TouchMove { id, position } => {
-                println!("Touch move: id={}, position={:?}", id, position);
-                // update gesture tracking
+            InputEvent::GestureOrbit {
+                begin,
+                dx,
+                dy,
+                vx,
+                vy,
+            } => {
+                dynamics.gesture_orbit(begin, dx, dy, vx, vy);
             }
 
-            InputEvent::TouchEnd { id } => {
-                println!("Touch end: id={}", id);
-                // finalize gesture
+            InputEvent::GestureTranslate {
+                begin,
+                dx,
+                dy,
+                vx,
+                vy,
+            } => {
+                dynamics.gesture_translate(begin, dx, dy, vx, vy);
+            }
+
+            InputEvent::GestureRotate {
+                begin,
+                radians,
+                velocity,
+            } => {
+                dynamics.gesture_rotate(begin, radians, velocity);
+            }
+
+            InputEvent::GestureDoubleTap { x, y } => {
+                dynamics.gesture_double_tap(x, y);
+            }
+
+            InputEvent::GestureTouchDown { active, x, y } => {
+                dynamics.gesture_touch_down(active, x, y);
+            }
+
+            // keep your default/unhandled case:
+            default => {
+                println!("Unhandled input event: {:?}", default);
             }
         }
     }

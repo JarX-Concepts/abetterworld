@@ -80,9 +80,41 @@ pub enum InputEvent {
     MouseScrolled(f32),
     MouseButtonPressed(MouseButton),
     MouseButtonReleased(MouseButton),
-    TouchStart { id: u64, position: (f32, f32) },
-    TouchMove { id: u64, position: (f32, f32) },
-    TouchEnd { id: u64 },
+
+    // Gesture input events
+    GesturePinch {
+        begin: bool,
+        scale: f64,
+        velocity: f64,
+    },
+    GestureOrbit {
+        begin: bool,
+        dx: f64,
+        dy: f64,
+        vx: f64,
+        vy: f64,
+    },
+    GestureTranslate {
+        begin: bool,
+        dx: f64,
+        dy: f64,
+        vx: f64,
+        vy: f64,
+    },
+    GestureRotate {
+        begin: bool,
+        radians: f64,
+        velocity: f64,
+    },
+    GestureDoubleTap {
+        x: f64,
+        y: f64,
+    },
+    GestureTouchDown {
+        active: bool,
+        x: f64,
+        y: f64,
+    },
 }
 
 impl ABetterWorld {

@@ -357,6 +357,114 @@ impl Dynamics {
         s.vel.radius += radius_impulse;
     }
 
+    /// Gesture pinch (two-finger). Positive velocity or scale>1 => zoom in.
+    pub fn gesture_pinch(&self, begin: bool, scale: f64, velocity: f64) {
+        // Stabilize momentum at gesture start
+        if begin {
+            let mut s = self.state.write().unwrap();
+            s.vel.radius *= 0.25; // keep a little inertia, but tame carry-in
+            return;
+        }
+
+        // Convert scale to a small signed amount using ln
+        // scale ~1.0 => near zero; >1 in => negative direction for radius
+        let ln_scale = if scale.is_finite() && scale > 0.0 {
+            scale.ln()
+        } else {
+            0.0
+        };
+
+        // Combine geometric scale + platform velocity for a responsive feel
+        // velocity is device-specific; clamp to reasonable bounds.
+        let v = velocity.clamp(-4.0, 4.0);
+
+        // Normalize to our zoom "amount" units
+        let amount = (ln_scale * 12.0) + (v * 0.30);
+
+        // in_flag = zoom toward surface
+        let in_flag = ln_scale > 0.0 || v > 0.0;
+        self.zoom(amount.abs(), in_flag);
+    }
+
+    /// Two-finger orbit (e.g., Apple "orbit"/"pan-with-anchor"). Maps to yaw/pitch momentum.
+    pub fn gesture_orbit(&self, begin: bool, dx: f64, dy: f64, vx: f64, vy: f64) {
+        if begin {
+            // damp angular carry-in so new gesture feels crisp
+            let mut s = self.state.write().unwrap();
+            s.vel.yaw *= 0.35;
+            s.vel.pitch *= 0.35;
+            return;
+        }
+
+        // Use movement distance primarily; velocity adds extra "throw"
+        let boost_x = (dx * 1.0) + (vx * 0.12);
+        let boost_y = (dy * 1.0) + (vy * 0.12);
+
+        // Match mouse semantics: +dx to the right -> turn left_flag=false? (we used left_flag for sign)
+        // Our mouse path called: yaw(delta_x.abs(), delta_x < 0.0) and tilt(delta_y.abs(), delta_y < 0.0).
+        self.yaw(boost_x.abs(), boost_x < 0.0);
+        self.tilt(boost_y.abs(), boost_y < 0.0);
+    }
+
+    /// Two-finger translate (pan). Reuses your pan() so it gets ENU behavior on Surface pivot.
+    pub fn gesture_translate(&self, begin: bool, dx: f64, dy: f64, vx: f64, vy: f64) {
+        if begin {
+            let mut s = self.state.write().unwrap();
+            s.vel.pan *= 0.35;
+            return;
+        }
+
+        // Feed both displacement and a small velocity term to create momentum
+        let k_disp = 1.0;
+        let k_vel = 0.10;
+        let gx = dx * k_disp + vx * k_vel;
+        let gy = dy * k_disp + vy * k_vel;
+
+        // Same screen-normalized units as mouse drag -> pan()
+        self.pan(gx, gy);
+    }
+
+    /// Two-finger rotate (twist). We interpret as heading change (yaw), not roll.
+    pub fn gesture_rotate(&self, begin: bool, radians: f64, velocity: f64) {
+        if begin {
+            let mut s = self.state.write().unwrap();
+            s.vel.yaw *= 0.35;
+            return;
+        }
+
+        // Positive radians usually means clockwise depending on platform; pick a consistent feel:
+        // Treat positive radians as "turn right" -> decrease yaw (left_flag=false)
+        // Add velocity to allow a nice throw.
+        let v = velocity.clamp(-6.0, 6.0);
+        let delta = radians + v * 0.06;
+
+        self.yaw(delta.abs() * 600.0, /* left_flag = */ delta < 0.0);
+    }
+
+    /// Double-tap: quick zoom-in impulse (GE-like nudge). If you later have hit-testing,
+    /// you can set the pivot/target toward the tapped location first.
+    pub fn gesture_double_tap(&self, _x: f64, _y: f64) {
+        // Slightly altitude-dependent shove inward
+        let h = self.height_above_terrain().clamp(MIN_HEIGHT, MAX_HEIGHT);
+        // Translate to our "amount" units in zoom(); aim for ~20-30% height change
+        let amount = (h * 0.25 / (h + 50_000.0)).max(0.10) * 8.0;
+        self.zoom(amount, true);
+    }
+
+    /// Touch down/up. You might swap pivots or reset minor state here if desired.
+    pub fn gesture_touch_down(&self, active: bool, _x: f64, _y: f64) {
+        let mut s = self.state.write().unwrap();
+        if active {
+            // when a multi-touch sequence starts, lightly damp all velocities
+            s.vel.yaw *= 0.5;
+            s.vel.pitch *= 0.5;
+            s.vel.radius *= 0.5;
+            s.vel.pan *= 0.5;
+        } else {
+            // on release, keep momentum as-is (nice "throw"); feel free to tweak
+        }
+    }
+
     /// GE-style smooth update: integrates velocities with damping, clamps, rebuilds eye/up.
     pub fn update(&self, dt: &core::time::Duration, camera: &Arc<Camera>) {
         let dt = dt.as_secs_f64().max(1e-6);

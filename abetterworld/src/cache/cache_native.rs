@@ -24,18 +24,46 @@ pub trait TilesetMemoryCache: Send + Sync {
 pub struct TilesetCache {
     pub map: Arc<dyn TilesetMemoryCache>,
     file_lock: RwLock<()>,
+    base_dir: std::path::PathBuf,
+}
+
+#[cfg(target_os = "android")]
+fn default_cache_dir() -> std::path::PathBuf {
+    // Requires the ndk-glue crate and that your Android entrypoint uses it.
+    // internal_data_path() is private app storage: /data/data/<pkg>/files
+    // Prefer `cache_path()` if you want the OS-manageable cache dir.
+    let act = ndk_glue::native_activity();
+    act.cache_path().to_path_buf().join("tilesets")
+}
+
+#[cfg(target_os = "ios")]
+fn default_cache_dir() -> std::path::PathBuf {
+    // `directories` or `dirs-next` will resolve to <App Sandbox>/Library/Caches
+    directories::BaseDirs::new()
+        .and_then(|b| Some(b.cache_dir().to_path_buf()))
+        .unwrap_or(std::env::temp_dir())
+        .join("tilesets")
+}
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn default_cache_dir() -> std::path::PathBuf {
+    std::path::PathBuf::from("./tilesets")
 }
 
 impl TilesetCache {
     pub fn new() -> Self {
-        let map: Arc<dyn TilesetMemoryCache> = Arc::new(NativeCache::new(LRU_CACHE_CAPACITY));
-
-        fs::create_dir_all(TILESET_CACHE_DIR).ok();
-
+        let base_dir = default_cache_dir();
+        let _ = fs::create_dir_all(&base_dir);
         Self {
-            map,
+            map: Arc::new(NativeCache::new(LRU_CACHE_CAPACITY)),
             file_lock: RwLock::new(()),
+            base_dir,
         }
+    }
+
+    pub fn disk_path_for(&self, key: &str) -> std::path::PathBuf {
+        let encoded = hash_uri(key);
+        self.base_dir.join(format!("{encoded}.json"))
     }
 
     pub async fn get(&self, key: &str) -> Result<Option<(String, Bytes)>, AbwError> {
@@ -44,7 +72,7 @@ impl TilesetCache {
             return Ok(Some((ct, data)));
         }
 
-        let filename = Self::disk_path_for(key);
+        let filename = self.disk_path_for(key);
         if Path::new(&filename).exists() {
             let _guard = self
                 .file_lock
@@ -82,7 +110,7 @@ impl TilesetCache {
             data: bytes.to_vec(),
         };
 
-        let filename = Self::disk_path_for(&key);
+        let filename = self.disk_path_for(&key);
         let bytes = serde_json::to_vec(&entry).unwrap();
         let _guard = self
             .file_lock
@@ -106,13 +134,6 @@ impl TilesetCache {
         fs::create_dir_all(TILESET_CACHE_DIR).ok();
 
         Ok(())
-    }
-
-    pub fn disk_path_for(key: &str) -> String {
-        use crate::helpers::hash_uri;
-
-        let encoded = hash_uri(key);
-        format!("{}/{}.json", TILESET_CACHE_DIR, encoded)
     }
 }
 

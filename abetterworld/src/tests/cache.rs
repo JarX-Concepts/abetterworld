@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::cache::{get_tileset_cache, init_tileset_cache, TilesetCache};
+    use crate::cache::{get_tileset_cache, init_tileset_cache};
     use crate::helpers::{hash_uri, PlatformAwait};
 
     use bytes::Bytes;
@@ -73,7 +73,7 @@ mod tests {
         assert_eq!(val_disk, value);
 
         // Clean up disk file
-        let disk_path = TilesetCache::disk_path_for(base_key);
+        let disk_path = cache.disk_path_for(base_key);
         if Path::new(&disk_path).exists() {
             fs::remove_file(disk_path).unwrap();
         }
@@ -81,7 +81,7 @@ mod tests {
         // Clean up spurious disk writes
         for i in 0..1024 {
             let key = format!("key-{}", i);
-            let path = TilesetCache::disk_path_for(&key);
+            let path = cache.disk_path_for(&key);
             if Path::new(&path).exists() {
                 let _ = fs::remove_file(path);
             }

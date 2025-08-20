@@ -100,6 +100,10 @@ public class ABetterWorldRenderer {
         abetterworld_ios_render(renderer)
     }
     
+    public func getRenderer() -> UnsafeMutablePointer<ABetterWorldiOS>? {
+        return self.renderer
+    }
+    
     func renderFallback() {
         guard let drawable = metalLayer.nextDrawable() else {
             print("Failed to get drawable")
@@ -140,7 +144,6 @@ public class ABetterWorldViewDelegate: NSObject, MTKViewDelegate {
     }
     
     public func draw(in view: MTKView) {
-     
         // Toggle between Rust and fallback
         if !UserDefaults.standard.bool(forKey: "useFallback") {
             renderer?.render()
@@ -150,6 +153,10 @@ public class ABetterWorldViewDelegate: NSObject, MTKViewDelegate {
             print("Fallback frame rendered")
         }
     }
+    
+    public func getRenderer() -> ABetterWorldRenderer? {
+        return self.renderer
+    }
 }
 
 // MARK: - Simple UIView subclass for even easier integration
@@ -157,6 +164,8 @@ public class ABetterWorldViewDelegate: NSObject, MTKViewDelegate {
 public class ABetterWorldView: UIView {
     private var metalView: MTKView!
     private var viewDelegate: ABetterWorldViewDelegate?
+    private var gestureAdapter: ABWGestureAdapter?
+    private var gestureController: ABWGestureController?
     
     public override class var layerClass: AnyClass {
         return CAMetalLayer.self
@@ -187,5 +196,16 @@ public class ABetterWorldView: UIView {
         
         viewDelegate = ABetterWorldViewDelegate(metalView: metalView)
         print("Delegate created")
+        
+        let adapter = ABWGestureAdapter(owner: viewDelegate!.getRenderer()!)
+        let controller = ABWGestureController(
+            attachingTo: metalView,
+            sink: adapter,
+            scaleProvider: { self.metalView.contentScaleFactor }
+        )
+        // Keep strong refs on your view or VC:
+        self.gestureAdapter = adapter
+        self.gestureController = controller
+        
     }
 }
