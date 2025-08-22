@@ -1,4 +1,4 @@
-use abetterworld::{ABetterWorld, InputEvent, MouseButton};
+use abetterworld::{get_debug_config, InputEvent, MouseButton, World};
 use std::sync::Arc;
 use wasm_bindgen::prelude::*;
 use winit::platform::web::WindowExtWebSys;
@@ -60,7 +60,7 @@ struct State<'window> {
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     size: winit::dpi::PhysicalSize<u32>,
-    world: ABetterWorld,
+    world: World,
 }
 
 impl<'window> State<'window> {
@@ -130,7 +130,7 @@ impl<'window> State<'window> {
 
         surface.configure(&device, &config);
 
-        let world = ABetterWorld::new(&device, &config);
+        let world = World::new(&device, &config, &get_debug_config());
 
         Self {
             surface,

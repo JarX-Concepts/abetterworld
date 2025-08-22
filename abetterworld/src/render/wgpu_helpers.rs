@@ -1,13 +1,12 @@
-use wgpu::{util::DeviceExt, wgc::instance, Instance};
+use wgpu::util::DeviceExt;
 
 use crate::{
-    content::{DebugVertex, Vertex},
-    helpers::{uniform_size, Uniforms},
+    content::{DebugVertex, Vertex, MAX_RENDERABLE_NODES_US, MAX_RENDERABLE_TILES},
+    helpers::Uniforms,
     render::InstanceBuffer,
 };
 
 pub struct BindingData {
-    pub max_objects: usize,
     pub tile_bg: wgpu::BindGroup,
     pub instance_buffer: Option<InstanceBuffer>,
     pub camera_buffer: Option<wgpu::Buffer>,
@@ -45,10 +44,6 @@ pub fn build_pipeline(
                 },
             ],
         });
-
-    let max_objects = MAX_VOLUMES as usize;
-    let alignment = device.limits().min_uniform_buffer_offset_alignment as usize;
-    let aligned_uniform_size = uniform_size(alignment);
 
     // Create bind group layout and bind group for the uniform.
     let tile_bind_group_layout =
@@ -89,7 +84,7 @@ pub fn build_pipeline(
         mapped_at_creation: false,
     });
 
-    let instance_buffer = InstanceBuffer::new(device, max_objects);
+    let instance_buffer = InstanceBuffer::new(device, MAX_RENDERABLE_NODES_US);
 
     let tile_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("Tile Bind Group"),
@@ -168,7 +163,6 @@ pub fn build_pipeline(
         pipeline,
         texture_bind_group_layout: Some(texture_bind_group_layout),
         bindings: BindingData {
-            max_objects,
             tile_bg: tile_bind_group,
             instance_buffer: Some(instance_buffer),
             camera_buffer: Some(camera_buf),
@@ -275,7 +269,6 @@ pub fn build_debug_pipeline(
         pipeline: debug_pipeline,
         texture_bind_group_layout: None,
         bindings: BindingData {
-            max_objects: 1,
             tile_bg: camera_bind_group,
             instance_buffer: None,
             camera_buffer: Some(camera_uniform_buffer),
@@ -289,7 +282,6 @@ pub struct FrustumRender {
     pub frustum_buffer: wgpu::Buffer,
 }
 
-pub const MAX_VOLUMES: u64 = 512;
 pub const SIZE_OF_VOLUME: u64 = 8 * std::mem::size_of::<DebugVertex>() as u64;
 
 pub fn build_frustum_render(device: &wgpu::Device) -> FrustumRender {
@@ -318,7 +310,7 @@ pub fn build_frustum_render(device: &wgpu::Device) -> FrustumRender {
 
     let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("Frustum Vertices"),
-        size: MAX_VOLUMES * SIZE_OF_VOLUME,
+        size: MAX_RENDERABLE_TILES * SIZE_OF_VOLUME,
         usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });

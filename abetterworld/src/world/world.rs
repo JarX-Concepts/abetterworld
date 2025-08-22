@@ -168,7 +168,7 @@ impl World {
 
         let _ = init();
         let _ = start_pager(
-            &abw_config.source,
+            abw_config.source.clone(),
             Arc::clone(debug_camera_option.as_ref().unwrap_or(&camera)),
             tile_content.clone(),
             loader_tx,
@@ -230,7 +230,7 @@ impl World {
         )
     }
 
-    pub fn update(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> Result<(), AbwError> {
+    pub fn update(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> Result<bool, AbwError> {
         self.private
             .dynamics
             .update(&core::time::Duration::from_millis(16), &self.private.camera);
@@ -323,7 +323,7 @@ impl World {
             )?;
         }
 
-        Ok(())
+        Ok(needs_update)
     }
 
     pub fn input(&mut self, event: InputEvent) {

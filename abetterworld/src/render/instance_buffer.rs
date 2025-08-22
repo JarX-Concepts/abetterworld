@@ -1,12 +1,6 @@
-use std::sync::Arc;
-
+use crate::render::RenderFrame;
 use cgmath::Matrix4;
-#[cfg(not(target_arch = "wasm32"))]
 use cgmath::Point3;
-
-use crate::content::{Material, Mesh, RenderableMap, RenderableState, TextureResource};
-#[cfg(not(target_arch = "wasm32"))]
-use crate::{content::Node, render::RenderFrame};
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Debug)]
@@ -85,11 +79,11 @@ pub fn build_instances(frame: &RenderFrame, eye_pos: &Point3<f64>) -> Vec<Instan
 }
 
 #[cfg(target_arch = "wasm32")]
-pub fn build_instances(nodes: &RenderFrame, eye_pos: &Point3<f64>) -> Vec<Instance3x4> {
+pub fn build_instances(frame: &RenderFrame, eye_pos: &Point3<f64>) -> Vec<Instance3x4> {
     frame
         .tiles
         .iter()
-        .flat_map_iter(|tile| {
+        .flat_map(|tile| {
             tile.nodes.iter().map(move |b| {
                 // Let the tile/state build the instance for this node.
                 Instance3x4::build(b.transform, eye_pos)

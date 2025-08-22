@@ -19,7 +19,7 @@ use wasm_bindgen_futures::spawn_local;
 static ACTIVE_JOBS: Lazy<AtomicI32> = Lazy::new(|| AtomicI32::new(0));
 
 pub fn start_pager(
-    source: &Source,
+    source: Source,
     camera_src: Arc<Camera>,
     tile_mgr: Arc<TileManager>,
     render_tx: Sender<Tile>,
@@ -30,18 +30,13 @@ pub fn start_pager(
             Err(e) => log::error!("Failed to initialize IndexedDB: {:?}", e),
         }
 
-        let source_clone = source.clone();
-        let camera_clone = camera_src.clone();
-        let tile_mgr_clone = tile_mgr.clone();
-        let render_tx_clone = render_tx.clone();
-
         // run update_pager every 2 seconds
         loop {
             if let Err(e) = update_pager(
-                &source_clone,
-                &camera_clone,
-                &tile_mgr_clone,
-                &render_tx_clone,
+                source.clone(),
+                camera_src.clone(),
+                tile_mgr.clone(),
+                render_tx.clone(),
             )
             .map_err(|e| {
                 log::error!("Failed to update pager: {:?}", e);
@@ -58,7 +53,7 @@ pub fn start_pager(
 }
 
 fn update_pager(
-    source: &Source,
+    source: Source,
     camera_src: Arc<Camera>,
     tile_mgr: Arc<TileManager>,
     render_tx: Sender<Tile>,

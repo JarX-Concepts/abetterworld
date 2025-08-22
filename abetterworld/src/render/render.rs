@@ -1,9 +1,9 @@
 use cgmath::Point3;
 
 use crate::{
-    content::{DebugVertex, RenderableMap, RenderableState},
+    content::{DebugVertex, RenderableMap, RenderableState, MAX_RENDERABLE_TILES_US},
     helpers::{AbwError, Uniforms},
-    render::{build_instances, upload_instances, MAX_VOLUMES, SIZE_OF_VOLUME},
+    render::{build_instances, upload_instances, SIZE_OF_VOLUME},
     world::WorldPrivate,
 };
 use std::sync::Arc;
@@ -106,7 +106,7 @@ impl RenderAndUpdate {
         render_pass.set_vertex_buffer(0, world.frustum_render.vertex_buffer.slice(..));
 
         for (index, _renderable) in self.frame.tiles.iter().enumerate() {
-            if index >= MAX_VOLUMES as usize {
+            if index >= MAX_RENDERABLE_TILES_US {
                 log::warn!("Hit maximum number of volumes (Render)");
             } else {
                 render_pass.draw_indexed(0..36, (index as i32 + 1) * 8, 0..1);
@@ -189,7 +189,7 @@ impl RenderAndUpdate {
                     })
                     .collect();
 
-                if (index as u64) >= MAX_VOLUMES {
+                if index >= MAX_RENDERABLE_TILES_US {
                     log::warn!("Hit maximum number of volumes (Update)");
                 } else {
                     queue.write_buffer(

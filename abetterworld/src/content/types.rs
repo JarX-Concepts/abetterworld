@@ -5,6 +5,11 @@ use crate::{
 use cgmath::Matrix4;
 use std::mem;
 
+pub const MAX_RENDERABLE_TILES: u64 = 512;
+pub const MAX_RENDERABLE_NODES: u64 = 512;
+pub const MAX_RENDERABLE_TILES_US: usize = MAX_RENDERABLE_TILES as usize;
+pub const MAX_RENDERABLE_NODES_US: usize = MAX_RENDERABLE_NODES as usize;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Tile {
     pub counter: u64,
