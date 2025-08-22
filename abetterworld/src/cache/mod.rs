@@ -1,7 +1,7 @@
 mod cache_shared;
 mod types;
 
-pub use cache_shared::{get_tileset_cache, init_tileset_cache};
+pub use cache_shared::{destroy_tileset_cache, get_tileset_cache, init_tileset_cache};
 
 #[cfg(target_arch = "wasm32")]
 mod cache_wasm;

@@ -3,7 +3,7 @@ use cgmath::{
 };
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
-    RwLock,
+    Arc, RwLock,
 };
 
 use crate::{
@@ -12,6 +12,7 @@ use crate::{
         decompose_matrix64_to_uniform, extract_frustum_planes, geodetic_to_ecef_z_up,
         remove_translation, Uniforms,
     },
+    Config,
 };
 
 pub const EARTH_RADIUS_M: f64 = 6_371_000.0;
@@ -107,8 +108,11 @@ impl Camera {
 
     pub fn update_dynamic_state(&self, new_state: &PositionState) {
         let mut updated_state = self.user_state.write().unwrap();
-        updated_state.position = new_state.clone();
-        self.dirty.store(true, Ordering::Relaxed);
+        // is it different
+        if updated_state.position != *new_state {
+            updated_state.position = new_state.clone();
+            self.dirty.store(true, Ordering::Relaxed);
+        }
     }
 
     pub fn refinement_data(&self) -> CameraRefinementData {
@@ -120,11 +124,12 @@ impl Camera {
     }
 
     /// internal: recompute cam_world and UBO
-    pub fn update(&self, distance_to_geom: Option<f64>) -> (Point3<f64>, Uniforms) {
+    pub fn update(&self, distance_to_geom: Option<f64>) -> (Point3<f64>, Uniforms, bool) {
         if !self.dirty.load(Ordering::Relaxed) {
             return (
                 self.user_state.read().unwrap().position.eye,
                 self.derived_state.read().unwrap().uniform,
+                false,
             );
         }
 
@@ -183,7 +188,7 @@ impl Camera {
             };
         }
 
-        (user_state.position.eye, derived_state.uniform)
+        (user_state.position.eye, derived_state.uniform, true)
     }
 
     /// expose the latest UBO
@@ -237,12 +242,8 @@ impl Camera {
     }
 }
 
-pub fn init_camera() -> (Camera, Camera) {
-    let radius = 6_378_137.0;
-    let distance: f64 = radius * 2.0;
-
-    let main_eye = geodetic_to_ecef_z_up(34.4208, -119.6982, distance);
-    let debug_eye = geodetic_to_ecef_z_up(34.4208, -119.6982, 50000.0);
+pub fn init_camera(geodetic_pos: Point3<f64>) -> Camera {
+    let main_eye = geodetic_to_ecef_z_up(geodetic_pos[0], geodetic_pos[1], geodetic_pos[2]);
 
     let eye = Point3::new(main_eye.0, main_eye.1, main_eye.2);
     let target = Point3::new(0.0, 0.0, 0.0);
@@ -256,19 +257,25 @@ pub fn init_camera() -> (Camera, Camera) {
     });
     camera.update(None);
 
-    let debug_eye_pt: Point3<f64> = Point3::new(debug_eye.0, debug_eye.1, debug_eye.2);
-    let debug_camera = Camera::new(CameraUserPosition {
-        fovy: Deg(45.0),
-        aspect: 1.0,
-        position: PositionState {
-            eye: debug_eye_pt,
-            target,
-            up,
-        },
-        near: None,
-        far: None,
-    });
-    debug_camera.update(None);
+    camera
+}
 
-    (camera, debug_camera)
+pub fn camera_config(abw_config: &Config) -> (Arc<Camera>, Option<Arc<Camera>>) {
+    let camera = Arc::new(init_camera(Point3::new(
+        abw_config.geodetic_position.0,
+        abw_config.geodetic_position.1,
+        abw_config.geodetic_position.2,
+    )));
+
+    let debug_camera_option = if abw_config.use_debug_camera {
+        Some(Arc::new(init_camera(Point3::new(
+            abw_config.debug_camera_geodetic_position.0,
+            abw_config.debug_camera_geodetic_position.1,
+            abw_config.debug_camera_geodetic_position.2,
+        ))))
+    } else {
+        None
+    };
+
+    (camera, debug_camera_option)
 }

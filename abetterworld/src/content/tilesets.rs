@@ -3,6 +3,7 @@ use crate::content::{download_content, BoundingVolume, Client, TileManager};
 use crate::dynamics::{Camera, CameraRefinementData};
 use crate::helpers::channel::Sender;
 use crate::helpers::{hash_uri, AbwError, TileLoadingContext};
+use crate::Source;
 use bytes::Bytes;
 use cgmath::InnerSpace;
 use serde::Deserialize;
@@ -14,9 +15,6 @@ use url::Url;
 
 #[cfg(target_arch = "wasm32")]
 use gloo_timers::future::TimeoutFuture;
-
-pub const GOOGLE_API_KEY: &str = "AIzaSyD526Czd1rD44BZE2d2R70-fBEdDdf6vZQ";
-pub const GOOGLE_API_URL: &str = "https://tile.googleapis.com/v1/3dtiles/root.json";
 
 #[derive(Debug, Deserialize)]
 struct GltfTileset {
@@ -128,17 +126,22 @@ fn needs_refinement(
 }
 
 pub async fn parser_iteration(
+    source: &Source,
     camera_data: &CameraRefinementData,
     pager: &mut TileSetImporter,
 ) -> Result<(), AbwError> {
-    if let Err(err) = pager.go(&camera_data, GOOGLE_API_URL, GOOGLE_API_KEY).await {
-        log::error!("Failed to run pager: {}", err);
+    match source {
+        Source::Google { key, url } => pager.go(&camera_data, url, key).await,
+        // Add more source types here as needed
+        _ => {
+            log::error!("Unsupported source type: {:?}", source);
+            Err(AbwError::TileLoading("Unsupported source type".into()))
+        }
     }
-
-    Ok(())
 }
 
 pub async fn parser_thread(
+    source: &Source,
     cam: Arc<Camera>,
     tile_mgr: Arc<TileManager>,
     pager_tx: Sender<Tile>,
@@ -152,7 +155,7 @@ pub async fn parser_thread(
         let new_gen = cam.generation();
         if new_gen != last_cam_gen {
             let camera_data = cam.refinement_data();
-            parser_iteration(&camera_data, &mut pager).await;
+            parser_iteration(source, &camera_data, &mut pager).await?;
 
             last_cam_gen = new_gen;
         } else {

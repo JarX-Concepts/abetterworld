@@ -2,7 +2,7 @@ use crate::{
     cache::init_tileset_cache,
     content::{start_pager, Tile, TileManager},
     decode::init,
-    dynamics::{init_camera, Camera, Dynamics, InputState},
+    dynamics::{camera_config, Camera, Dynamics, InputState},
     helpers::{
         channel::{channel, Receiver},
         AbwError,
@@ -19,7 +19,7 @@ pub struct WorldPrivate {
     pub pipeline: RenderPipeline,
     pub depth: DepthBuffer,
 
-    pub debug_camera: Arc<Camera>,
+    pub debug_camera: Option<Arc<Camera>>,
     pub debug_pipeline: RenderPipeline,
     pub frustum_render: FrustumRender,
 
@@ -33,8 +33,10 @@ pub struct WorldPrivate {
 pub struct World {
     private: WorldPrivate,
     render: RenderAndUpdate,
+    config: Config,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Source {
     Google {
         key: String,
@@ -50,10 +52,16 @@ pub enum Source {
     },
 }
 
+#[derive(Debug, Clone)]
 pub struct Config {
     pub source: Source,
-    pub start_position: (f64, f64, f64),
+    // long, lat, elevation
+    pub geodetic_position: (f64, f64, f64),
     pub cache_dir: String,
+    pub use_debug_camera: bool,
+    pub debug_camera_geodetic_position: (f64, f64, f64),
+    pub debug_camera_render_frustum: bool,
+    pub debug_render_volumes: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -138,10 +146,9 @@ impl World {
     ) -> Self {
         init_tileset_cache(&abw_config.cache_dir.to_string());
 
-        let (camera, debug_camera) = init_camera();
+        let (camera, debug_camera_option) = camera_config(abw_config);
 
         let pipeline = build_pipeline(device, config);
-        let debug_pipeline = build_debug_pipeline(device, config);
         let depth = DepthBuffer::new(
             device,
             config.width,
@@ -149,27 +156,31 @@ impl World {
             wgpu::TextureFormat::Depth24Plus,
             1,
         );
+
+        let debug_pipeline = build_debug_pipeline(device, config);
         let frustum_render = build_frustum_render(device);
 
         let tile_content = Arc::new(TileManager::new());
-        let camera_source = Arc::new(camera);
-        let debug_camera_source = Arc::new(debug_camera);
 
-        camera_source.set_aspect(config.width as f64 / config.height as f64);
-        debug_camera_source.set_aspect(config.width as f64 / config.height as f64);
+        camera.set_aspect(config.width as f64 / config.height as f64);
 
         let (loader_tx, render_rx) = channel::<Tile>(MAX_NEW_TILES_PER_FRAME * 2);
 
         let _ = init();
-        let _ = start_pager(debug_camera_source.clone(), tile_content.clone(), loader_tx);
+        let _ = start_pager(
+            &abw_config.source,
+            Arc::clone(debug_camera_option.as_ref().unwrap_or(&camera)),
+            tile_content.clone(),
+            loader_tx,
+        );
 
         Self {
             private: WorldPrivate {
-                dynamics: { Dynamics::new(camera_source.position()) },
+                dynamics: { Dynamics::new(camera.position()) },
                 pipeline,
                 debug_pipeline,
-                camera: camera_source,
-                debug_camera: debug_camera_source,
+                camera: camera,
+                debug_camera: debug_camera_option,
                 depth,
                 content: tile_content,
                 input_state: InputState::new(),
@@ -177,6 +188,7 @@ impl World {
                 receiver: render_rx,
             },
             render: RenderAndUpdate::new(),
+            config: abw_config.clone(),
         }
     }
 
@@ -209,8 +221,13 @@ impl World {
         queue: &wgpu::Queue,
         _device: &wgpu::Device,
     ) -> Result<(), AbwError> {
-        self.render
-            .render(render_pass, queue, &self.private, None, None)
+        self.render.render(
+            render_pass,
+            queue,
+            &self.private,
+            self.config.debug_render_volumes,
+            self.config.use_debug_camera,
+        )
     }
 
     pub fn update(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> Result<(), AbwError> {
@@ -220,8 +237,10 @@ impl World {
 
         const BUDGET: Duration = Duration::from_millis(20);
 
+        let mut needs_update = false;
+
         if let Some(layout) = self.private.pipeline.texture_bind_group_layout.as_ref() {
-            self.private.content.unload_tiles();
+            needs_update = self.private.content.unload_tiles();
 
             #[cfg(target_arch = "wasm32")]
             {
@@ -237,6 +256,7 @@ impl World {
                             match tiles::content_render_setup(device, queue, layout, &mut tile) {
                                 Ok(renderable_state) => {
                                     self.private.content.add_renderable(renderable_state);
+                                    needs_update = true;
                                 }
                                 Err(e) => {
                                     log::error!("Failed to set up tile for rendering: {e}");
@@ -262,6 +282,7 @@ impl World {
                             match tiles::content_render_setup(device, queue, layout, &mut tile) {
                                 Ok(renderable_state) => {
                                     self.private.content.add_renderable(renderable_state);
+                                    needs_update = true;
                                 }
                                 Err(e) => {
                                     log::error!("Failed to set up tile for rendering: {e}");
@@ -277,18 +298,30 @@ impl World {
 
         //self.debug_camera.yaw(Deg(0.1));
         //self.debug_camera.write().unwrap().zoom(-500.0);
-        self.private.debug_camera.update(None);
-        let (eye_pos, uniform) = self.private.camera.update(None);
+        if let Some(debug_camera) = self.private.debug_camera.as_ref() {
+            let (_, _, dirty) = debug_camera.update(None);
+            if dirty {
+                needs_update = true;
+            }
+        }
+        let (eye_pos, uniform, dirty) = self.private.camera.update(None);
+        if dirty {
+            needs_update = true;
+        }
 
-        self.render.update(
-            device,
-            queue,
-            &mut self.private,
-            &eye_pos,
-            &uniform,
-            None,
-            None,
-        )?;
+        // we do not need to update anything
+        if needs_update {
+            log::debug!("World state changed, updating render state");
+            self.render.update(
+                device,
+                queue,
+                &mut self.private,
+                &eye_pos,
+                &uniform,
+                self.config.debug_render_volumes,
+                self.config.use_debug_camera,
+            )?;
+        }
 
         Ok(())
     }

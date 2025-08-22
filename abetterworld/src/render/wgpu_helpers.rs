@@ -271,9 +271,6 @@ pub fn build_debug_pipeline(
         multiview: None,
     });
 
-    let alignment = device.limits().min_uniform_buffer_offset_alignment as usize;
-    let aligned_uniform_size = uniform_size(alignment);
-
     RenderPipeline {
         pipeline: debug_pipeline,
         texture_bind_group_layout: None,
@@ -281,7 +278,7 @@ pub fn build_debug_pipeline(
             max_objects: 1,
             tile_bg: camera_bind_group,
             instance_buffer: None,
-            camera_buffer: None,
+            camera_buffer: Some(camera_uniform_buffer),
         },
     }
 }

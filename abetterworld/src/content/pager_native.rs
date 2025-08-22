@@ -8,15 +8,17 @@ use crate::{
         channel::{channel, Sender},
         AbwError, PlatformAwait,
     },
+    Source,
 };
 use std::{sync::Arc, thread};
 
 pub fn start_pager(
+    source: &Source,
     camera_src: Arc<Camera>,
     tile_mgr: Arc<TileManager>,
     render_tx: Sender<Tile>,
 ) -> Result<(), AbwError> {
-    const LOADER_THREADS: usize = 1;
+    const LOADER_THREADS: usize = 12;
     // unbounded: pager -> prioritizer
     let (pager_tx, mut pager_rx) = channel::<Tile>(1000);
     // bounded:   prioritizer -> workers  (back-pressure)
@@ -27,10 +29,18 @@ pub fn start_pager(
     {
         let client_clone = client.clone();
         let pager_cam = Arc::clone(&camera_src);
+        let source_clone = source.clone();
         thread::spawn(move || {
-            parser_thread(pager_cam, tile_mgr, pager_tx, client_clone, true)
-                .platform_await()
-                .expect("Failed to start parser thread");
+            parser_thread(
+                &source_clone,
+                pager_cam,
+                tile_mgr,
+                pager_tx,
+                client_clone,
+                true,
+            )
+            .platform_await()
+            .expect("Failed to start parser thread");
         });
     }
 
@@ -50,9 +60,10 @@ pub fn start_pager(
             let client_clone = client.clone();
             let mut render_time = render_tx.clone();
             let mut rx = loader_rx.clone();
+            let source_clone = source.clone();
 
             thread::spawn(move || {
-                wait_and_load_content(&client_clone, &mut rx, &mut render_time)
+                wait_and_load_content(&source_clone, &client_clone, &mut rx, &mut render_time)
                     .platform_await()
                     .expect("Failed to load content in worker thread");
             });

@@ -1,7 +1,7 @@
 // ─── Crate: content ────────────────────────────────────────────────────────────
 use crate::content::{
     build_materials, build_meshes, build_nodes, download_content, parse_glb,
-    parse_textures_from_gltf, upload_textures_to_gpu, Client, GOOGLE_API_KEY,
+    parse_textures_from_gltf, upload_textures_to_gpu, Client,
 };
 
 // ─── Crate: content::types ─────────────────────────────────────────────────────
@@ -10,6 +10,7 @@ use crate::content::types::{Mesh, RenderableState, Tile, TileState};
 use crate::helpers::channel::{Receiver, Sender};
 // ─── Crate: helpers ────────────────────────────────────────────────────────────
 use crate::helpers::{AbwError, TileLoadingContext};
+use crate::Source;
 
 // ─── External ──────────────────────────────────────────────────────────────────
 use bytes::Bytes;
@@ -40,13 +41,20 @@ fn download_content_for_tile_shared(
 }
 
 async fn download_content_for_tile(
+    source: &Source,
     client: &Client,
-    key: &str,
     load: &Tile,
 ) -> Result<Vec<u8>, AbwError> {
-    let (content_type, bytes) = download_content(&client, &load.uri, key, &None).await?;
+    let key = match source {
+        Source::Google { key, .. } => Ok((key.clone())),
+        _ => {
+            log::error!("Unsupported source type: {:?}", source);
+            Err(AbwError::TileLoading("Unsupported source type".into()))
+        }
+    }?;
 
-    download_content_for_tile_shared(key, load, content_type, bytes)
+    let (content_type, bytes) = download_content(&client, &load.uri, &key, &None).await?;
+    download_content_for_tile_shared(&key, load, content_type, bytes)
 }
 
 fn process_content_bytes(load: &mut Tile, bytes: Vec<u8>) -> Result<(), AbwError> {
@@ -76,12 +84,13 @@ fn process_content_bytes(load: &mut Tile, bytes: Vec<u8>) -> Result<(), AbwError
 }
 
 pub async fn load_content(
+    source: &Source,
     client: &Client,
     tile: &mut Tile,
     render_time: &mut Sender<Tile>,
 ) -> Result<(), AbwError> {
     if tile.state == TileState::ToLoad {
-        if let Err(e) = content_load(&client, GOOGLE_API_KEY, tile).await {
+        if let Err(e) = content_load(&source, &client, tile).await {
             log::error!("load failed: {e}");
             return Err(e);
         }
@@ -95,17 +104,22 @@ pub async fn load_content(
 }
 
 pub async fn wait_and_load_content(
+    source: &Source,
     client: &Client,
     rx: &mut Receiver<Tile>,
     render_time: &mut Sender<Tile>,
 ) -> Result<(), AbwError> {
     while let Ok(mut tile) = rx.recv().await {
-        load_content(client, &mut tile, render_time).await?;
+        load_content(source, client, &mut tile, render_time).await?;
     }
     Ok(())
 }
 
-pub async fn content_load(client: &Client, key: &str, tile: &mut Tile) -> Result<(), AbwError> {
+pub async fn content_load(
+    source: &Source,
+    client: &Client,
+    tile: &mut Tile,
+) -> Result<(), AbwError> {
     if tile.state != TileState::ToLoad {
         return Err(AbwError::TileLoading(format!(
             "Tile is not in ToLoad state: {}",
@@ -113,7 +127,7 @@ pub async fn content_load(client: &Client, key: &str, tile: &mut Tile) -> Result
         )));
     }
 
-    let data = download_content_for_tile(client, key, &tile).await?;
+    let data = download_content_for_tile(source, client, &tile).await?;
     process_content_bytes(tile, data)
 }
 

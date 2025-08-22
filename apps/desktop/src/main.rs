@@ -5,7 +5,7 @@ use winit::{
     window::WindowBuilder,
 };
 
-use abetterworld::{Config, InputEvent, Key, MouseButton, Source, World};
+use abetterworld::{get_debug_config, InputEvent, Key, MouseButton, World};
 use std::sync::Arc;
 
 struct State<'window> {
@@ -74,18 +74,8 @@ impl<'window> State<'window> {
 
         surface.configure(&device, &config);
 
-        let start_up_config: Config = Config {
-            source: Source::Google {
-                key: "your_google_key".into(),
-                url: "https://your_google_url".into(),
-            },
-            start_position: (0.0, 0.0, 0.0),
-            cache_dir: "./tilesets".into(),
-            // Other fields can be set as needed.
-        };
-
         // Initialize the sphere renderer from the library.
-        let world = World::new(&device, &config, &start_up_config);
+        let world = World::new(&device, &config, &get_debug_config());
 
         Self {
             surface,
@@ -160,7 +150,8 @@ impl<'window> State<'window> {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            self.world
+            let _ = self
+                .world
                 .render(&mut render_pass, &self.queue, &self.device);
         }
 

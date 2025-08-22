@@ -1,9 +1,9 @@
 use cgmath::Point3;
 
 use crate::{
-    content::{RenderableMap, RenderableState},
+    content::{DebugVertex, RenderableMap, RenderableState},
     helpers::{AbwError, Uniforms},
-    render::{build_instances, upload_instances},
+    render::{build_instances, upload_instances, MAX_VOLUMES, SIZE_OF_VOLUME},
     world::WorldPrivate,
 };
 use std::sync::Arc;
@@ -52,8 +52,8 @@ impl RenderAndUpdate {
         render_pass: &mut wgpu::RenderPass,
         queue: &wgpu::Queue,
         world: &WorldPrivate,
-        draw_tile_volumes: Option<bool>,
-        draw_debug_camera: Option<bool>,
+        draw_tile_volumes: bool,
+        draw_debug_camera: bool,
     ) -> Result<(), AbwError> {
         render_pass.set_pipeline(&world.pipeline.pipeline);
         render_pass.set_bind_group(0, &world.pipeline.bindings.tile_bg, &[]);
@@ -85,26 +85,19 @@ impl RenderAndUpdate {
             }
         }
 
-        /*     if draw_tile_volumes.unwrap_or(false) {
-            self.draw_all_tile_volumes(render_pass, queue);
+        if draw_tile_volumes {
+            self.draw_all_tile_volumes(render_pass, world);
         }
 
-        if draw_debug_camera.unwrap_or(false) {
-            self.draw_debug_camera(render_pass, queue);
-        } */
+        if draw_debug_camera {
+            self.draw_debug_camera(world, render_pass);
+        }
 
         Ok(())
     }
 
-    /* fn draw_all_tile_volumes(render_pass: &mut wgpu::RenderPass, queue: &wgpu::Queue, camera: &Arc<Camera>, pipeline: &RenderPipeline) {
-        let camera_vp = world.camera.uniform();
-        queue.write_buffer(
-            &world.debug_pipeline.transforms.uniform_buffer,
-            0,
-            bytemuck::bytes_of(&camera_vp),
-        );
-
-        render_pass.set_bind_group(0, &world.debug_pipeline.transforms.uniform_bind_group, &[]);
+    fn draw_all_tile_volumes(&self, render_pass: &mut wgpu::RenderPass, world: &WorldPrivate) {
+        render_pass.set_bind_group(0, &world.debug_pipeline.bindings.tile_bg, &[]);
         render_pass.set_pipeline(&world.debug_pipeline.pipeline);
         render_pass.set_index_buffer(
             world.frustum_render.volume_buffer.slice(..),
@@ -112,46 +105,18 @@ impl RenderAndUpdate {
         );
         render_pass.set_vertex_buffer(0, world.frustum_render.vertex_buffer.slice(..));
 
-        // start past the debug camera
-        let mut volume_counter = 1;
-        let latest_render = world.content.renderable.read().unwrap();
-        for _tile in latest_render.iter() {
-            if volume_counter >= MAX_VOLUMES {
-                //eprintln!("Hit maximum number of volumes");
+        for (index, _renderable) in self.frame.tiles.iter().enumerate() {
+            if index >= MAX_VOLUMES as usize {
+                log::warn!("Hit maximum number of volumes (Render)");
             } else {
-                render_pass.draw_indexed(0..36, volume_counter as i32 * 8, 0..1);
+                render_pass.draw_indexed(0..36, (index as i32 + 1) * 8, 0..1);
             }
-            volume_counter += 1;
         }
     }
 
-    pub fn draw_debug_camera(&world, render_pass: &mut wgpu::RenderPass, queue: &wgpu::Queue) {
-        let mut camera_vp = world.camera.uniform();
-        camera_vp.free_space = 0.5;
-
-        queue.write_buffer(
-            &world.debug_pipeline.transforms.uniform_buffer,
-            0,
-            bytemuck::bytes_of(&camera_vp),
-        );
-
-        render_pass.set_bind_group(0, &world.debug_pipeline.transforms.uniform_bind_group, &[]);
+    pub fn draw_debug_camera(&self, world: &WorldPrivate, render_pass: &mut wgpu::RenderPass) {
+        render_pass.set_bind_group(0, &world.debug_pipeline.bindings.tile_bg, &[]);
         render_pass.set_pipeline(&world.debug_pipeline.pipeline);
-
-        let corners = world.debug_camera.frustum_corners();
-        let new_frustum_vertices: Vec<DebugVertex> = corners
-            .iter()
-            .map(|p| DebugVertex {
-                position: [p.x as f32, p.y as f32, p.z as f32],
-                color: [1.0, 0.0, 0.0, 1.0],
-            })
-            .collect();
-
-        queue.write_buffer(
-            &world.frustum_render.vertex_buffer,
-            0,
-            bytemuck::cast_slice(&new_frustum_vertices),
-        );
 
         render_pass.set_vertex_buffer(0, world.frustum_render.vertex_buffer.slice(..));
         render_pass.set_index_buffer(
@@ -159,7 +124,7 @@ impl RenderAndUpdate {
             wgpu::IndexFormat::Uint16,
         );
         render_pass.draw_indexed(0..36, 0, 0..1);
-    } */
+    }
 
     pub fn update(
         &mut self,
@@ -169,55 +134,74 @@ impl RenderAndUpdate {
         world: &mut WorldPrivate,
         eye_pos: &Point3<f64>,
         uniform_camera_mvp: &Uniforms,
-        draw_tile_volumes: Option<bool>,
-        draw_debug_camera: Option<bool>,
+        draw_tile_volumes: bool,
+        draw_debug_camera: bool,
     ) -> Result<(), AbwError> {
-        /*         if (draw_debug_camera) {
-            let user_state = content.camera.user_state.read().unwrap();
-            let derived_state = content.camera.derived_state.read().unwrap();
+        if draw_debug_camera {
+            if let Some(debug_camera) = &world.debug_camera {
+                let corners = debug_camera.frustum_corners();
+                let new_frustum_vertices: Vec<DebugVertex> = corners
+                    .iter()
+                    .map(|p| DebugVertex {
+                        position: [
+                            (p.x - eye_pos.x) as f32,
+                            (p.y - eye_pos.y) as f32,
+                            (p.z - eye_pos.z) as f32,
+                        ],
+                        color: [1.0, 0.0, 0.0, 0.3],
+                    })
+                    .collect();
 
-            // Update the camera refinement data
-            if let Ok(mut state) = content.paging_state.write() {
-                *state = CameraRefinementData {
-                    position: user_state.position.eye,
-                    far: derived_state.far,
-                    fovy: user_state.fovy,
-                };
+                queue.write_buffer(
+                    &world.frustum_render.vertex_buffer,
+                    0,
+                    bytemuck::cast_slice(&new_frustum_vertices),
+                );
             }
+        }
 
-            // Calculate the minimum distance to the camera
-            min_distance = (user_state.position.eye - user_state.position.target).magnitude();
+        {
+            if let Some(instance_buffer) = world.pipeline.bindings.instance_buffer.as_mut() {
+                let renderable_tiles = world.content.renderable.read().unwrap();
+                self.frame = build_frame(&renderable_tiles);
+                let renderable_instances = build_instances(&self.frame, eye_pos);
+                upload_instances(device, queue, instance_buffer, &renderable_instances);
+            } else {
+                return Err(AbwError::Internal(
+                    "Missing instance buffer in pipeline bindings".to_string(),
+                ));
+            }
         }
 
         if draw_tile_volumes {
-            let latest_render = content.renderable.read().unwrap();
-            let mut volume_counter = 1;
-            for tile in latest_render.iter() {
-                let renderable = &tile.1;
-
+            for (index, renderable) in self.frame.tiles.iter().enumerate() {
                 let new_frustum_vertices: Vec<DebugVertex> = renderable
                     .culling_volume
                     .corners
                     .iter()
                     .map(|p| DebugVertex {
-                        position: [p.x as f32, p.y as f32, p.z as f32],
+                        position: [
+                            (p.x - eye_pos.x) as f32,
+                            (p.y - eye_pos.y) as f32,
+                            (p.z - eye_pos.z) as f32,
+                        ],
                         color: [1.0, 1.0, 0.25, 0.1],
                     })
                     .collect();
 
-                if volume_counter >= MAX_VOLUMES {
-                    //eprintln!("Hit maximum number of volumes");
+                if (index as u64) >= MAX_VOLUMES {
+                    log::warn!("Hit maximum number of volumes (Update)");
                 } else {
                     queue.write_buffer(
-                        &frustum_render.vertex_buffer,
-                        volume_counter * SIZE_OF_VOLUME,
+                        &world.frustum_render.vertex_buffer,
+                        (index as u64 + 1) * SIZE_OF_VOLUME,
                         bytemuck::cast_slice(&new_frustum_vertices),
                     );
-                    volume_counter += 1;
                 }
             }
-        } */
+        }
 
+        // main camera
         {
             let camera_buffer: &wgpu::Buffer = world
                 .pipeline
@@ -233,16 +217,14 @@ impl RenderAndUpdate {
             );
         }
 
+        // debug camera
         {
-            if let Some(instance_buffer) = world.pipeline.bindings.instance_buffer.as_mut() {
-                let renderable_tiles = world.content.renderable.read().unwrap();
-                self.frame = build_frame(&renderable_tiles);
-                let renderable_instances = build_instances(&self.frame, eye_pos);
-                upload_instances(device, queue, instance_buffer, &renderable_instances);
-            } else {
-                return Err(AbwError::Internal(
-                    "Missing instance buffer in pipeline bindings".to_string(),
-                ));
+            if let Some(camera_buffer) = world.debug_pipeline.bindings.camera_buffer.as_ref() {
+                queue.write_buffer(
+                    camera_buffer,
+                    0,
+                    bytemuck::cast_slice(std::slice::from_ref(uniform_camera_mvp)),
+                );
             }
         }
 

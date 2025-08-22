@@ -7,6 +7,7 @@ use crate::content::Tile;
 use crate::content::TileSetImporter;
 use crate::helpers::channel::channel;
 use crate::helpers::channel::Sender;
+use crate::Source;
 use crate::{content::TileManager, dynamics::Camera, helpers::AbwError};
 use gloo_timers::future::TimeoutFuture;
 use once_cell::sync::Lazy;
@@ -18,9 +19,10 @@ use wasm_bindgen_futures::spawn_local;
 static ACTIVE_JOBS: Lazy<AtomicI32> = Lazy::new(|| AtomicI32::new(0));
 
 pub fn start_pager(
-    _camera_src: Arc<Camera>,
-    _tile_mgr: Arc<TileManager>,
-    _render_tx: Sender<Tile>,
+    source: &Source,
+    camera_src: Arc<Camera>,
+    tile_mgr: Arc<TileManager>,
+    render_tx: Sender<Tile>,
 ) -> Result<(), AbwError> {
     spawn_local(async move {
         match init_wasm_indexdb_on_every_thread().await {
@@ -28,14 +30,23 @@ pub fn start_pager(
             Err(e) => log::error!("Failed to initialize IndexedDB: {:?}", e),
         }
 
+        let source_clone = source.clone();
+        let camera_clone = camera_src.clone();
+        let tile_mgr_clone = tile_mgr.clone();
+        let render_tx_clone = render_tx.clone();
+
         // run update_pager every 2 seconds
         loop {
-            if let Err(e) = update_pager(_camera_src.clone(), _tile_mgr.clone(), _render_tx.clone())
-                .map_err(|e| {
-                    log::error!("Failed to update pager: {:?}", e);
-                    e
-                })
-            {
+            if let Err(e) = update_pager(
+                &source_clone,
+                &camera_clone,
+                &tile_mgr_clone,
+                &render_tx_clone,
+            )
+            .map_err(|e| {
+                log::error!("Failed to update pager: {:?}", e);
+                e
+            }) {
                 log::error!("update_pager error: {:?}", e);
             }
             // wait 2 seconds
@@ -47,6 +58,7 @@ pub fn start_pager(
 }
 
 fn update_pager(
+    source: &Source,
     camera_src: Arc<Camera>,
     tile_mgr: Arc<TileManager>,
     render_tx: Sender<Tile>,
@@ -55,7 +67,7 @@ fn update_pager(
         .compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst)
         .is_err()
     {
-        log::warn!("update_pager already running; skipping");
+        log::debug!("update_pager already running; skipping");
         return Ok(());
     }
 
@@ -67,6 +79,7 @@ fn update_pager(
     let client_clone = client.clone();
     let pager_cam = Arc::clone(&camera_src);
     let tile_mgr = Arc::clone(&tile_mgr);
+    let source_clone = source.clone();
 
     let pager_tx_clone = pager_tx.clone();
     spawn_local(async move {
@@ -78,7 +91,7 @@ fn update_pager(
 
         // this should compare the current camera state generation to avoid redundant work
         let camera_data = pager_cam.refinement_data();
-        if let Err(e) = parser_iteration(&camera_data, &mut pager).await {
+        if let Err(e) = parser_iteration(&source_clone, &camera_data, &mut pager).await {
             log::error!("Pager thread failed: {:?}", e);
         }
 
@@ -108,15 +121,21 @@ fn update_pager(
         while let Ok(mut tile) = loader_rx.recv().await {
             let client_clone = client.clone();
             let mut render_tx_clone = render_tx.clone();
+            let source_clone = source.clone();
 
             spawn_local(async move {
                 ACTIVE_JOBS.fetch_add(1, Ordering::SeqCst);
 
-                load_content(&client_clone, &mut tile, &mut render_tx_clone)
-                    .await
-                    .unwrap_or_else(|e| {
-                        log::error!("Failed to load content for tile {}: {:?}", tile.uri, e);
-                    });
+                load_content(
+                    &source_clone,
+                    &client_clone,
+                    &mut tile,
+                    &mut render_tx_clone,
+                )
+                .await
+                .unwrap_or_else(|e| {
+                    log::error!("Failed to load content for tile {}: {:?}", tile.uri, e);
+                });
 
                 ACTIVE_JOBS.fetch_sub(1, Ordering::SeqCst);
             });

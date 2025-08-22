@@ -60,10 +60,14 @@ impl TileManager {
         tileset.retain(|tile_id, _| tiles.contains(tile_id));
     }
 
-    pub fn unload_tiles(&self) {
+    pub fn unload_tiles(&self) -> bool {
         let tileset = self.tileset.read().unwrap();
         let mut renderable = self.renderable.write().unwrap();
 
+        let initial_count = renderable.len();
         renderable.retain(|tile_id, _| tileset.contains_key(tile_id));
+        let final_count = renderable.len();
+
+        final_count < initial_count
     }
 }

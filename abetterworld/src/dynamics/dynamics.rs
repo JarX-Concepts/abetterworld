@@ -16,7 +16,7 @@ const MAX_HEIGHT: f64 = 60_000_000.0; // ~60,000 km, beyond GEO for safety
 const MIN_PITCH: f64 = Deg(-89.5).0; // looking almost straight down
 const MAX_PITCH: f64 = Deg(-5.0).0; // prevent flipping over the top
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PositionState {
     pub eye: Point3<f64>,
     pub target: Point3<f64>,
