@@ -1,4 +1,7 @@
-use crate::{dynamics::Dynamics, InputEvent, Key, MouseButton};
+use crate::{
+    dynamics::Dynamics,
+    world::{InputEvent, Key, MouseButton},
+};
 
 pub struct InputState {
     pub mouse_left_down: bool,

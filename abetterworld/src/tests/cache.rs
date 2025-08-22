@@ -9,7 +9,7 @@ mod tests {
 
     #[test]
     fn test_insert_get_lru_disk_roundtrip() {
-        init_tileset_cache();
+        init_tileset_cache("../tilesets");
 
         let cache = get_tileset_cache();
         let base_key = "test-key";

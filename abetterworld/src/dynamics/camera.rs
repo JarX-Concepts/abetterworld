@@ -9,7 +9,8 @@ use std::sync::{
 use crate::{
     dynamics::PositionState,
     helpers::{
-        decompose_matrix64_to_uniform, extract_frustum_planes, geodetic_to_ecef_z_up, Uniforms,
+        decompose_matrix64_to_uniform, extract_frustum_planes, geodetic_to_ecef_z_up,
+        remove_translation, Uniforms,
     },
 };
 
@@ -119,9 +120,12 @@ impl Camera {
     }
 
     /// internal: recompute cam_world and UBO
-    pub fn update(&self, distance_to_geom: Option<f64>) -> Matrix4<f64> {
+    pub fn update(&self, distance_to_geom: Option<f64>) -> (Point3<f64>, Uniforms) {
         if !self.dirty.load(Ordering::Relaxed) {
-            return self.derived_state.read().unwrap().proj_view_matrix;
+            return (
+                self.user_state.read().unwrap().position.eye,
+                self.derived_state.read().unwrap().uniform,
+            );
         }
 
         let user_state = self.user_state.read().unwrap();
@@ -142,20 +146,31 @@ impl Camera {
             .unwrap_or((max_distance * near_scale).clamp(NEAR_MIN, NEAR_MAX));
         derived_state.far = user_state.far.unwrap_or(d);
 
+        // Projection (f64 to preserve precision while deriving planes, etc.)
         let proj64 = cgmath::perspective(
             user_state.fovy,
             user_state.aspect,
             derived_state.near,
             derived_state.far,
         );
-        let model_view_mat = Matrix4::look_at_rh(
+
+        // View matrix (right-handed look-at). This is the *full* view: R^T * T(-eye).
+        let view64 = Matrix4::look_at_rh(
             user_state.position.eye,
             user_state.position.target,
             user_state.position.up,
         );
-        derived_state.proj_view_matrix = proj64 * model_view_mat;
-        derived_state.planes = extract_frustum_planes(&derived_state.proj_view_matrix);
-        derived_state.uniform = decompose_matrix64_to_uniform(&derived_state.proj_view_matrix);
+
+        // 1) For CPU culling and world->clip math on CPU, keep the full P*V.
+        let proj_view_full = proj64 * view64;
+        derived_state.planes = extract_frustum_planes(&proj_view_full);
+
+        // 2) For the GPU *camera uniform*, remove translation from V to avoid double-subtracting,
+        //    because each node model will already be pretranslated by -eye on the CPU.
+        let view_no_translation64 = remove_translation(view64); // ~R^T
+        let proj_view_rot64 = proj64 * view_no_translation64; // P * R^T
+        derived_state.proj_view_matrix = proj_view_rot64;
+        derived_state.uniform = decompose_matrix64_to_uniform(&proj_view_rot64);
 
         self.generation.fetch_add(1, Ordering::Relaxed);
         self.dirty.store(false, Ordering::Relaxed);
@@ -168,7 +183,7 @@ impl Camera {
             };
         }
 
-        derived_state.proj_view_matrix
+        (user_state.position.eye, derived_state.uniform)
     }
 
     /// expose the latest UBO

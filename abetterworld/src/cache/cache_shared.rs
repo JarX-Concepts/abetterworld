@@ -1,10 +1,10 @@
-use crate::cache::TilesetCache;
+use crate::cache::{self, TilesetCache};
 use std::sync::{Arc, OnceLock};
 
 static TILESET_CACHE: OnceLock<Arc<TilesetCache>> = OnceLock::new();
 
-pub fn init_tileset_cache() -> Arc<TilesetCache> {
-    let cache = Arc::new(TilesetCache::new());
+pub fn init_tileset_cache(cache_dir: &str) -> Arc<TilesetCache> {
+    let cache = Arc::new(TilesetCache::new(cache_dir));
     if TILESET_CACHE.set(cache.clone()).is_err() {
         log::warn!("TilesetCache already initialized");
     }

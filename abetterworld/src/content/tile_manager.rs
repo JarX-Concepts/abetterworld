@@ -1,14 +1,15 @@
+use crate::content::types::{RenderableState, Tile};
 use std::{
     collections::{HashMap, HashSet},
-    sync::RwLock,
+    sync::{Arc, RwLock},
 };
 
-use crate::content::types::{RenderableState, Tile};
+pub type RenderableMap = HashMap<u64, Arc<RenderableState>>;
 
 #[derive(Debug)]
 pub struct TileManager {
     pub tileset: RwLock<HashMap<u64, Tile>>,
-    pub renderable: RwLock<HashMap<u64, RenderableState>>,
+    pub renderable: RwLock<RenderableMap>,
 }
 
 impl TileManager {
@@ -47,7 +48,7 @@ impl TileManager {
         };
         if add_this_tile {
             let mut renderable = self.renderable.write().unwrap();
-            renderable.insert(tile.tile.id, tile);
+            renderable.insert(tile.tile.id, tile.into());
         }
     }
 

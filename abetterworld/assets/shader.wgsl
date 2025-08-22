@@ -1,61 +1,75 @@
-struct Uniform {
-    mat: mat4x4<f32>,        // 4x4 matrix (64 bytes)
-    offset: vec3<f32>,       // offset (12 bytes)
-    padding: f32,            // padding (4 bytes) to align to 16 bytes
+struct Camera {
+  viewProj: mat4x4<f32>,
 };
 
-// Node (model) uniform buffer (model matrix)
-@group(0) @binding(0)
-var<uniform> node: Uniform;
-
-// Texture and sampler remain in group 2
-@group(1) @binding(0)
-var my_texture: texture_2d<f32>;
-@group(1) @binding(1)
-var my_sampler: sampler;
-
-struct VertexInput {
-    @location(0) position: vec3<f32>,
-    @location(1) normal: vec3<f32>,
-    @location(2) color: vec4<f32>,
-    @location(3) texcoord0: vec2<f32>,
-    @location(4) texcoord1: vec2<f32>,
+struct Instance3x4 {
+  r0: vec4<f32>,
+  r1: vec4<f32>,
+  r2: vec4<f32>,
 };
 
-struct VertexOutput {
-    @builtin(position) position: vec4<f32>,
-    @location(0) color: vec4<f32>,
-    @location(1) normal: vec3<f32>,
-    @location(2) texcoord0: vec2<f32>,
-    @location(3) texcoord1: vec2<f32>,
+struct InstanceBuffer {
+  data: array<Instance3x4>,
+};
+
+@group(0) @binding(0) var<uniform> uCamera : Camera;
+@group(0) @binding(1) var<storage, read> Instances : InstanceBuffer;
+
+@group(1) @binding(0) var my_texture: texture_2d<f32>;
+@group(1) @binding(1) var my_sampler: sampler;
+
+struct VSIn {
+  @location(0) position : vec3<f32>,
+  @location(1) normal   : vec3<f32>,
+  @location(2) color    : vec4<f32>,
+  @location(3) tex0     : vec2<f32>,
+  @location(4) tex1     : vec2<f32>,
+  @builtin(instance_index) iid : u32,
+};
+
+struct VSOut {
+  @builtin(position) pos : vec4<f32>,
+  @location(0) color : vec4<f32>,
+  @location(1) normal: vec3<f32>,
+  @location(2) tex0  : vec2<f32>,
+  @location(3) tex1  : vec2<f32>,
 };
 
 @vertex
-fn vs_main(input: VertexInput) -> VertexOutput {
-    var output: VertexOutput;
+fn vs_main(in: VSIn) -> VSOut {
+  var out: VSOut;
 
-    // Apply per-object offset to the vertex position
-    let local_position = input.position + node.offset;
+  let inst = Instances.data[in.iid];
 
-    // Transform by the full model-view matrix to get clip-space position
-    let world_position = node.mat * vec4<f32>(local_position, 1.0);
+  let v = vec4<f32>(in.position, 1.0);
+  let world = vec3<f32>(
+    dot(inst.r0, v),
+    dot(inst.r1, v),
+    dot(inst.r2, v),
+  );
 
-    output.position = world_position;
+  out.pos = uCamera.viewProj * vec4<f32>(world, 1.0);
 
-    output.color = input.color;
-    output.normal = input.normal;
-    output.texcoord0 = input.texcoord0;
-    output.texcoord1 = input.texcoord1;
-    return output;
+  let n = vec3<f32>(
+    dot(inst.r0.xyz, in.normal),
+    dot(inst.r1.xyz, in.normal),
+    dot(inst.r2.xyz, in.normal),
+  );
+  out.normal = normalize(n);
+
+  out.color = in.color;
+  out.tex0  = in.tex0;
+  out.tex1  = in.tex1;
+  return out;
 }
 
 @fragment
 fn fs_main(
-    @location(0) color: vec4<f32>,
-    @location(1) normal: vec3<f32>,
-    @location(2) texcoord0: vec2<f32>,
-    @location(3) texcoord1: vec2<f32>,
+  @location(0) color : vec4<f32>,
+  @location(1) normal: vec3<f32>,
+  @location(2) tex0  : vec2<f32>,
+  @location(3) tex1  : vec2<f32>,
 ) -> @location(0) vec4<f32> {
-    let tex_color = textureSample(my_texture, my_sampler, texcoord0);
-    return tex_color * color;
+  let tex_color = textureSample(my_texture, my_sampler, tex0);
+  return tex_color * color;
 }

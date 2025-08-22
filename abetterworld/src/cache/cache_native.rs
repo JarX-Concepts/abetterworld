@@ -51,8 +51,8 @@ fn default_cache_dir() -> std::path::PathBuf {
 }
 
 impl TilesetCache {
-    pub fn new() -> Self {
-        let base_dir = default_cache_dir();
+    pub fn new(cache_dir: &str) -> Self {
+        let base_dir = cache_dir.clone().into();
         let _ = fs::create_dir_all(&base_dir);
         Self {
             map: Arc::new(NativeCache::new(LRU_CACHE_CAPACITY)),
@@ -135,21 +135,4 @@ impl TilesetCache {
 
         Ok(())
     }
-}
-
-static TILESET_CACHE: OnceLock<Arc<TilesetCache>> = OnceLock::new();
-
-pub fn init_tileset_cache() -> Arc<TilesetCache> {
-    let cache = Arc::new(TilesetCache::new());
-    if TILESET_CACHE.set(cache.clone()).is_err() {
-        log::warn!("TilesetCache already initialized");
-    }
-    cache
-}
-
-pub fn get_tileset_cache() -> Arc<TilesetCache> {
-    TILESET_CACHE
-        .get()
-        .expect("TilesetCache not initialized")
-        .clone()
 }

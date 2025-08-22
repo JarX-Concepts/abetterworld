@@ -24,7 +24,7 @@ pub struct TilesetCache {
 }
 
 impl TilesetCache {
-    pub fn new() -> Self {
+    pub fn new(_cache_dir: &str) -> Self {
         let map: Arc<dyn TilesetMemoryCache> = Arc::new(WasmCache::new());
 
         Self {

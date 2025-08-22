@@ -29,7 +29,7 @@ mod wasm_tests {
         console_log::init_with_level(log::Level::Info).ok();
         info!("Starting IndexedDB stress test...");
 
-        init_tileset_cache();
+        init_tileset_cache("");
 
         let _ = init_wasm_indexdb_on_every_thread()
             .await

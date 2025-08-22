@@ -3,8 +3,14 @@ use wgpu::util::DeviceExt;
 use crate::{
     content::{DebugVertex, Vertex},
     helpers::{uniform_size, Uniforms},
-    DepthBuffer,
 };
+
+pub struct DepthBuffer {
+    pub texture: wgpu::Texture,
+    pub view: wgpu::TextureView,
+    pub format: wgpu::TextureFormat,
+    pub sample_count: u32,
+}
 
 impl DepthBuffer {
     pub fn new(

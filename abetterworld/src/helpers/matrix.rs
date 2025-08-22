@@ -7,18 +7,12 @@ use crate::content::BoundingBox;
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct Uniforms {
     pub mat: [[f32; 4]; 4], // 4x4 matrix in f32, with fractional translation
-    pub offset: [f32; 3],   // integer world offset
-    pub free_space: f32,    // padding for alignment
 }
 
 impl Uniforms {
     // default constructor for convenience
     pub fn default() -> Self {
-        Self {
-            mat: [[0.0; 4]; 4],
-            offset: [0.0; 3],
-            free_space: 0.0,
-        }
+        Self { mat: [[0.0; 4]; 4] }
     }
 }
 
@@ -69,11 +63,7 @@ pub fn decompose_matrix64_to_uniform(mat: &Matrix4<f64>) -> Uniforms {
         ],
     ];
 
-    Uniforms {
-        mat: mat32,
-        offset: [offset.x, offset.y, offset.z],
-        free_space: 0.0,
-    }
+    Uniforms { mat: mat32 }
 }
 
 /// Convert Uniforms back to Matrix4<f64>
@@ -84,11 +74,6 @@ pub fn recompose_uniform_to_matrix64(uniforms: &Uniforms) -> Matrix4<f64> {
             mat64[i][j] = uniforms.mat[i][j] as f64;
         }
     }
-
-    // Recompose the high-precision offset into translation (w row)
-    mat64.w.x += uniforms.offset[0] as f64;
-    mat64.w.y += uniforms.offset[1] as f64;
-    mat64.w.z += uniforms.offset[2] as f64;
 
     mat64
 }
@@ -157,4 +142,13 @@ pub fn is_bounding_volume_visible(
     }
 
     true
+}
+
+/// Zero out the translation of a column-major Matrix4<f64>.
+#[inline]
+pub fn remove_translation(mut v: Matrix4<f64>) -> Matrix4<f64> {
+    // cgmath Matrix4 is column-major: x, y, z, w are columns.
+    // Translation lives in w.x/y/z. Keep w.w = 1.
+    v.w = Vector4::new(0.0, 0.0, 0.0, v.w.w);
+    v
 }

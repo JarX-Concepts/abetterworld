@@ -12,7 +12,7 @@ mod tests {
 
     #[test]
     fn test_paging() {
-        init_tileset_cache();
+        init_tileset_cache("../tilesets");
 
         let (_camera, debug_camera) = init_camera();
 
