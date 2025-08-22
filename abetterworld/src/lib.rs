@@ -23,5 +23,6 @@ pub fn get_debug_config() -> Config {
         debug_camera_geodetic_position: (34.4208, -119.6982, 50000.0),
         debug_camera_render_frustum: true,
         debug_render_volumes: true,
+        tile_culling: false,
     }
 }

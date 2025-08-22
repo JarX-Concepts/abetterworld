@@ -1,7 +1,7 @@
 // src/lib.rs
 #![allow(non_snake_case)]
 
-use abetterworld::ABetterWorld;
+use abetterworld::{get_debug_config, World};
 use jni::objects::{JClass, JObject};
 use jni::sys::{jint, jlong, jobject};
 use jni::JNIEnv;
@@ -55,7 +55,7 @@ struct GfxState {
     config: wgpu::SurfaceConfiguration,
     // Keep window alive so surface handle stays valid
     _window: Box<AndroidWindow>,
-    abw: ABetterWorld,
+    abw: World,
 }
 
 pub struct State {
@@ -224,7 +224,7 @@ pub extern "C" fn Java_com_jarxconcepts_abetterworld_Renderer_nativeInitRenderer
         log::error!("surface.configure validation error: {err}");
     }
 
-    let abw = ABetterWorld::new(&device, &config);
+    let abw = World::new(&device, &config, &get_debug_config());
 
     state.gfx = Some(GfxState {
         _instance: instance,
@@ -323,7 +323,7 @@ pub extern "C" fn Java_com_jarxconcepts_abetterworld_Renderer_nativeRender(
             timestamp_writes: None,
         });
 
-        g.abw.render(&mut rp, &g.queue, &g.device);
+        g.abw.render(&mut rp);
     }
 
     g.queue.submit([encoder.finish()]);

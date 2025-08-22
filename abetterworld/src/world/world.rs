@@ -62,6 +62,7 @@ pub struct Config {
     pub debug_camera_geodetic_position: (f64, f64, f64),
     pub debug_camera_render_frustum: bool,
     pub debug_render_volumes: bool,
+    pub tile_culling: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -290,8 +291,7 @@ impl World {
             }
         }
 
-        //self.debug_camera.yaw(Deg(0.1));
-        //self.debug_camera.write().unwrap().zoom(-500.0);
+        // Update the debug camera if it exists
         if let Some(debug_camera) = self.private.debug_camera.as_ref() {
             let min_distance = self.render.get_min_distance(&debug_camera.position().eye);
 
@@ -318,6 +318,7 @@ impl World {
                 &uniform,
                 self.config.debug_render_volumes,
                 self.config.use_debug_camera,
+                self.config.tile_culling,
             )?;
         }
 

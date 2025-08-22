@@ -30,11 +30,15 @@ pub struct RenderFrame {
 }
 
 // Flatten to a stable list (ideally grouped by mesh/material)
-fn build_frame(latest_render: &RenderableMap, planes: FrustumPlanes) -> RenderFrame {
+fn build_frame(
+    latest_render: &RenderableMap,
+    tile_culling: bool,
+    planes: FrustumPlanes,
+) -> RenderFrame {
     let mut frame = RenderFrame { tiles: Vec::new() };
 
     for (_, r) in latest_render.iter() {
-        if !is_bounding_volume_visible(&planes, &r.culling_volume) {
+        if tile_culling && !is_bounding_volume_visible(&planes, &r.culling_volume) {
             continue;
         }
         frame.tiles.push(r.clone());
@@ -160,6 +164,7 @@ impl RenderAndUpdate {
         uniform_camera_mvp: &Uniforms,
         draw_tile_volumes: bool,
         draw_debug_camera: bool,
+        tile_culling: bool,
     ) -> Result<(), AbwError> {
         if draw_debug_camera {
             if let Some(debug_camera) = &world.debug_camera {
@@ -193,7 +198,7 @@ impl RenderAndUpdate {
 
             if let Some(instance_buffer) = world.pipeline.bindings.instance_buffer.as_mut() {
                 let renderable_tiles = world.content.renderable.read().unwrap();
-                self.frame = build_frame(&renderable_tiles, planes);
+                self.frame = build_frame(&renderable_tiles, tile_culling, planes);
                 let renderable_instances = build_instances(&self.frame, eye_pos);
                 upload_instances(device, queue, instance_buffer, &renderable_instances);
             } else {

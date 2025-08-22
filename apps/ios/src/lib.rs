@@ -1,6 +1,6 @@
 use std::ffi::c_void;
 
-use abetterworld::{ABetterWorld, InputEvent};
+use abetterworld::{get_debug_config, InputEvent, World};
 use core_graphics::geometry::CGSize;
 use metal::{self, MTLRegion};
 use objc::{self, msg_send, runtime::Object, sel, sel_impl};
@@ -23,7 +23,7 @@ struct StateInner {
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     size: (u32, u32),
-    abw: ABetterWorld,
+    abw: World,
     texture: wgpu::Texture,
     texture_view: wgpu::TextureView,
     metal_layer: *mut Object,
@@ -150,7 +150,7 @@ pub extern "C" fn abetterworld_ios_init(
     };
 
     // Initialize sphere renderer with device and config
-    let abw = ABetterWorld::new(&device, &config);
+    let abw = World::new(&device, &config, &get_debug_config());
 
     state.inner = Some(StateInner {
         device,
@@ -302,9 +302,7 @@ pub extern "C" fn abetterworld_ios_render(ptr: *mut ABetterWorldiOS) {
             occlusion_query_set: None,
         });
 
-        state
-            .abw
-            .render(&mut render_pass, &state.queue, &state.device);
+        state.abw.render(&mut render_pass);
     }
 
     // Create a staging buffer for the copy

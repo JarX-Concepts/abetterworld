@@ -2,10 +2,9 @@ use crate::cache::cache_lru_native::NativeCache;
 use crate::helpers::{hash_uri, AbwError};
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, RwLock};
 use std::{fs, path::Path};
 
-const TILESET_CACHE_DIR: &str = "./tilesets";
 const LRU_CACHE_CAPACITY: u64 = 512;
 
 #[derive(Serialize, Deserialize)]
@@ -27,32 +26,9 @@ pub struct TilesetCache {
     base_dir: std::path::PathBuf,
 }
 
-#[cfg(target_os = "android")]
-fn default_cache_dir() -> std::path::PathBuf {
-    // Requires the ndk-glue crate and that your Android entrypoint uses it.
-    // internal_data_path() is private app storage: /data/data/<pkg>/files
-    // Prefer `cache_path()` if you want the OS-manageable cache dir.
-    let act = ndk_glue::native_activity();
-    act.cache_path().to_path_buf().join("tilesets")
-}
-
-#[cfg(target_os = "ios")]
-fn default_cache_dir() -> std::path::PathBuf {
-    // `directories` or `dirs-next` will resolve to <App Sandbox>/Library/Caches
-    directories::BaseDirs::new()
-        .and_then(|b| Some(b.cache_dir().to_path_buf()))
-        .unwrap_or(std::env::temp_dir())
-        .join("tilesets")
-}
-
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-fn default_cache_dir() -> std::path::PathBuf {
-    std::path::PathBuf::from("./tilesets")
-}
-
 impl TilesetCache {
     pub fn new(cache_dir: &str) -> Self {
-        let base_dir = cache_dir.clone().into();
+        let base_dir = cache_dir.into();
         let _ = fs::create_dir_all(&base_dir);
         Self {
             map: Arc::new(NativeCache::new(LRU_CACHE_CAPACITY)),
@@ -128,10 +104,10 @@ impl TilesetCache {
             .file_lock
             .write()
             .map_err(|_| AbwError::Io("cache get lock poisoned".into()))?;
-        if Path::new(TILESET_CACHE_DIR).exists() {
-            fs::remove_dir_all(TILESET_CACHE_DIR).ok();
+        if self.base_dir.exists() {
+            fs::remove_dir_all(&self.base_dir).ok();
         }
-        fs::create_dir_all(TILESET_CACHE_DIR).ok();
+        fs::create_dir_all(&self.base_dir).ok();
 
         Ok(())
     }
