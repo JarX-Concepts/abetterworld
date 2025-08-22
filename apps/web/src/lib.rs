@@ -216,8 +216,7 @@ impl<'window> State<'window> {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            self.world
-                .render(&mut render_pass, &self.queue, &self.device);
+            self.world.render(&mut render_pass);
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
@@ -230,11 +229,11 @@ impl<'window> State<'window> {
 #[wasm_bindgen(start)]
 pub async fn start() -> Result<(), JsValue> {
     setup_console_log();
-    println!("Starting Blue Sphere WASM...");
+    println!("Starting A Better World WASM...");
 
     let event_loop = EventLoop::new().unwrap();
     let window = WindowBuilder::new()
-        .with_title("Blue Sphere WASM")
+        .with_title("A Better World WASM")
         .with_inner_size(winit::dpi::PhysicalSize::new(800, 600)) // harmless placeholder on web
         .build(&event_loop)
         .unwrap();

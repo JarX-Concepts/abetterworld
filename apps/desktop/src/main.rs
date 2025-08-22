@@ -150,9 +150,7 @@ impl<'window> State<'window> {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            let _ = self
-                .world
-                .render(&mut render_pass, &self.queue, &self.device);
+            let _ = self.world.render(&mut render_pass);
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));

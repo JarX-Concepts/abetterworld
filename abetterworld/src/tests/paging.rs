@@ -28,7 +28,7 @@ mod tests {
 
         let _ = init();
         let _ = start_pager(
-            &crate::Source::Google {
+            crate::Source::Google {
                 key: GOOGLE_API_KEY.to_string(),
                 url: GOOGLE_API_URL.to_string(),
             },

@@ -1,6 +1,8 @@
 use cgmath::{
     Deg, EuclideanSpace, InnerSpace, Matrix4, Point3, SquareMatrix, Vector3, Vector4, Zero,
 };
+
+pub type FrustumPlanes = [(Vector4<f64>, Vector3<f64>, f64); 6];
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
     Arc, RwLock,
@@ -41,7 +43,7 @@ impl CameraRefinementData {
 
 #[derive(Debug, Clone)]
 pub struct CameraDerivedMatrices {
-    planes: [(Vector4<f64>, Vector3<f64>, f64); 6],
+    planes: FrustumPlanes,
     proj_view_matrix: Matrix4<f64>,
     uniform: Uniforms,
 
@@ -197,7 +199,7 @@ impl Camera {
     }
 
     /// expose the latest planes
-    pub fn planes(&self) -> [(Vector4<f64>, Vector3<f64>, f64); 6] {
+    pub fn planes(&self) -> FrustumPlanes {
         self.derived_state.read().unwrap().planes
     }
 

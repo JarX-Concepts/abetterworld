@@ -215,15 +215,9 @@ impl World {
         // 3) (If using MSAA) also recreate your MSAA color target here
     }
 
-    pub fn render(
-        &self,
-        render_pass: &mut wgpu::RenderPass,
-        queue: &wgpu::Queue,
-        _device: &wgpu::Device,
-    ) -> Result<(), AbwError> {
+    pub fn render(&self, render_pass: &mut wgpu::RenderPass) -> Result<(), AbwError> {
         self.render.render(
             render_pass,
-            queue,
             &self.private,
             self.config.debug_render_volumes,
             self.config.use_debug_camera,
@@ -299,19 +293,23 @@ impl World {
         //self.debug_camera.yaw(Deg(0.1));
         //self.debug_camera.write().unwrap().zoom(-500.0);
         if let Some(debug_camera) = self.private.debug_camera.as_ref() {
-            let (_, _, dirty) = debug_camera.update(None);
+            let min_distance = self.render.get_min_distance(&debug_camera.position().eye);
+
+            let (_, _, dirty) = debug_camera.update(min_distance);
             if dirty {
                 needs_update = true;
             }
         }
-        let (eye_pos, uniform, dirty) = self.private.camera.update(None);
+        let min_distance = self
+            .render
+            .get_min_distance(&self.private.camera.position().eye);
+        let (eye_pos, uniform, dirty) = self.private.camera.update(min_distance);
         if dirty {
             needs_update = true;
         }
 
         // we do not need to update anything
         if needs_update {
-            log::debug!("World state changed, updating render state");
             self.render.update(
                 device,
                 queue,

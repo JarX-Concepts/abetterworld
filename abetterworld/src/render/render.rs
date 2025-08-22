@@ -1,8 +1,9 @@
-use cgmath::Point3;
+use cgmath::{EuclideanSpace, InnerSpace, Point3};
 
 use crate::{
-    content::{DebugVertex, RenderableMap, RenderableState, MAX_RENDERABLE_TILES_US},
-    helpers::{AbwError, Uniforms},
+    content::{DebugVertex, Ray, RenderableMap, RenderableState, MAX_RENDERABLE_TILES_US},
+    dynamics::FrustumPlanes,
+    helpers::{is_bounding_volume_visible, AbwError, Uniforms},
     render::{build_instances, upload_instances, SIZE_OF_VOLUME},
     world::WorldPrivate,
 };
@@ -29,12 +30,13 @@ pub struct RenderFrame {
 }
 
 // Flatten to a stable list (ideally grouped by mesh/material)
-fn build_frame(latest_render: &RenderableMap) -> RenderFrame {
+fn build_frame(latest_render: &RenderableMap, planes: FrustumPlanes) -> RenderFrame {
     let mut frame = RenderFrame { tiles: Vec::new() };
 
     for (_, r) in latest_render.iter() {
-        // is tile is not in view, continue
-
+        if !is_bounding_volume_visible(&planes, &r.culling_volume) {
+            continue;
+        }
         frame.tiles.push(r.clone());
     }
     frame
@@ -50,7 +52,6 @@ impl RenderAndUpdate {
     pub fn render(
         &self,
         render_pass: &mut wgpu::RenderPass,
-        queue: &wgpu::Queue,
         world: &WorldPrivate,
         draw_tile_volumes: bool,
         draw_debug_camera: bool,
@@ -114,6 +115,29 @@ impl RenderAndUpdate {
         }
     }
 
+    pub fn get_min_distance(&self, eye_pos: &Point3<f64>) -> Option<f64> {
+        let mut min_distance: Option<f64> = None;
+
+        {
+            let eye_pos_vec = eye_pos.to_vec();
+            let neg_eye_dir = -eye_pos_vec.normalize();
+            for renderable in self.frame.tiles.iter() {
+                let distance = renderable.culling_volume.ray_intersect(&Ray {
+                    origin: eye_pos_vec,
+                    direction: neg_eye_dir,
+                });
+
+                if let Some(dist) = distance {
+                    if dist < min_distance.unwrap_or(f64::MAX) {
+                        min_distance = Some(dist);
+                    }
+                }
+            }
+        }
+
+        min_distance
+    }
+
     pub fn draw_debug_camera(&self, world: &WorldPrivate, render_pass: &mut wgpu::RenderPass) {
         render_pass.set_bind_group(0, &world.debug_pipeline.bindings.tile_bg, &[]);
         render_pass.set_pipeline(&world.debug_pipeline.pipeline);
@@ -161,9 +185,15 @@ impl RenderAndUpdate {
         }
 
         {
+            let planes = if let Some(debug_camera) = &world.debug_camera {
+                debug_camera.planes()
+            } else {
+                world.camera.planes()
+            };
+
             if let Some(instance_buffer) = world.pipeline.bindings.instance_buffer.as_mut() {
                 let renderable_tiles = world.content.renderable.read().unwrap();
-                self.frame = build_frame(&renderable_tiles);
+                self.frame = build_frame(&renderable_tiles, planes);
                 let renderable_instances = build_instances(&self.frame, eye_pos);
                 upload_instances(device, queue, instance_buffer, &renderable_instances);
             } else {

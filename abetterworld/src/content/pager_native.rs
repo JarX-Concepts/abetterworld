@@ -13,7 +13,7 @@ use crate::{
 use std::{sync::Arc, thread};
 
 pub fn start_pager(
-    source: &Source,
+    source: Source,
     camera_src: Arc<Camera>,
     tile_mgr: Arc<TileManager>,
     render_tx: Sender<Tile>,
