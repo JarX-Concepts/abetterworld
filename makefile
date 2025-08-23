@@ -1,19 +1,21 @@
 .PHONY: build-web run-web
 
 build-web:
-	cargo build --target wasm32-unknown-unknown --manifest-path apps/web/Cargo.toml
-	wasm-bindgen target/wasm32-unknown-unknown/debug/web.wasm --out-dir apps/web/pkg --target web
+	cargo build --target wasm32-unknown-unknown --manifest-path bindings/web/Cargo.toml
+	wasm-bindgen target/wasm32-unknown-unknown/debug/abw_web.wasm --out-dir bindings/web/pkg --target web
 
 start-web:
 	$(MAKE) build-web
-	cd apps/web && python3 -m http.server 8080
+	mkdir -p examples/web/pkg
+	cp -r bindings/web/pkg/* examples/web/pkg
+	cd examples/web && python3 -m http.server 8080
 
 test-web:
-	cd abetterworld && wasm-pack test --firefox --headless
+	cd crates/abetterworld && wasm-pack test --firefox --headless
 
 .PHONY: build-ios-debug build-ios-release
 
-CRATE_IOS = abetterworld_ios
+CRATE_IOS = abw_ios
 
 build-ios-debug:
 	$(MAKE) build-ios-xcframework BUILD_TYPE=debug
@@ -37,7 +39,7 @@ build-ios-cbindgen:
 	mkdir -p target/headers
 
 	# Generate a single header we’ll attach to all slices
-	cbindgen apps/ios -o target/headers/abetterworld_ios.h
+	cbindgen bindings/ios -o target/headers/abetterworld_ios.h
 	@echo "✅ Header generated: target/headers/abetterworld_ios.h"
 
 
@@ -62,8 +64,8 @@ build-ios-xcframework:
 	rm -rf target/xcframework/$(BUILD_DIR)/$(CRATE_IOS).xcframework
 
 	xcodebuild -create-xcframework \
-		-library target/aarch64-apple-ios/$(BUILD_DIR)/lib$(CRATE_IOS).a -headers apps/ios/src \
-		-library target/universal/$(BUILD_DIR)/lib$(CRATE_IOS)_sim.a -headers apps/ios/src \
+		-library target/aarch64-apple-ios/$(BUILD_DIR)/lib$(CRATE_IOS).a \
+		-library target/universal/$(BUILD_DIR)/lib$(CRATE_IOS)_sim.a \
 		-output target/xcframework/$(BUILD_DIR)/$(CRATE_IOS).xcframework
 
 	@echo "✅ XCFramework created: target/xcframework/$(BUILD_DIR)/$(CRATE_IOS).xcframework"
@@ -77,12 +79,12 @@ ANDROID_TARGETS = \
 	armv7-linux-androideabi \
 	x86_64-linux-android
 
-CRATE_ANDROID := abetterworld_android
+CRATE_ANDROID := abw_android
 BUILD_TYPE    ?= debug
 
 # Your Android project/module path (matches screenshot)
-ANDROID_PROJECT := apps/android/android
-ANDROID_APP     := $(ANDROID_PROJECT)/app
+ANDROID_PROJECT := bindings/android/android
+ANDROID_APP     := examples/android/
 APP_JNILIBS     := $(ANDROID_APP)/src/main/jniLibs
 
 ANDROID_ENV := env -u SDKROOT -u MACOSX_DEPLOYMENT_TARGET -u CPATH -u C_INCLUDE_PATH -u CPLUS_INCLUDE_PATH -u CFLAGS -u CPPFLAGS
@@ -147,11 +149,9 @@ endif
 # ---- Public targets ----
 build-android-debug:
 	$(MAKE) build-android BUILD_TYPE=debug
-	$(MAKE) build-android-cbindgen
 
 build-android-release:
 	$(MAKE) build-android BUILD_TYPE=release
-	$(MAKE) build-android-cbindgen
 
 # ---- Rust build + copy ----
 build-android:
@@ -162,14 +162,6 @@ build-android:
 			build $(CARGO_BUILD_FLAGS) --package $(CRATE_ANDROID); \
 	done
 	$(MAKE) copy-android-libs BUILD_TYPE=$(BUILD_TYPE)
-
-# ---- Header (optional) ----
-build-android-cbindgen:
-	@echo "🔨 Building android header with cbindgen..."
-	@command -v cbindgen >/dev/null 2>&1 || cargo install --locked cbindgen
-	mkdir -p target/headers
-	cbindgen apps/android -o target/headers/abetterworld_android.h
-	@echo "✅ Header generated: target/headers/abetterworld_android.h"
 
 # ---- Housekeeping ----
 # --- copy libs: Rust .so + libc++_shared.so ---

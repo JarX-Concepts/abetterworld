@@ -26,8 +26,14 @@ jobs:
       - name: 🧱 Build Core Library (abetterworld)
         run: cargo build -p abetterworld --verbose
 
+      - name: 🧱 Build Release Core Library (abetterworld)
+        run: cargo build -p abetterworld --release --verbose
+
       - name: 🧱 Build Desktop App
-        run: cargo build -p desktop --verbose
+        run: cargo build -p abw_example_desktop --verbose
+
+      - name: 🧱 Build Release Desktop App
+        run: cargo build -p abw_example_desktop --release --verbose
 
       - name: ✅ Run Native Tests
         run: cargo test --manifest-path abetterworld/Cargo.toml --features paging_test -- --test-threads=1
