@@ -36,7 +36,7 @@ jobs:
         run: cargo build -p abw_example_desktop --release --verbose
 
       - name: ✅ Run Native Tests
-        run: cargo test --manifest-path abetterworld/Cargo.toml --features paging_test -- --test-threads=1
+        run: cargo test --manifest-path crates/abetterworld/Cargo.toml --features paging_test -- --test-threads=1
 
   web:
     name: 🌐 Web Build & Test (WASM)
