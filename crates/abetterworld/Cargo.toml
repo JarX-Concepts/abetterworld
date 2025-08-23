@@ -17,17 +17,17 @@ crate-type = ["cdylib", "rlib", "staticlib"]
 wasm = 'all(target_arch = "wasm32", target_os = "unknown")'
 
 [dependencies]
-bytemuck = { version = "1.10", features = ["derive"] }
+bytemuck = { version = "1.23", features = ["derive"] }
 cgmath = "0.18"
-wgpu = {version = "25.0.2", features = ["webgpu"]}
+wgpu = { workspace = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "gzip", "blocking", "http2", "rustls-tls-webpki-roots"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 url = "2"
-byteorder = "1.4"
-image = "0.24"
+byteorder = "1.5"
+image = "0.25"
 bytes = "1"
-dashmap = "5"
+dashmap = "6"
 once_cell = "1"
 urlencoding = "2"
 sha2 = "0.10"
@@ -35,42 +35,42 @@ hex = "0.4"
 futures = "0.3"
 threadpool = "1"
 log = "0.4"
-thiserror = "2.0.12"
+thiserror = "2.0.16"
 moka = { version = "0.12", features = ["sync"] }
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 crossbeam-channel = "0.5"
 num_cpus = "1.17.0"
-cfg-if = "1.0.1"
+cfg-if = "1.0.3"
 directories = "6.0.0"
 rayon = "1.11.0"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 gloo-timers = { version = "0.3", features = ["futures"] }
-wasm-bindgen = "0.2"
-wasm-bindgen-futures = "0"
-wasm-bindgen-test = "0.3"
+wasm-bindgen = { workspace = true }
+wasm-bindgen-futures = { workspace = true }
+wasm-bindgen-test = { workspace = true }
 wee_alloc = { version = "0.4", optional = true }
 web-sys = { version = "0.3", features = ["HtmlCanvasElement", "console", "Window", "Storage"] }
 idb = "0.6"
-js-sys = "0.3"
+js-sys = { workspace = true }
 serde-wasm-bindgen = "0.6"
-console_log = "1.0"
+console_log = { workspace = true }
 futures-util = "0.3"
-uuid = { version = "1.17", features = ["v4", "js"] }
+uuid = { version = "1.18", features = ["v4", "js"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_closure = "0.3"
 futures-channel = "0.3"
 
 [build-dependencies]
-cfg_aliases = "0.1"
+cfg_aliases = "0.2"
 
 [target.'cfg(not(target_arch = "wasm32"))'.build-dependencies]
 cmake = "0.1.54"
-cc = "1.0"
+cc = "1.2"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-cxx = "1.0.78"
-autocxx = { version = "0.28" }
+cxx = "1.0.168"
+autocxx = { version = "0.30" }
 
 [features]
 paging_test = []

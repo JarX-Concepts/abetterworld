@@ -9,7 +9,7 @@ name = "abw_android"
 crate-type = [ "cdylib"]
 
 [dependencies]
-wgpu = {version = "25.0.2", features = ["webgpu"]}
+wgpu = {version = "26.0.1", features = ["webgpu"]}
 winit = { workspace = true }
 abetterworld = { path = "../../crates/abetterworld" }
 log = "0.4"
@@ -17,5 +17,5 @@ jni = "0.21"
 futures = "0.3"
 android_log-sys = "0.3"
 ndk = "0.9"
-pollster = "0.3" 
+pollster = "0.4" 
 raw-window-handle = "=0.6.2"

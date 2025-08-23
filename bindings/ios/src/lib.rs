@@ -287,6 +287,7 @@ pub extern "C" fn abetterworld_ios_render(ptr: *mut ABetterWorldiOS) {
                     }),
                     store: wgpu::StoreOp::Store,
                 },
+                depth_slice: None,
             })],
 
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
@@ -327,7 +328,7 @@ pub extern "C" fn abetterworld_ios_render(ptr: *mut ABetterWorldiOS) {
         },
         wgpu::ImageCopyBuffer {
             buffer: &staging_buffer,
-            layout: wgpu::ImageDataLayout {
+            layout: wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(aligned_bytes_per_row),
                 rows_per_image: Some(texture_height as u32),
