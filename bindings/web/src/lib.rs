@@ -68,7 +68,6 @@ struct State<'window> {
 }
 
 impl<'window> State<'window> {
-    // ⬇️ add `canvas` param
     async fn new(
         window: &'window winit::window::Window,
         canvas: &web_sys::HtmlCanvasElement,
@@ -87,8 +86,6 @@ impl<'window> State<'window> {
             memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
         };
         let instance = wgpu::Instance::new(&desc);
-
-        // ✅ Create the surface from THIS canvas (avoids “single canvas” panic)
         let surface = instance
             .create_surface(wgpu::SurfaceTarget::Canvas(canvas.clone()))
             .expect("Failed to create surface from canvas"); // <-- no `unsafe`, no from_canvas()
