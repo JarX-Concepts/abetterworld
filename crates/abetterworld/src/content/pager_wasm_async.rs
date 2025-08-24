@@ -1,19 +1,21 @@
 use crate::cache::init_wasm_indexdb_on_every_thread;
 use crate::content::parser_iteration;
+use crate::content::tiles;
 use crate::content::tiles::load_content;
 use crate::content::tiles_priority::priortize_loop;
 use crate::content::Client;
 use crate::content::Tile;
 use crate::content::TileSetImporter;
 use crate::helpers::channel::channel;
-use crate::helpers::channel::Sender;
+use crate::helpers::channel::{Receiver, Sender};
+use crate::world::MAX_NEW_TILES_PER_FRAME;
 use crate::Source;
 use crate::{content::TileManager, dynamics::Camera, helpers::AbwError};
 use gloo_timers::future::TimeoutFuture;
 use once_cell::sync::Lazy;
 use std::sync::atomic::AtomicI32;
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 use wasm_bindgen_futures::spawn_local;
 
 static ACTIVE_JOBS: Lazy<AtomicI32> = Lazy::new(|| AtomicI32::new(0));
@@ -145,4 +147,31 @@ fn update_pager(
 
 fn build_client(threads: usize) -> Result<Client, AbwError> {
     Client::new(threads)
+}
+
+pub fn import_renderables(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    layout: &wgpu::BindGroupLayout,
+    content: &Arc<TileManager>,
+    receiver: &mut Receiver<Tile>,
+    budget: Duration,
+) -> Result<bool, AbwError> {
+    let mut current_num_tiles = 0;
+    let mut needs_update = false;
+
+    // Pull tiles until either the channel is empty or we run out of time.
+    while current_num_tiles < MAX_NEW_TILES_PER_FRAME {
+        current_num_tiles += 1;
+
+        match receiver.try_recv() {
+            Ok(mut tile) => {
+                let new_tile = tiles::content_render_setup(device, queue, layout, &mut tile)?;
+                content.add_renderable(new_tile);
+                needs_update = true;
+            }
+            Err(_) => break, // nothing left
+        }
+    }
+    Ok(needs_update)
 }

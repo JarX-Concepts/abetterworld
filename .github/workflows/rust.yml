@@ -60,8 +60,11 @@ jobs:
       - name: 📦 Install wasm-bindgen-cli
         run: cargo install wasm-bindgen-cli
 
-      - name: 🧱 Build Web App
-        run: make build-web
+      - name: 🧱 Build Web App (Debug)
+        run: make build-web-debug
+
+      - name: 🧱 Build Web App (Release)
+        run: make build-web-release
 
       - name: 🌐 Run Web Tests (Firefox Headless)
         run: make test-web

@@ -1,6 +1,6 @@
 use crate::{
     cache::init_tileset_cache,
-    content::{start_pager, Tile, TileManager},
+    content::{import_renderables, start_pager, Tile, TileManager},
     decode::init,
     dynamics::{camera_config, Camera, Dynamics, InputState},
     helpers::{
@@ -136,7 +136,7 @@ pub enum InputEvent {
     },
 }
 
-const MAX_NEW_TILES_PER_FRAME: usize = 4;
+pub const MAX_NEW_TILES_PER_FRAME: usize = 4;
 
 impl World {
     /// Creates a new ABetterWorld.
@@ -237,58 +237,14 @@ impl World {
         if let Some(layout) = self.private.pipeline.texture_bind_group_layout.as_ref() {
             needs_update = self.private.content.unload_tiles();
 
-            #[cfg(target_arch = "wasm32")]
-            {
-                let mut current_num_tiles = 0;
-
-                // Pull tiles until either the channel is empty or we run out of time.
-                while current_num_tiles < MAX_NEW_TILES_PER_FRAME {
-                    current_num_tiles += 1;
-
-                    match self.private.receiver.try_recv() {
-                        Ok(mut tile) => {
-                            use crate::content::tiles;
-                            match tiles::content_render_setup(device, queue, layout, &mut tile) {
-                                Ok(renderable_state) => {
-                                    self.private.content.add_renderable(renderable_state);
-                                    needs_update = true;
-                                }
-                                Err(e) => {
-                                    log::error!("Failed to set up tile for rendering: {e}");
-                                    continue;
-                                }
-                            }
-                        }
-                        Err(_) => break, // nothing left
-                    }
-                }
-            }
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                use std::time::Instant;
-
-                let deadline = Instant::now() + BUDGET;
-                // Pull tiles until either the channel is empty or we run out of time.
-                while Instant::now() < deadline {
-                    match self.private.receiver.try_recv() {
-                        Ok(mut tile) => {
-                            use crate::content::tiles;
-
-                            match tiles::content_render_setup(device, queue, layout, &mut tile) {
-                                Ok(renderable_state) => {
-                                    self.private.content.add_renderable(renderable_state);
-                                    needs_update = true;
-                                }
-                                Err(e) => {
-                                    log::error!("Failed to set up tile for rendering: {e}");
-                                    continue;
-                                }
-                            }
-                        }
-                        Err(_) => break, // nothing left
-                    }
-                }
-            }
+            needs_update |= import_renderables(
+                device,
+                queue,
+                layout,
+                &self.private.content,
+                &mut self.private.receiver,
+                BUDGET,
+            )?;
         }
 
         // Update the debug camera if it exists
