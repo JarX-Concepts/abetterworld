@@ -309,6 +309,7 @@ pub extern "C" fn Java_com_jarxconcepts_abetterworld_Renderer_nativeRender(
                     }),
                     store: wgpu::StoreOp::Store,
                 },
+                depth_slice: None,
             })],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view: g.abw.get_depth_view(),

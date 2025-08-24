@@ -106,6 +106,7 @@ impl Camera {
 
     pub fn set_aspect(&self, aspect: f64) {
         self.user_state.write().unwrap().aspect = aspect;
+        self.dirty.store(true, Ordering::Relaxed);
     }
 
     pub fn update_dynamic_state(&self, new_state: &PositionState) {

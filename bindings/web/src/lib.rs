@@ -1,14 +1,16 @@
 use abetterworld::{get_debug_config, InputEvent, MouseButton, World};
 use std::sync::Arc;
 use wasm_bindgen::prelude::*;
+use wasm_bindgen::JsCast;
+use winit::event::ElementState;
 use winit::platform::web::WindowExtWebSys;
 use winit::{
-    event::{ElementState, Event, WindowEvent},
-    event_loop::EventLoop,
+    application::ApplicationHandler,
+    event::WindowEvent,
+    event_loop::{ActiveEventLoop, EventLoop},
     keyboard::{KeyCode, PhysicalKey},
-    window::WindowBuilder,
+    window::{Window, WindowAttributes},
 };
-use {wasm_bindgen::JsCast, web_sys};
 
 fn setup_console_log() {
     use std::sync::Once;
@@ -41,9 +43,11 @@ fn logical_window_size() -> (u32, u32) {
         .max(1.0) as u32;
     (w, h)
 }
+
 fn device_pixel_ratio() -> f64 {
     web_sys::window().unwrap().device_pixel_ratio()
 }
+
 fn size_canvas_backing_store(canvas: &web_sys::HtmlCanvasElement) -> winit::dpi::PhysicalSize<u32> {
     let (lw, lh) = logical_window_size();
     let dpr = device_pixel_ratio();
@@ -80,6 +84,7 @@ impl<'window> State<'window> {
             backends: wgpu::Backends::all(),
             flags: wgpu::InstanceFlags::default(),
             backend_options: Default::default(),
+            memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
         };
         let instance = wgpu::Instance::new(&desc);
 
@@ -203,6 +208,7 @@ impl<'window> State<'window> {
                         }),
                         store: wgpu::StoreOp::Store,
                     },
+                    depth_slice: None,
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: self.world.get_depth_view(),
@@ -226,131 +232,153 @@ impl<'window> State<'window> {
     }
 }
 
+struct WebApp {
+    window: Option<Arc<Window>>,
+    canvas: Option<web_sys::HtmlCanvasElement>,
+    state: Option<State<'static>>, // see lifetime note below
+}
+
+impl Default for WebApp {
+    fn default() -> Self {
+        Self {
+            window: None,
+            canvas: None,
+            state: None,
+        }
+    }
+}
+
+impl ApplicationHandler for WebApp {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        // ⬇️ Replacement for WindowBuilder::new().with_...().build(&event_loop)
+        let attrs: WindowAttributes = Window::default_attributes()
+            .with_title("A Better World WASM")
+            .with_inner_size(winit::dpi::PhysicalSize::new(800, 600));
+        let window = Arc::new(
+            event_loop
+                .create_window(attrs)
+                .expect("create_window failed"),
+        );
+
+        // ⬇️ Same canvas extraction you had before
+        let canvas = window.canvas().expect("Failed to get canvas");
+        canvas.set_id("canvas");
+        let document = web_sys::window().unwrap().document().unwrap();
+        document.body().unwrap().append_child(&canvas).unwrap();
+
+        let canvas: web_sys::HtmlCanvasElement = document
+            .get_element_by_id("canvas")
+            .unwrap()
+            .dyn_into::<web_sys::HtmlCanvasElement>()
+            .unwrap();
+        canvas.style().set_property("display", "block").unwrap();
+        canvas.style().set_property("margin", "0").unwrap();
+
+        // Set initial backing store size
+        let physical_size = size_canvas_backing_store(&canvas);
+
+        // ⬇️ Initialize your State with (&window, &canvas), just like before
+        let mut state_now = pollster::block_on(State::new(&window, &canvas));
+        state_now.resize(physical_size);
+
+        // Store things on self
+        self.canvas = Some(canvas);
+        self.window = Some(Arc::clone(&window));
+
+        #[allow(unsafe_code)]
+        let state_static: State<'static> = unsafe { std::mem::transmute(state_now) };
+        self.state = Some(state_static);
+    }
+
+    fn window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        _id: winit::window::WindowId,
+        event: WindowEvent,
+    ) {
+        let (Some(window), Some(state)) = (&self.window, &mut self.state) else {
+            return;
+        };
+
+        match event {
+            WindowEvent::CloseRequested => event_loop.exit(),
+
+            // Recompute canvas DPR size on resize/scale changes
+            WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
+                if let Some(canvas) = &self.canvas {
+                    let new_physical = size_canvas_backing_store(canvas);
+                    state.resize(new_physical);
+                }
+            }
+
+            WindowEvent::KeyboardInput {
+                event:
+                    winit::event::KeyEvent {
+                        physical_key: PhysicalKey::Code(KeyCode::Escape),
+                        state: ElementState::Pressed,
+                        ..
+                    },
+                ..
+            } => event_loop.exit(),
+
+            WindowEvent::MouseInput {
+                state: button_state,
+                button,
+                ..
+            } => {
+                let mapped = match button {
+                    winit::event::MouseButton::Left => Some(MouseButton::Left),
+                    winit::event::MouseButton::Right => Some(MouseButton::Right),
+                    winit::event::MouseButton::Middle => Some(MouseButton::Middle),
+                    _ => None,
+                };
+                if let Some(btn) = mapped {
+                    match button_state {
+                        ElementState::Pressed => state.input(InputEvent::MouseButtonPressed(btn)),
+                        ElementState::Released => state.input(InputEvent::MouseButtonReleased(btn)),
+                    }
+                }
+            }
+
+            WindowEvent::CursorMoved { position, .. } => {
+                state.input(InputEvent::MouseMoved(position.x as f32, position.y as f32));
+            }
+
+            WindowEvent::MouseWheel { delta, .. } => {
+                let scroll = match delta {
+                    winit::event::MouseScrollDelta::LineDelta(_, y) => y as f32,
+                    winit::event::MouseScrollDelta::PixelDelta(pos) => pos.y as f32,
+                };
+                state.input(InputEvent::MouseScrolled(scroll));
+            }
+
+            _ => {}
+        }
+    }
+
+    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+        let (Some(window), Some(state)) = (&self.window, &mut self.state) else {
+            return;
+        };
+        state.update();
+        if let Err(e) = state.render() {
+            #[cfg(target_arch = "wasm32")]
+            web_sys::console::error_1(&format!("{e:?}").into());
+            #[cfg(not(target_arch = "wasm32"))]
+            eprintln!("{e:?}");
+        }
+        window.request_redraw();
+    }
+}
+
 #[wasm_bindgen(start)]
 pub async fn start() -> Result<(), JsValue> {
     setup_console_log();
     println!("Starting A Better World WASM...");
 
     let event_loop = EventLoop::new().unwrap();
-    let window = WindowBuilder::new()
-        .with_title("A Better World WASM")
-        .with_inner_size(winit::dpi::PhysicalSize::new(800, 600)) // harmless placeholder on web
-        .build(&event_loop)
-        .unwrap();
-
-    let canvas = window.canvas().expect("Failed to get canvas");
-    canvas.set_id("canvas");
-
-    let document = web_sys::window().unwrap().document().unwrap();
-    document.body().unwrap().append_child(&canvas).unwrap();
-
-    let canvas: web_sys::HtmlCanvasElement = document
-        .get_element_by_id("canvas")
-        .unwrap()
-        .dyn_into::<web_sys::HtmlCanvasElement>()
-        .unwrap();
-
-    // Keep CSS fluid; no fixed px. Just ensure block layout.
-    canvas.style().set_property("display", "block").unwrap();
-    canvas.style().set_property("margin", "0").unwrap();
-
-    // 🔧 Set initial backing-store (physical pixel) size from window × DPR
-    let physical_size = size_canvas_backing_store(&canvas);
-    web_sys::console::log_1(
-        &format!(
-            "Canvas backing size: {}x{}",
-            canvas.width(),
-            canvas.height()
-        )
-        .into(),
-    );
-
-    let window = Arc::new(window);
-    let window_clone = Arc::clone(&window);
-
-    // ✅ Create State with the canvas reference
-    let mut state = State::new(&window, &canvas).await;
-
-    // Apply initial size to WGPU
-    state.resize(physical_size);
-
-    // Event loop
-    event_loop
-        .run(move |event, target| match event {
-            Event::WindowEvent {
-                ref event,
-                window_id,
-            } if window_id == window_clone.id() => match event {
-                WindowEvent::CloseRequested => target.exit(),
-
-                // ⬇️ Recompute canvas backing store on size/DPR changes
-                WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
-                    let new_physical = size_canvas_backing_store(&canvas);
-                    state.resize(new_physical);
-                }
-
-                WindowEvent::KeyboardInput {
-                    event:
-                        winit::event::KeyEvent {
-                            physical_key: PhysicalKey::Code(KeyCode::Escape),
-                            state: ElementState::Pressed,
-                            ..
-                        },
-                    ..
-                } => {
-                    target.exit();
-                }
-                WindowEvent::MouseInput {
-                    state: button_state,
-                    button,
-                    ..
-                } => {
-                    let mapped_button = match button {
-                        winit::event::MouseButton::Left => Some(MouseButton::Left),
-                        winit::event::MouseButton::Right => Some(MouseButton::Right),
-                        winit::event::MouseButton::Middle => Some(MouseButton::Middle),
-                        _ => None,
-                    };
-
-                    if let Some(btn) = mapped_button {
-                        match button_state {
-                            ElementState::Pressed => {
-                                state.input(InputEvent::MouseButtonPressed(btn))
-                            }
-                            ElementState::Released => {
-                                state.input(InputEvent::MouseButtonReleased(btn))
-                            }
-                        }
-                    }
-                }
-
-                WindowEvent::CursorMoved { position, .. } => {
-                    let (x, y) = (position.x as f32, position.y as f32);
-                    state.input(InputEvent::MouseMoved(x, y));
-                }
-
-                WindowEvent::MouseWheel { delta, .. } => {
-                    let scroll_delta = match delta {
-                        winit::event::MouseScrollDelta::LineDelta(_, y) => *y as f32,
-                        winit::event::MouseScrollDelta::PixelDelta(pos) => pos.y as f32,
-                    };
-                    state.input(InputEvent::MouseScrolled(scroll_delta));
-                }
-                _ => {}
-            },
-            Event::AboutToWait => {
-                state.update();
-                if let Err(e) = state.render() {
-                    #[cfg(target_arch = "wasm32")]
-                    web_sys::console::error_1(&format!("{:?}", e).into());
-                    #[cfg(not(target_arch = "wasm32"))]
-                    eprintln!("{:?}", e);
-                }
-                window_clone.request_redraw();
-            }
-            _ => {}
-        })
-        .unwrap_or_else(|e| eprintln!("Error in event loop: {:?}", e));
+    let mut app = WebApp::default();
+    event_loop.run_app(&mut app).unwrap();
 
     Ok(())
 }

@@ -1,12 +1,17 @@
+use std::sync::Arc;
+use winit::event::ElementState;
 use winit::{
-    event::{ElementState, Event, WindowEvent},
-    event_loop::EventLoop,
+    application::ApplicationHandler,
+    event::WindowEvent,
+    event_loop::{ActiveEventLoop, EventLoop},
     keyboard::{KeyCode, PhysicalKey},
-    window::WindowBuilder,
+    window::{Window, WindowAttributes},
 };
 
+// --- your existing imports ---
 use abetterworld::{get_debug_config, InputEvent, Key, MouseButton, World};
-use std::sync::Arc;
+
+// ---------------- State (unchanged, except where noted) ----------------
 
 struct State<'window> {
     surface: wgpu::Surface<'window>,
@@ -18,23 +23,21 @@ struct State<'window> {
 }
 
 impl<'window> State<'window> {
-    async fn new(window: &'window winit::window::Window) -> Self {
+    async fn new(window: &'window Window) -> Self {
         let size = window.inner_size();
 
-        // Create wgpu instance with the new InstanceDescriptor.
         let desc = wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(),
             flags: wgpu::InstanceFlags::default(),
             backend_options: Default::default(),
+            memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
         };
         let instance = wgpu::Instance::new(&desc);
 
-        // Unwrap the surface creation.
         let surface = instance
             .create_surface(window)
             .expect("Failed to create surface");
 
-        // Request an adapter.
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::default(),
@@ -44,7 +47,6 @@ impl<'window> State<'window> {
             .await
             .unwrap();
 
-        // Request the device and queue.
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 required_features: wgpu::Features::POLYGON_MODE_LINE,
@@ -56,11 +58,9 @@ impl<'window> State<'window> {
             .await
             .unwrap();
 
-        // Choose a surface format.
         let surface_caps = surface.get_capabilities(&adapter);
         let surface_format = surface_caps.formats[0];
 
-        // Note: The SurfaceConfiguration type now requires alpha_mode and view_formats.
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
@@ -74,7 +74,6 @@ impl<'window> State<'window> {
 
         surface.configure(&device, &config);
 
-        // Initialize the sphere renderer from the library.
         let world = World::new(&device, &config, &get_debug_config());
 
         Self {
@@ -88,27 +87,26 @@ impl<'window> State<'window> {
     }
 
     fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
+        if new_size.width == 0 || new_size.height == 0 {
+            return;
+        }
         self.size = new_size;
         self.config.width = new_size.width;
         self.config.height = new_size.height;
         self.surface.configure(&self.device, &self.config);
-
         self.world
             .resize(&self.device, new_size.width, new_size.height);
     }
 
     fn input(&mut self, event: InputEvent) {
-        // No dynamic updates for now.
         self.world.input(event);
     }
 
     fn update(&mut self) {
-        self.world
+        let _ = self
+            .world
             .update(&self.device, &self.queue)
-            .map_err(|e| {
-                eprintln!("Update error: {:?}", e);
-            })
-            .ok();
+            .map_err(|e| eprintln!("Update error: {e:?}"));
     }
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
@@ -123,7 +121,7 @@ impl<'window> State<'window> {
             });
 
         {
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
@@ -137,29 +135,29 @@ impl<'window> State<'window> {
                         }),
                         store: wgpu::StoreOp::Store,
                     },
+                    depth_slice: None,
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: self.world.get_depth_view(),
                     depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0), // far plane
+                        load: wgpu::LoadOp::Clear(1.0),
                         store: wgpu::StoreOp::Discard,
                     }),
                     stencil_ops: None,
                 }),
-
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            let _ = self.world.render(&mut render_pass);
+            let _ = self.world.render(&mut rp);
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
-
         Ok(())
     }
 }
 
+// --------- key mapping helper (unchanged) ----------
 fn map_keycode(physical_key: &PhysicalKey) -> Option<Key> {
     match physical_key {
         PhysicalKey::Code(KeyCode::KeyW) => Some(Key::W),
@@ -167,11 +165,8 @@ fn map_keycode(physical_key: &PhysicalKey) -> Option<Key> {
         PhysicalKey::Code(KeyCode::KeyS) => Some(Key::S),
         PhysicalKey::Code(KeyCode::KeyD) => Some(Key::D),
 
-        PhysicalKey::Code(KeyCode::Equal) => Some(Key::ZoomIn),
-        PhysicalKey::Code(KeyCode::PageDown) => Some(Key::ZoomIn),
-
-        PhysicalKey::Code(KeyCode::PageUp) => Some(Key::ZoomOut),
-        PhysicalKey::Code(KeyCode::Minus) => Some(Key::ZoomOut),
+        PhysicalKey::Code(KeyCode::Equal | KeyCode::PageDown) => Some(Key::ZoomIn),
+        PhysicalKey::Code(KeyCode::PageUp | KeyCode::Minus) => Some(Key::ZoomOut),
 
         PhysicalKey::Code(KeyCode::ArrowUp) => Some(Key::ArrowUp),
         PhysicalKey::Code(KeyCode::ArrowDown) => Some(Key::ArrowDown),
@@ -185,112 +180,151 @@ fn map_keycode(physical_key: &PhysicalKey) -> Option<Key> {
     }
 }
 
+struct App {
+    window: Option<Arc<Window>>,
+    state: Option<State<'static>>,
+}
+
+impl Default for App {
+    fn default() -> Self {
+        Self {
+            window: None,
+            state: None,
+        }
+    }
+}
+
+impl ApplicationHandler for App {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        // Replace WindowBuilder with default_attributes()
+        let attrs: WindowAttributes = Window::default_attributes().with_title("A Better World");
+        let window = Arc::new(
+            event_loop
+                .create_window(attrs)
+                .expect("create_window failed"),
+        );
+        let window_clone = Arc::clone(&window);
+
+        let state = pollster::block_on(State::new(&window_clone));
+
+        self.window = Some(window);
+
+        #[allow(unsafe_code)]
+        let state_static: State<'static> = unsafe { std::mem::transmute(state) };
+        self.state = Some(state_static);
+    }
+
+    fn window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        _id: winit::window::WindowId,
+        event: WindowEvent,
+    ) {
+        let (Some(window), Some(state)) = (&self.window, &mut self.state) else {
+            return;
+        };
+
+        match event {
+            WindowEvent::CloseRequested => event_loop.exit(),
+
+            WindowEvent::Resized(physical_size) => {
+                state.resize(physical_size);
+            }
+
+            WindowEvent::ScaleFactorChanged { .. } => {
+                state.resize(window.inner_size());
+            }
+
+            WindowEvent::KeyboardInput {
+                event:
+                    winit::event::KeyEvent {
+                        physical_key: PhysicalKey::Code(KeyCode::Escape),
+                        state: ElementState::Pressed,
+                        ..
+                    },
+                ..
+            } => event_loop.exit(),
+
+            WindowEvent::KeyboardInput {
+                event:
+                    winit::event::KeyEvent {
+                        physical_key,
+                        state: key_state,
+                        ..
+                    },
+                ..
+            } => {
+                if let Some(key) = map_keycode(&physical_key) {
+                    match key_state {
+                        ElementState::Pressed => state.input(InputEvent::KeyPressed(key)),
+                        ElementState::Released => state.input(InputEvent::KeyReleased(key)),
+                    }
+                }
+            }
+
+            WindowEvent::MouseInput {
+                state: button_state,
+                button,
+                ..
+            } => {
+                let mapped = match button {
+                    winit::event::MouseButton::Left => Some(MouseButton::Left),
+                    winit::event::MouseButton::Right => Some(MouseButton::Right),
+                    winit::event::MouseButton::Middle => Some(MouseButton::Middle),
+                    _ => None,
+                };
+                if let Some(btn) = mapped {
+                    match button_state {
+                        ElementState::Pressed => state.input(InputEvent::MouseButtonPressed(btn)),
+                        ElementState::Released => state.input(InputEvent::MouseButtonReleased(btn)),
+                    }
+                }
+            }
+
+            WindowEvent::CursorMoved { position, .. } => {
+                state.input(InputEvent::MouseMoved(position.x as f32, position.y as f32));
+            }
+
+            WindowEvent::MouseWheel { delta, .. } => {
+                let scroll_delta = match delta {
+                    winit::event::MouseScrollDelta::LineDelta(_, y) => y as f32,
+                    winit::event::MouseScrollDelta::PixelDelta(pos) => pos.y as f32,
+                };
+                state.input(InputEvent::MouseScrolled(scroll_delta));
+            }
+
+            _ => {}
+        }
+    }
+
+    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+        let (Some(window), Some(state)) = (&self.window, &mut self.state) else {
+            return;
+        };
+
+        state.update();
+        match state.render() {
+            Ok(_) => {}
+            Err(wgpu::SurfaceError::Lost) => state.resize(state.size),
+            Err(wgpu::SurfaceError::OutOfMemory) => {
+                // graceful shutdown when OOM
+                #[cfg(not(target_arch = "wasm32"))]
+                std::process::exit(0);
+            }
+            Err(e) => eprintln!("{e:?}"),
+        }
+        window.request_redraw();
+    }
+}
+
+// ---------------- main ----------------
+
 fn main() {
     dotenv::dotenv().ok();
     env_logger::init();
     log::info!("Starting A Better World application...");
 
-    let event_loop = EventLoop::new().unwrap();
-    let window = Arc::new(
-        WindowBuilder::new()
-            .with_title("A Better World")
-            .build(&event_loop)
-            .unwrap(),
-    );
-    let window_clone = Arc::clone(&window);
-
-    let mut state = pollster::block_on(State::new(&window));
-
-    event_loop
-        .run(move |event, target| match event {
-            Event::WindowEvent {
-                ref event,
-                window_id,
-            } if window_id == window_clone.id() => match event {
-                WindowEvent::CloseRequested => target.exit(),
-                WindowEvent::Resized(physical_size) => {
-                    state.resize(*physical_size);
-                }
-                WindowEvent::ScaleFactorChanged { .. } => {
-                    state.resize(window_clone.inner_size());
-                }
-                WindowEvent::KeyboardInput {
-                    event:
-                        winit::event::KeyEvent {
-                            physical_key: PhysicalKey::Code(KeyCode::Escape),
-                            state: ElementState::Pressed,
-                            ..
-                        },
-                    ..
-                } => {
-                    target.exit();
-                }
-                WindowEvent::KeyboardInput {
-                    event:
-                        winit::event::KeyEvent {
-                            physical_key,
-                            state: key_state,
-                            ..
-                        },
-                    ..
-                } => {
-                    if let Some(key) = map_keycode(physical_key) {
-                        match key_state {
-                            ElementState::Pressed => state.input(InputEvent::KeyPressed(key)),
-                            ElementState::Released => state.input(InputEvent::KeyReleased(key)),
-                        }
-                    }
-                }
-                WindowEvent::MouseInput {
-                    state: button_state,
-                    button,
-                    ..
-                } => {
-                    let mapped_button = match button {
-                        winit::event::MouseButton::Left => Some(MouseButton::Left),
-                        winit::event::MouseButton::Right => Some(MouseButton::Right),
-                        winit::event::MouseButton::Middle => Some(MouseButton::Middle),
-                        _ => None,
-                    };
-
-                    if let Some(btn) = mapped_button {
-                        match button_state {
-                            ElementState::Pressed => {
-                                state.input(InputEvent::MouseButtonPressed(btn))
-                            }
-                            ElementState::Released => {
-                                state.input(InputEvent::MouseButtonReleased(btn))
-                            }
-                        }
-                    }
-                }
-
-                WindowEvent::CursorMoved { position, .. } => {
-                    let (x, y) = (position.x as f32, position.y as f32);
-                    state.input(InputEvent::MouseMoved(x, y));
-                }
-
-                WindowEvent::MouseWheel { delta, .. } => {
-                    let scroll_delta = match delta {
-                        winit::event::MouseScrollDelta::LineDelta(_, y) => *y as f32,
-                        winit::event::MouseScrollDelta::PixelDelta(pos) => pos.y as f32,
-                    };
-                    state.input(InputEvent::MouseScrolled(scroll_delta));
-                }
-
-                _ => {}
-            },
-            Event::AboutToWait => {
-                state.update();
-                match state.render() {
-                    Ok(_) => {}
-                    Err(wgpu::SurfaceError::Lost) => state.resize(state.size),
-                    Err(wgpu::SurfaceError::OutOfMemory) => target.exit(),
-                    Err(e) => eprintln!("{:?}", e),
-                }
-                window_clone.request_redraw();
-            }
-            _ => {}
-        })
-        .unwrap_or_else(|e| eprintln!("Error in event loop: {:?}", e));
+    let event_loop = EventLoop::new().expect("Failed to create event loop");
+    let mut app = App::default();
+    event_loop.run_app(&mut app).expect("Event loop failed");
 }

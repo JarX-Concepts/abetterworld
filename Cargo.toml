@@ -15,7 +15,6 @@ members = [
 winit = { version = "0.30", features = ["android-native-activity"] }
 wgpu = {version = "26.0.1", features = ["webgpu", "vulkan", "gles"]}
 
-
 console_log = "1.0"
 js-sys = "0.3.77"
 wasm-bindgen = "0.2.100"

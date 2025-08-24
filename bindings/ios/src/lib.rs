@@ -319,14 +319,15 @@ pub extern "C" fn abetterworld_ios_render(ptr: *mut ABetterWorldiOS) {
     });
 
     // Copy from texture to staging buffer
+    // Copy from texture to staging buffer
     encoder.copy_texture_to_buffer(
-        wgpu::ImageCopyTexture {
+        wgpu::TexelCopyTextureInfo {
             texture: &state.texture,
             mip_level: 0,
             origin: wgpu::Origin3d::ZERO,
             aspect: wgpu::TextureAspect::All,
         },
-        wgpu::ImageCopyBuffer {
+        wgpu::TexelCopyBufferInfo {
             buffer: &staging_buffer,
             layout: wgpu::TexelCopyBufferLayout {
                 offset: 0,
@@ -347,7 +348,7 @@ pub extern "C" fn abetterworld_ios_render(ptr: *mut ABetterWorldiOS) {
     // Map the staging buffer and copy to Metal texture
     let slice = staging_buffer.slice(..);
     slice.map_async(wgpu::MapMode::Read, |_| {});
-    state.device.poll(wgpu::MaintainBase::Wait);
+    state.device.poll(wgpu::PollType::Wait);
 
     unsafe {
         let data = slice.get_mapped_range();

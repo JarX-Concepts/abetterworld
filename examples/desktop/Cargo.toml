@@ -5,11 +5,11 @@ edition = "2021"
 resolver = "2"
 
 [dependencies]
-wgpu = {version = "26.0.1"}
+wgpu = { workspace = true }
 pollster = "0.4"
 env_logger = "0.11"
 abetterworld = { path = "../../crates/abetterworld" }
-winit = { version = "0.30", features = ["android-native-activity"] }
+winit = { workspace = true }
 log = "0.4"
 dotenv = "0"
 
