@@ -14,8 +14,8 @@
             filePath = "ABetterWorld/ABetterWorldView.swift"
             startingColumnNumber = "9223372036854775807"
             endingColumnNumber = "9223372036854775807"
-            startingLineNumber = "68"
-            endingLineNumber = "68"
+            startingLineNumber = "62"
+            endingLineNumber = "62"
             landmarkName = "init?(metalView:)"
             landmarkType = "7">
          </BreakpointContent>

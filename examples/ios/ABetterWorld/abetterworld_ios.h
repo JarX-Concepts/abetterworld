@@ -19,7 +19,8 @@ void abetterworld_ios_init(struct ABetterWorldiOS *ptr,
                            void *metal_device_raw,
                            void *metal_layer_raw,
                            double width,
-                           double height);
+                           double height,
+                           const char *cache_dir);
 
 void abetterworld_ios_resize(struct ABetterWorldiOS *ptr, double width, double height);
 
@@ -54,3 +55,4 @@ void abetterworld_ios_gesture_rotate(struct ABetterWorldiOS *ptr,
 void abetterworld_ios_gesture_double_tap(struct ABetterWorldiOS *ptr, double x, double y);
 
 void abetterworld_ios_touch_down(struct ABetterWorldiOS *ptr, bool active, double x, double y);
+

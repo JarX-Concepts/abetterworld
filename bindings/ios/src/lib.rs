@@ -61,6 +61,7 @@ pub extern "C" fn abetterworld_ios_init(
     metal_layer_raw: *mut c_void,
     width: f64,
     height: f64,
+    cache_dir: *const std::os::raw::c_char,
 ) {
     let state = get_state(ptr);
     let metal_device = metal_device_raw as *mut Object;
@@ -150,7 +151,16 @@ pub extern "C" fn abetterworld_ios_init(
     };
 
     // Initialize sphere renderer with device and config
-    let abw = World::new(&device, &config, &get_debug_config());
+    let mut debug_config = get_debug_config();
+    debug_config.cache_dir = if cache_dir.is_null() {
+        debug_config.cache_dir
+    } else {
+        unsafe { std::ffi::CStr::from_ptr(cache_dir) }
+            .to_str()
+            .unwrap()
+            .to_string()
+    };
+    let abw = World::new(&device, &config, &debug_config);
 
     state.inner = Some(StateInner {
         device,
@@ -274,7 +284,7 @@ pub extern "C" fn abetterworld_ios_render(ptr: *mut ABetterWorldiOS) {
     // Render the sphere to our texture
     {
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("Sphere Render Pass"),
+            label: Some("World Render Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: &state.texture_view,
                 resolve_target: None,

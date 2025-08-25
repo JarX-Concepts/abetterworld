@@ -3,15 +3,6 @@ import Metal
 import MetalKit
 import UIKit
 
-// The following C-style functions should be automatically imported 
-// through the bridging header ABetterWorldIOS-Bridging-Header.h
-// If you're seeing "Cannot find 'abetterworld_ios_new' in scope" errors,
-// make sure in Xcode:
-// 1. "ABetterWorldIOS-Bridging-Header.h" is set as your Swift Compiler - 
-//    General > Objective-C Bridging Header
-// 2. The Rust static library is properly linked in Build Phases > Link Binary With Libraries
-// 3. The header search paths include the path to ABetterWorldIOS.h
-
 public class ABetterWorldRenderer {
     private var renderer: UnsafeMutablePointer<ABetterWorldiOS>?
     private var metalDevice: MTLDevice
@@ -63,15 +54,22 @@ public class ABetterWorldRenderer {
         }
         print("Rust renderer created")
     
+
+        let cacheURL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        
         
         // Initialize with the metal device and layer
-        abetterworld_ios_init(
-            self.renderer,
-            Unmanaged.passUnretained(device).toOpaque(),
-            Unmanaged.passUnretained(layer).toOpaque(),
-            metalView.drawableSize.width,
-            metalView.drawableSize.height   
-        )
+        let cachePath = cacheURL.path
+        cachePath.withCString { cString in
+            abetterworld_ios_init(
+                self.renderer,
+                Unmanaged.passUnretained(device).toOpaque(),
+                Unmanaged.passUnretained(layer).toOpaque(),
+                metalView.drawableSize.width,
+                metalView.drawableSize.height,
+                cString
+            )
+        }
         
         print("Rust renderer initialized")
         
