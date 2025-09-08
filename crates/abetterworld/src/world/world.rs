@@ -86,6 +86,7 @@ pub enum Key {
     Ctrl,
     Alt,
     Escape,
+    Meta,
     // Add more as needed
 }
 
@@ -94,14 +95,15 @@ pub enum MouseButton {
     Left,
     Right,
     Middle,
+    Count = 3,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum InputEvent {
     KeyPressed(Key),
     KeyReleased(Key),
-    MouseMoved(f32, f32),
-    MouseScrolled(f32),
+    MouseMoved(f64, f64),
+    MouseScrolled(f64),
     MouseButtonPressed(MouseButton),
     MouseButtonReleased(MouseButton),
 
@@ -139,6 +141,21 @@ pub enum InputEvent {
         x: f64,
         y: f64,
     },
+    GestureTouchMove {
+        id: u64,
+        x: f64,
+        y: f64,
+    },
+    GestureTouchUp {
+        id: u64,
+    },
+    GestureTap {
+        x: f64,
+        y: f64,
+    },
+
+    WindowFocused(bool),
+    PointerCapture(bool),
 }
 
 pub const MAX_NEW_TILES_PER_FRAME: usize = 4;
@@ -227,6 +244,7 @@ impl World {
     }
 
     pub fn update(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> Result<bool, AbwError> {
+        self.private.input_state.flush(&mut self.private.dynamics);
         self.private
             .dynamics
             .update(&core::time::Duration::from_millis(16), &self.private.camera);
@@ -285,8 +303,9 @@ impl World {
     pub fn input(&mut self, event: InputEvent) {
         self.private
             .input_state
-            .process_input(&self.private.dynamics, event.clone());
+            .queue_event(&self.private.camera.dynamics(), event);
 
+        /*
         if let InputEvent::MouseMoved(x, y) = event {
             let xy = Point2::new(x as f64, y as f64);
 
@@ -302,6 +321,6 @@ impl World {
             } else {
                 println!("No intersection at cursor");
             }
-        }
+        } */
     }
 }

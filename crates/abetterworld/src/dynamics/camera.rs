@@ -9,7 +9,6 @@ use std::sync::{
 };
 
 use crate::{
-    dynamics::PositionState,
     helpers::{
         decompose_matrix64_to_uniform, extract_frustum_planes, geodetic_to_ecef_z_up,
         remove_translation, Uniforms,
@@ -64,9 +63,34 @@ impl CameraDerivedMatrices {
 }
 
 #[derive(Debug, Clone)]
+pub struct CameraDynamicsData {
+    pub proj_view_inv: Matrix4<f64>,
+    pub eye: Point3<f64>,
+    pub viewport_wh: (f64, f64),
+}
+
+impl CameraDynamicsData {
+    fn default() -> CameraDynamicsData {
+        CameraDynamicsData {
+            proj_view_inv: Matrix4::identity(),
+            eye: Point3::new(0.0, 0.0, 0.0),
+            viewport_wh: (0.0, 0.0),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Copy)]
+pub struct PositionState {
+    pub eye: Point3<f64>,
+    pub target: Point3<f64>,
+    pub up: Vector3<f64>,
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct CameraUserPosition {
     position: PositionState,
 
+    viewport_wh: (f64, f64),
     fovy: Deg<f64>,
     aspect: f64,
     near: Option<f64>,
@@ -81,6 +105,7 @@ pub struct Camera {
     user_state: RwLock<CameraUserPosition>,
     derived_state: RwLock<CameraDerivedMatrices>,
     paging_state: RwLock<CameraRefinementData>,
+    dynamics_data: RwLock<CameraDynamicsData>,
 }
 
 impl Camera {
@@ -91,6 +116,7 @@ impl Camera {
             user_state: RwLock::new(start),
             derived_state: RwLock::new(CameraDerivedMatrices::default()),
             paging_state: RwLock::new(CameraRefinementData::default()),
+            dynamics_data: RwLock::new(CameraDynamicsData::default()),
         };
 
         cam
@@ -100,6 +126,10 @@ impl Camera {
         self.user_state.read().unwrap().position.clone()
     }
 
+    pub fn dynamics(&self) -> CameraDynamicsData {
+        self.dynamics_data.read().unwrap().clone()
+    }
+
     pub fn eye_vector(&self) -> Vector3<f64> {
         self.user_state.read().unwrap().position.eye.to_vec()
     }
@@ -107,7 +137,7 @@ impl Camera {
     pub fn set_viewport(&self, width: f64, height: f64) {
         if let Ok(mut state) = self.user_state.write() {
             state.aspect = width as f64 / height as f64;
-            state.position.viewport_wh = (width, height);
+            state.viewport_wh = (width, height);
         }
         self.dirty.store(true, Ordering::Relaxed);
     }
@@ -131,18 +161,37 @@ impl Camera {
 
     /// internal: recompute cam_world and UBO
     pub fn update(&self, distance_to_geom: Option<f64>) -> (Point3<f64>, Uniforms, bool) {
-        if !self.dirty.load(Ordering::Relaxed) {
-            return (
-                self.user_state.read().unwrap().position.eye,
-                self.derived_state.read().unwrap().uniform,
-                false,
-            );
+        // Fast path: read-only, with minimal lock time.
+        if !self.dirty.load(Ordering::Acquire) {
+            let eye = {
+                let us = self.user_state.read().unwrap();
+                us.position.eye
+            };
+            let uniform = {
+                let ds = self.derived_state.read().unwrap();
+                ds.uniform
+            };
+            return (eye, uniform, false);
         }
 
-        let user_state = self.user_state.read().unwrap();
-        let mut derived_state = self.derived_state.write().unwrap();
+        // ---- 1) Snapshot user_state under a short read lock, then drop it. ----
+        let (position, near_override, far_override, fovy, aspect, viewport_wh) = {
+            let us = self.user_state.read().unwrap();
+            (
+                us.position,
+                us.near,
+                us.far,
+                us.fovy,
+                us.aspect,
+                us.viewport_wh,
+            )
+        };
+        let eye = position.eye;
+        let target = position.target;
+        let up = position.up;
 
-        let cam_world = user_state.position.eye.to_vec();
+        // ---- 2) Do all heavy math lock-free. ----
+        let cam_world = eye.to_vec();
         let d = cam_world.magnitude();
 
         let altitude = (d - EARTH_RADIUS_M).max(1.0);
@@ -151,51 +200,58 @@ impl Camera {
         // More aggressive scaling for space views
         let near_scale = if altitude > 50_000.0 { 0.5 } else { 0.25 };
 
-        // Near plane scales with altitude for depth precision and no clipping
-        derived_state.near = user_state
-            .near
-            .unwrap_or((max_distance * near_scale).clamp(NEAR_MIN, NEAR_MAX));
-        derived_state.far = user_state.far.unwrap_or(d);
+        let near = near_override.unwrap_or((max_distance * near_scale).clamp(NEAR_MIN, NEAR_MAX));
+        let far = far_override.unwrap_or(d);
 
-        // Projection (f64 to preserve precision while deriving planes, etc.)
-        let proj64 = cgmath::perspective(
-            user_state.fovy,
-            user_state.aspect,
-            derived_state.near,
-            derived_state.far,
-        );
+        // Projection (f64 for precision)
+        let proj64 = cgmath::perspective(fovy, aspect, near, far);
 
-        // View matrix (right-handed look-at). This is the *full* view: R^T * T(-eye).
-        let view64 = Matrix4::look_at_rh(
-            user_state.position.eye,
-            user_state.position.target,
-            user_state.position.up,
-        );
+        // Full view
+        let view64 = Matrix4::look_at_rh(eye, target, up);
 
-        // 1) For CPU culling and world->clip math on CPU, keep the full P*V.
+        // CPU culling / world->clip
         let proj_view_full = proj64 * view64;
-        derived_state.planes = extract_frustum_planes(&proj_view_full);
-        derived_state.proj_view = proj_view_full;
-        derived_state.proj_view_inv = proj_view_full.invert().unwrap_or(Matrix4::identity());
+        let planes = extract_frustum_planes(&proj_view_full);
+        let proj_view_inv = proj_view_full.invert().unwrap_or(Matrix4::identity());
 
-        // 2) For the GPU *camera uniform*, remove translation from V to avoid double-subtracting,
-        //    because each node model will already be pretranslated by -eye on the CPU.
+        // GPU camera uniform (translation removed; CPU pre-translates models by -eye)
         let view_no_translation64 = remove_translation(view64); // ~R^T
         let proj_view_rot64 = proj64 * view_no_translation64; // P * R^T
-        derived_state.uniform = decompose_matrix64_to_uniform(&proj_view_rot64);
+        let uniform = decompose_matrix64_to_uniform(&proj_view_rot64);
 
+        // ---- 3) Commit derived_state in one short write. ----
+        {
+            let mut ds = self.derived_state.write().unwrap();
+            ds.near = near;
+            ds.far = far;
+            ds.planes = planes;
+            ds.uniform = uniform;
+        }
+
+        // Bump generation (relaxed is fine for a monotonic counter)
         self.generation.fetch_add(1, Ordering::Relaxed);
-        self.dirty.store(false, Ordering::Relaxed);
 
+        // Mark clean with Release so readers see the writes that happened-before.
+        self.dirty.store(false, Ordering::Release);
+
+        // ---- 4) Update aux states in separate short writes. ----
         if let Ok(mut state) = self.paging_state.write() {
             *state = CameraRefinementData {
                 position: cam_world,
-                far: derived_state.far,
-                fovy: user_state.fovy,
+                far,
+                fovy,
             };
         }
 
-        (user_state.position.eye, derived_state.uniform, true)
+        if let Ok(mut state) = self.dynamics_data.write() {
+            *state = CameraDynamicsData {
+                eye,
+                proj_view_inv,
+                viewport_wh,
+            };
+        }
+
+        (eye, uniform, true)
     }
 
     /// expose the latest UBO
@@ -262,14 +318,10 @@ pub fn init_camera(geodetic_pos: Point3<f64>) -> Camera {
     let camera = Camera::new(CameraUserPosition {
         fovy: Deg(45.0),
         aspect: 1.0,
-        position: PositionState {
-            eye,
-            target,
-            up,
-            viewport_wh: (0.0, 0.0),
-        },
+        position: PositionState { eye, target, up },
         near: None,
         far: None,
+        viewport_wh: (0.0, 0.0),
     });
     camera.update(None);
 

@@ -1,6 +1,6 @@
 use cgmath::{EuclideanSpace, InnerSpace, Matrix4, Point2, Point3, Vector3};
 
-use crate::dynamics::PositionState;
+use crate::dynamics::CameraDynamicsData;
 
 /// WGS84 radii (meters)
 pub const WGS84_A: f64 = 6_378_137.0; // equatorial (X,Y)
@@ -28,12 +28,11 @@ impl Default for Ellipsoid {
 /// `elevation_m`: add this many meters along the ellipsoid normal (use 0.0 if not needed).
 pub fn screen_to_world_on_ellipsoid(
     screen_px: Point2<f64>,
-    inv_view_proj: &Matrix4<f64>,
-    cam: &PositionState,
+    dynamics_data: &CameraDynamicsData,
     ellipsoid: Ellipsoid,
     elevation_m: f64,
 ) -> Option<Point3<f64>> {
-    let (vw, vh) = (cam.viewport_wh.0 as f64, cam.viewport_wh.1 as f64);
+    let (vw, vh) = (dynamics_data.viewport_wh.0, dynamics_data.viewport_wh.1);
     if vw <= 0.0 || vh <= 0.0 {
         return None;
     }
@@ -47,8 +46,8 @@ pub fn screen_to_world_on_ellipsoid(
     let far_clip = cgmath::Vector4::new(x_ndc, y_ndc, 1.0, 1.0);
 
     // 2) Unproject to world space
-    let near_world_h = inv_view_proj * near_clip;
-    let far_world_h = inv_view_proj * far_clip;
+    let near_world_h = dynamics_data.proj_view_inv * near_clip;
+    let far_world_h = dynamics_data.proj_view_inv * far_clip;
 
     // Homogeneous divide
     let near_world = Point3::from_vec((near_world_h.truncate() / near_world_h.w).into());
@@ -59,13 +58,13 @@ pub fn screen_to_world_on_ellipsoid(
     let mut dir = far_world - near_world;
     if dir.magnitude2() == 0.0 {
         // Fallback: use (far - eye)
-        dir = far_world - cam.eye;
+        dir = far_world - dynamics_data.eye;
         if dir.magnitude2() == 0.0 {
             return None;
         }
     }
     let dir = dir.normalize();
-    let origin = cam.eye;
+    let origin = dynamics_data.eye;
 
     // 4) Intersect ray with ellipsoid centered at origin (ECEF assumption)
     let t = intersect_ray_ellipsoid(origin, dir, ellipsoid)?;

@@ -282,13 +282,13 @@ impl ApplicationHandler for App {
             }
 
             WindowEvent::CursorMoved { position, .. } => {
-                state.input(InputEvent::MouseMoved(position.x as f32, position.y as f32));
+                state.input(InputEvent::MouseMoved(position.x as f64, position.y as f64));
             }
 
             WindowEvent::MouseWheel { delta, .. } => {
                 let scroll_delta = match delta {
-                    winit::event::MouseScrollDelta::LineDelta(_, y) => y as f32,
-                    winit::event::MouseScrollDelta::PixelDelta(pos) => pos.y as f32,
+                    winit::event::MouseScrollDelta::LineDelta(_, y) => y as f64,
+                    winit::event::MouseScrollDelta::PixelDelta(pos) => pos.y as f64,
                 };
                 state.input(InputEvent::MouseScrolled(scroll_delta));
             }
