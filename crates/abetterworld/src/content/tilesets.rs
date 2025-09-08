@@ -111,10 +111,6 @@ fn needs_refinement(
         (closest_point - cam_pos).magnitude().max(diagonal * 0.01)
     };
 
-    if dist > camera.far {
-        //return false; // far away, no need to refine
-    }
-
     // 3. Compute vertical FOV (in radians)
     let vertical_fov = camera.fovy.0.to_radians();
 

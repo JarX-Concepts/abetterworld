@@ -6,3 +6,5 @@ pub use input_manager::*;
 
 pub mod camera;
 pub use camera::*;
+
+mod helper;

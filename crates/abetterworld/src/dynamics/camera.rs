@@ -18,9 +18,6 @@ use crate::{
 };
 
 pub const EARTH_RADIUS_M: f64 = 6_371_000.0;
-const EARTH_MIN_RADIUS_M: f64 = 6_350_000.0; // Conservative, accounting for sea-level radius
-const EARTH_MAX_TERRAIN_HEIGHT_M: f64 = 10_000.0; // Everest + buffer
-const EARTH_OUTER_BOUND_M: f64 = EARTH_MIN_RADIUS_M + EARTH_MAX_TERRAIN_HEIGHT_M;
 
 const NEAR_MIN: f64 = 0.1; // Never go below this to avoid depth precision issues
 const NEAR_MAX: f64 = 10_000.0; // Upper limit for near to avoid blowing out near plane
@@ -44,17 +41,20 @@ impl CameraRefinementData {
 #[derive(Debug, Clone)]
 pub struct CameraDerivedMatrices {
     planes: FrustumPlanes,
-    proj_view_matrix: Matrix4<f64>,
+    proj_view: Matrix4<f64>,
+    inv_proj_view: Matrix4<f64>,
     uniform: Uniforms,
 
     near: f64,
     far: f64,
 }
+
 impl CameraDerivedMatrices {
     fn default() -> CameraDerivedMatrices {
         CameraDerivedMatrices {
             planes: [(Vector4::zero(), Vector3::zero(), 0.0); 6],
-            proj_view_matrix: Matrix4::identity(),
+            proj_view: Matrix4::identity(),
+            inv_proj_view: Matrix4::identity(),
             uniform: Uniforms::default(),
 
             near: 0.0,
@@ -173,11 +173,13 @@ impl Camera {
         let proj_view_full = proj64 * view64;
         derived_state.planes = extract_frustum_planes(&proj_view_full);
 
+        derived_state.proj_view = proj_view_full;
+        derived_state.inv_proj_view = proj_view_full.invert().unwrap_or(Matrix4::identity());
+
         // 2) For the GPU *camera uniform*, remove translation from V to avoid double-subtracting,
         //    because each node model will already be pretranslated by -eye on the CPU.
         let view_no_translation64 = remove_translation(view64); // ~R^T
         let proj_view_rot64 = proj64 * view_no_translation64; // P * R^T
-        derived_state.proj_view_matrix = proj_view_rot64;
         derived_state.uniform = decompose_matrix64_to_uniform(&proj_view_rot64);
 
         self.generation.fetch_add(1, Ordering::Relaxed);
