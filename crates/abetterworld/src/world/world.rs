@@ -1,8 +1,13 @@
+use autocxx::moveit::new;
+use cgmath::Point2;
+
 use crate::{
     cache::init_tileset_cache,
     content::{import_renderables, start_pager, Tile, TileManager},
     decode::init,
-    dynamics::{camera_config, Camera, Dynamics, InputState},
+    dynamics::{
+        camera_config, screen_to_world_on_ellipsoid, Camera, Dynamics, Ellipsoid, InputState,
+    },
     helpers::{
         channel::{channel, Receiver},
         AbwError,
@@ -91,7 +96,7 @@ pub enum MouseButton {
     Middle,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum InputEvent {
     KeyPressed(Key),
     KeyReleased(Key),
@@ -163,7 +168,7 @@ impl World {
 
         let tile_content = Arc::new(TileManager::new());
 
-        camera.set_aspect(config.width as f64 / config.height as f64);
+        camera.set_viewport(config.width as f64, config.height as f64);
 
         let (loader_tx, render_rx) = channel::<Tile>(MAX_NEW_TILES_PER_FRAME * 2);
 
@@ -197,10 +202,6 @@ impl World {
         &self.private.depth.view
     }
 
-    pub fn set_aspect(&self, aspect: f64) {
-        self.private.camera.set_aspect(aspect);
-    }
-
     pub fn resize(&mut self, device: &wgpu::Device, new_width: u32, new_height: u32) {
         if new_width == 0 || new_height == 0 {
             return;
@@ -211,7 +212,7 @@ impl World {
 
         self.private
             .camera
-            .set_aspect(new_width as f64 / new_height as f64);
+            .set_viewport(new_width as f64, new_height as f64);
 
         // 3) (If using MSAA) also recreate your MSAA color target here
     }
@@ -284,6 +285,23 @@ impl World {
     pub fn input(&mut self, event: InputEvent) {
         self.private
             .input_state
-            .process_input(&self.private.dynamics, event);
+            .process_input(&self.private.dynamics, event.clone());
+
+        if let InputEvent::MouseMoved(x, y) = event {
+            let xy = Point2::new(x as f64, y as f64);
+
+            let ret_test = screen_to_world_on_ellipsoid(
+                xy,
+                &self.private.camera.proj_view_inv(),
+                &self.private.camera.position(),
+                Ellipsoid::default(),
+                0.0,
+            );
+            if let Some(p) = ret_test {
+                println!("World point at cursor: {:?}", p);
+            } else {
+                println!("No intersection at cursor");
+            }
+        }
     }
 }

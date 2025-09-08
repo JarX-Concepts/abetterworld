@@ -42,7 +42,7 @@ impl CameraRefinementData {
 pub struct CameraDerivedMatrices {
     planes: FrustumPlanes,
     proj_view: Matrix4<f64>,
-    inv_proj_view: Matrix4<f64>,
+    proj_view_inv: Matrix4<f64>,
     uniform: Uniforms,
 
     near: f64,
@@ -54,7 +54,7 @@ impl CameraDerivedMatrices {
         CameraDerivedMatrices {
             planes: [(Vector4::zero(), Vector3::zero(), 0.0); 6],
             proj_view: Matrix4::identity(),
-            inv_proj_view: Matrix4::identity(),
+            proj_view_inv: Matrix4::identity(),
             uniform: Uniforms::default(),
 
             near: 0.0,
@@ -104,8 +104,11 @@ impl Camera {
         self.user_state.read().unwrap().position.eye.to_vec()
     }
 
-    pub fn set_aspect(&self, aspect: f64) {
-        self.user_state.write().unwrap().aspect = aspect;
+    pub fn set_viewport(&self, width: f64, height: f64) {
+        if let Ok(mut state) = self.user_state.write() {
+            state.aspect = width as f64 / height as f64;
+            state.position.viewport_wh = (width, height);
+        }
         self.dirty.store(true, Ordering::Relaxed);
     }
 
@@ -172,9 +175,8 @@ impl Camera {
         // 1) For CPU culling and world->clip math on CPU, keep the full P*V.
         let proj_view_full = proj64 * view64;
         derived_state.planes = extract_frustum_planes(&proj_view_full);
-
         derived_state.proj_view = proj_view_full;
-        derived_state.inv_proj_view = proj_view_full.invert().unwrap_or(Matrix4::identity());
+        derived_state.proj_view_inv = proj_view_full.invert().unwrap_or(Matrix4::identity());
 
         // 2) For the GPU *camera uniform*, remove translation from V to avoid double-subtracting,
         //    because each node model will already be pretranslated by -eye on the CPU.
@@ -204,6 +206,10 @@ impl Camera {
     /// expose the latest planes
     pub fn planes(&self) -> FrustumPlanes {
         self.derived_state.read().unwrap().planes
+    }
+
+    pub fn proj_view_inv(&self) -> Matrix4<f64> {
+        self.derived_state.read().unwrap().proj_view_inv
     }
 
     pub fn frustum_corners(&self) -> [Point3<f64>; 8] {
@@ -256,7 +262,12 @@ pub fn init_camera(geodetic_pos: Point3<f64>) -> Camera {
     let camera = Camera::new(CameraUserPosition {
         fovy: Deg(45.0),
         aspect: 1.0,
-        position: PositionState { eye, target, up },
+        position: PositionState {
+            eye,
+            target,
+            up,
+            viewport_wh: (0.0, 0.0),
+        },
         near: None,
         far: None,
     });

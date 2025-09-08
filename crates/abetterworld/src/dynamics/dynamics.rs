@@ -1,5 +1,5 @@
 use crate::dynamics::{Camera, EARTH_RADIUS_M};
-use cgmath::{num_traits::Float, Deg, EuclideanSpace, InnerSpace, Point3, Rad, Vector3};
+use cgmath::{num_traits::Float, Deg, EuclideanSpace, InnerSpace, Matrix4, Point3, Vector3};
 use std::sync::{Arc, RwLock};
 
 const ROTATION_SENSITIVITY: f64 = 0.0000000008; // scaled by height
@@ -21,6 +21,7 @@ pub struct PositionState {
     pub eye: Point3<f64>,
     pub target: Point3<f64>,
     pub up: Vector3<f64>,
+    pub viewport_wh: (f64, f64),
 }
 
 #[derive(Debug, Clone)]
@@ -61,7 +62,7 @@ pub struct DynamicsState {
     orbit: OrbitParams,
     vel: OrbitVel,
     pivot: Pivot,
-    pub position: PositionState, // kept in sync for your camera API
+    pub position: PositionState,
 }
 
 #[derive(Debug)]
