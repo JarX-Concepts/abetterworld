@@ -1,4 +1,4 @@
-use cgmath::{Point2, Point3};
+use cgmath::{EuclideanSpace, Point2, Point3};
 
 use crate::{
     dynamics::{self, screen_to_world_on_ellipsoid, CameraDynamicsData, Dynamics, Ellipsoid},
@@ -7,16 +7,14 @@ use crate::{
 
 #[derive(Debug, Clone, Copy)]
 pub struct ScreenPosition {
-    pub x: f64,
-    pub y: f64,
+    pub xy: Point2<f64>,
     pub world_position: Option<Point3<f64>>,
 }
 
 impl ScreenPosition {
     pub fn default() -> Self {
         ScreenPosition {
-            x: 0.0,
-            y: 0.0,
+            xy: Point2::new(0.0, 0.0),
             world_position: None,
         }
     }
@@ -28,8 +26,7 @@ impl ScreenPosition {
             0.0,
         );
         ScreenPosition {
-            x,
-            y,
+            xy: Point2::new(x, y),
             world_position,
         }
     }
@@ -83,7 +80,19 @@ impl InputState {
     }
 
     pub fn flush(&mut self, dynamics: &mut Dynamics) {
-        dynamics.zoom_to(self.mouse_wheel_delta, self.mouse_position.world_position);
+        if (self.mouse_wheel_delta != 0.0) {
+            dynamics.zoom(self.mouse_wheel_delta, self.mouse_position.world_position);
+        }
+
+        if self.mouse_button_states[MouseButton::Left as usize] {
+            let delta =
+                self.mouse_position.xy - self.position_on_press[MouseButton::Left as usize].xy;
+            dynamics.pull(
+                Point2::from_vec(delta),
+                self.position_on_press[MouseButton::Left as usize].world_position,
+            );
+            self.position_on_press[MouseButton::Left as usize] = self.mouse_position;
+        }
 
         self.mouse_wheel_delta = 0.0;
     }
