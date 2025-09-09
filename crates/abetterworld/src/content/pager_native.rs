@@ -1,3 +1,5 @@
+use tracing::{event, span, Level};
+
 use crate::{
     content::{
         parser_thread, tiles::wait_and_load_content, tiles_priority::priortize_loop, Client, Tile,
@@ -8,7 +10,7 @@ use crate::{
         channel::{channel, Receiver, Sender},
         AbwError, PlatformAwait,
     },
-    Source,
+    set_thread_name, Source,
 };
 use std::{sync::Arc, thread, time::Duration};
 
@@ -31,6 +33,8 @@ pub fn start_pager(
         let pager_cam = Arc::clone(&camera_src);
         let source_clone = source.clone();
         thread::spawn(move || {
+            set_thread_name!("Pager");
+
             parser_thread(
                 &source_clone,
                 pager_cam,
@@ -48,6 +52,7 @@ pub fn start_pager(
     {
         let cam = Arc::clone(&camera_src);
         thread::spawn(move || {
+            set_thread_name!("Prioritizer");
             priortize_loop(&cam, &mut pager_rx, &mut loader_tx, true)
                 .platform_await()
                 .expect("Failed to run prioritizer loop");
@@ -63,6 +68,7 @@ pub fn start_pager(
             let source_clone = source.clone();
 
             thread::spawn(move || {
+                set_thread_name!("Download/Decode Worker");
                 wait_and_load_content(&source_clone, &client_clone, &mut rx, &mut render_time)
                     .platform_await()
                     .expect("Failed to load content in worker thread");

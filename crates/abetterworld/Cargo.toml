@@ -16,10 +16,26 @@ crate-type = ["cdylib", "rlib", "staticlib"]
 [package.metadata.cfg_aliases]
 wasm = 'all(target_arch = "wasm32", target_os = "unknown")'
 
+[features]
+profile-tracy = ["tracing-tracy/enable", "tracy-client/enable", "wgpu-profiler/tracy"]
+paging_test = []
+
 [dependencies]
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+# --- Tracy pins for GUI v0.11.1 ---
+tracy-client-sys = { version = "=0.24.3", optional = true }
+tracy-client     = { version = "=0.18.0", optional = true, default-features = false, features = [
+  "enable", "ondemand", "only-localhost"
+]}
+tracing-tracy    = { version = "=0.11.4", optional = true }
+
+wgpu = { workspace = true }
+wgpu-profiler = { version = "0.24", optional = true, features = ["tracy"] }
+
 bytemuck = { version = "1.23", features = ["derive"] }
 cgmath = "0.18"
-wgpu = { workspace = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "gzip", "blocking", "http2", "rustls-tls-webpki-roots"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -71,9 +87,6 @@ cc = "1.2"
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 cxx = "1.0.168"
 autocxx = { version = "0.30" }
-
-[features]
-paging_test = []
 
 [target.wasm32-unknown-unknown]
 rustflags = ["-C", "target-feature=+atomics"]

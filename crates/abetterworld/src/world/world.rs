@@ -1,16 +1,13 @@
-use autocxx::moveit::new;
-use cgmath::Point2;
+use tracing::instrument;
 
 use crate::{
     cache::init_tileset_cache,
     content::{import_renderables, start_pager, Tile, TileManager},
     decode::init,
-    dynamics::{
-        camera_config, screen_to_world_on_ellipsoid, Camera, Dynamics, Ellipsoid, InputState,
-    },
+    dynamics::{camera_config, Camera, Dynamics, InputState},
     helpers::{
         channel::{channel, Receiver},
-        AbwError,
+        init_profiling, AbwError,
     },
     render::{
         build_debug_pipeline, build_frustum_render, build_pipeline, DepthBuffer, FrustumRender,
@@ -167,6 +164,8 @@ impl World {
         config: &wgpu::SurfaceConfiguration,
         abw_config: &Config,
     ) -> Self {
+        init_profiling();
+
         init_tileset_cache(&abw_config.cache_dir.to_string());
 
         let (camera, debug_camera_option) = camera_config(abw_config);
@@ -234,6 +233,7 @@ impl World {
         // 3) (If using MSAA) also recreate your MSAA color target here
     }
 
+    #[instrument(skip(self, render_pass))]
     pub fn render(&self, render_pass: &mut wgpu::RenderPass) -> Result<(), AbwError> {
         self.render.render(
             render_pass,
@@ -243,6 +243,7 @@ impl World {
         )
     }
 
+    #[instrument(skip(self, device, queue), fields(need_update = false))]
     pub fn update(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> Result<bool, AbwError> {
         self.private.input_state.flush(&mut self.private.dynamics);
         self.private

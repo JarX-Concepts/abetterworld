@@ -11,6 +11,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
+use tracing::{event, span, Level};
 use url::Url;
 
 #[cfg(target_arch = "wasm32")]
@@ -148,6 +149,9 @@ pub async fn parser_thread(
 
     let mut last_cam_gen = 0;
     loop {
+        let span = span!(Level::TRACE, "pager pass");
+        let _enter = span.enter();
+
         let new_gen = cam.generation();
         if new_gen != last_cam_gen {
             let camera_data = cam.refinement_data();
@@ -160,6 +164,11 @@ pub async fn parser_thread(
                 thread::sleep(Duration::from_millis(10));
             }
         }
+
+        event!(Level::DEBUG, "something happened inside my_span");
+
+        drop(_enter);
+        drop(span);
     }
 }
 
