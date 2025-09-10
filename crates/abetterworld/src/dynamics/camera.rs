@@ -64,17 +64,21 @@ impl CameraDerivedMatrices {
 
 #[derive(Debug, Clone)]
 pub struct CameraDynamicsData {
+    pub proj_view: Matrix4<f64>,
     pub proj_view_inv: Matrix4<f64>,
     pub eye: Point3<f64>,
     pub viewport_wh: (f64, f64),
+    pub fov_y: Deg<f64>,
 }
 
 impl CameraDynamicsData {
     fn default() -> CameraDynamicsData {
         CameraDynamicsData {
+            proj_view: Matrix4::identity(),
             proj_view_inv: Matrix4::identity(),
             eye: Point3::new(0.0, 0.0, 0.0),
             viewport_wh: (0.0, 0.0),
+            fov_y: Deg(45.0),
         }
     }
 }
@@ -246,6 +250,8 @@ impl Camera {
         if let Ok(mut state) = self.dynamics_data.write() {
             *state = CameraDynamicsData {
                 eye,
+                fov_y: fovy,
+                proj_view: proj_view_full,
                 proj_view_inv,
                 viewport_wh,
             };

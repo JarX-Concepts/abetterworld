@@ -12,3 +12,5 @@ pub use cache_wasm::*;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod paging;
+
+mod dynamics;

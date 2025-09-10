@@ -13,8 +13,8 @@ pub use hash::*;
 pub mod platform;
 pub use platform::*;
 
-pub mod profiler;
-pub use profiler::*;
+pub mod logging;
+pub use logging::*;
 
 #[cfg(target_arch = "wasm32")]
 mod channel_wasm_async;

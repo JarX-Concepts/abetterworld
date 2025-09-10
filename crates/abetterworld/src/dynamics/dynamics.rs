@@ -1,31 +1,16 @@
+use crate::dynamics::{
+    view_ray_from_screen_with_pose, world_to_screen, Camera, CameraDynamicsData, PositionState,
+    ScreenPosition,
+};
 use cgmath::{
-    num_traits::clamp, EuclideanSpace, InnerSpace, Point2, Point3, Quaternion, Rad, Rotation,
-    Rotation3, Vector3, Zero,
+    EuclideanSpace, InnerSpace, One, Point2, Point3, Quaternion, Rad, Rotation, Rotation3, Vector3,
 };
 use std::sync::{Arc, RwLock};
-
-use crate::dynamics::{Camera, PositionState};
-
-pub const WGS84_A: f64 = 6_378_137.0; // meters
-
-// Tuning
-const MIN_ALT_M: f64 = 10.0;
-const MAX_ALT_M: f64 = 50_000_000.0;
-const ANGULAR_SENS_RAD_PER_PX: f64 = 0.003;
-const ZOOM_SENS_PER_TICK: f64 = 0.12;
-const DAMPING_PER_SEC: f64 = 3.0;
 
 #[derive(Debug, Clone)]
 pub struct DynamicsState {
     pub position: PositionState,
-
-    // Momentum
-    pub yaw_pitch_vel: Vector3<f64>, // x=yaw(dot around up_ref), y=pitch(around east_ref), z unused
-    pub zoom_vel: f64,
-
-    // ENU frame anchor: radial up at the *last pull_pt* the user clicked.
-    // If None, we derive from current eye radial each frame.
-    pub up_ref_from_pull: Option<Vector3<f64>>,
+    pub rotation_pt: Point3<f64>,
 }
 
 #[derive(Debug)]
@@ -38,128 +23,125 @@ impl Dynamics {
         Self {
             state: RwLock::new(DynamicsState {
                 position: starting_pos,
-                yaw_pitch_vel: Vector3::zero(),
-                zoom_vel: 0.0,
-                up_ref_from_pull: None,
+                rotation_pt: Point3::new(0.0, 0.0, 0.0),
             }),
         }
     }
 
-    /// Mouse/gesture pull: `delta` in pixels; +x right, +y down.
-    /// `pull_pt` is the world point the mouse started on (ECEF), used ONLY to pick a local frame.
-    /// Rotation is ALWAYS about the Earth's center.
-    pub fn pull(&self, delta: Point2<f64>, pull_pt: Option<Point3<f64>>) {
-        let mut s = self.state.write().unwrap();
+    pub fn rotate(
+        &self,
+        dynamics_data: &CameraDynamicsData,
+        from: ScreenPosition,
+        to: ScreenPosition,
+    ) {
+        // Must know the locked world point from the pre-rotation pose.
+        let p_lock = match from.world_position {
+            Some(p) => p,
+            None => return,
+        };
 
-        // Cache the ENU "up" for consistent feel during this drag/flick
-        if let Some(p) = pull_pt {
-            let up = safe_normalize(p.to_vec()).unwrap_or(Vector3::unit_z());
-            s.up_ref_from_pull = Some(up);
+        let mut s = self.state.write().expect("Dynamics write lock");
+
+        // 1) Build unit direction to the locked point from the rotation center (globe center).
+        //    If you orbit around world origin, target is (0,0,0). If not, replace with your center.
+        let center = Point3::new(0.0, 0.0, 0.0);
+        let vP = p_lock - center;
+        if vP.magnitude2() == 0.0 {
+            return;
+        }
+        let vP = vP.normalize();
+
+        // 2) Get the current *pre-rotation* view ray for `to.xy`, in world space.
+        //    You need a helper like:
+        //      camera.view_ray_from_screen_with_pose(&s.position, to.xy) -> Option<Vector3<f64>>
+        //    that returns a unit direction from the rotation center (globe center) for that pixel.
+        let r_to = match view_ray_from_screen_with_pose(dynamics_data, &s.position, to.xy) {
+            Some(d) => {
+                if d.magnitude2() == 0.0 {
+                    return;
+                }
+                d.normalize()
+            }
+            None => return,
+        };
+
+        // 3) Shortest-arc rotation that maps r_to -> vP. (Stable antiparallel handling)
+        let q = shortest_arc_quat(r_to, vP);
+        if q.is_none() {
+            return;
+        }
+        let mut q = q.unwrap();
+        // Sign-stabilize to kill flip/flop (q and -q are same rotation)
+        if q.s < 0.0 {
+            q = -q;
         }
 
-        // Inject angular momentum (flick). Screen up should pitch up => negate delta.y.
-        let yaw = ANGULAR_SENS_RAD_PER_PX * delta.x;
-        let pitch = -ANGULAR_SENS_RAD_PER_PX * delta.y;
+        // 4) Apply to camera (about globe center): rotate eye and up, keep target at center.
+        let eye_rel = s.position.eye - center;
+        s.position.eye = center + q.rotate_vector(eye_rel);
+        s.position.up = q.rotate_vector(s.position.up).normalize();
+        s.position.target = center;
 
-        s.yaw_pitch_vel.x += yaw;
-        s.yaw_pitch_vel.y += pitch;
+        // 5) Light re-orthonormalization of the basis to prevent micro drift.
+        let view = s.position.target - s.position.eye;
+        let view_n = if view.magnitude2() > 0.0 {
+            view.normalize()
+        } else {
+            Vector3::new(0.0, 0.0, -1.0)
+        };
+        let right = view_n.cross(s.position.up).normalize();
+        s.position.up = right.cross(view_n).normalize();
+
+        s.rotation_pt = p_lock;
+
+        // ---- helpers ----
+        fn shortest_arc_quat(a: Vector3<f64>, b: Vector3<f64>) -> Option<Quaternion<f64>> {
+            let va = if a.magnitude2() > 0.0 {
+                a.normalize()
+            } else {
+                return None;
+            };
+            let vb = if b.magnitude2() > 0.0 {
+                b.normalize()
+            } else {
+                return None;
+            };
+
+            let dot = va.dot(vb).clamp(-1.0, 1.0);
+            // Aligned -> identity
+            if 1.0 - dot < 1e-15 {
+                return Some(Quaternion::one());
+            }
+            // Opposite -> 180° about any stable axis orthogonal to va
+            if dot + 1.0 < 1e-15 {
+                let mut axis = va.cross(Vector3::new(1.0, 0.0, 0.0));
+                if axis.magnitude2() < 1e-18 {
+                    axis = va.cross(Vector3::new(0.0, 1.0, 0.0));
+                }
+                if axis.magnitude2() < 1e-24 {
+                    return None;
+                }
+                return Some(Quaternion::from_axis_angle(
+                    axis.normalize(),
+                    Rad(std::f64::consts::PI),
+                ));
+            }
+            // General case
+            let mut axis = va.cross(vb);
+            let s = axis.magnitude();
+            if s < 1e-18 {
+                return Some(Quaternion::one());
+            }
+            axis /= s;
+            let angle = s.atan2(dot); // stable atan2(|cross|, dot)
+            Some(Quaternion::from_axis_angle(axis, Rad(angle)))
+        }
     }
 
-    /// Wheel/pinch zoom. Positive `delta` = zoom OUT (further), negative = zoom IN (closer).
-    /// `focus` is optional world point under the cursor; used to bias target, but we keep orbiting about origin.
-    pub fn zoom(&self, delta: f64, focus: Option<Point3<f64>>) {
-        let mut s = self.state.write().unwrap();
+    /// Integrate momentum (if you still want inertial feel) & publish.
+    pub fn update(&self, _dt: &core::time::Duration, camera: &Arc<Camera>) {
+        let s = self.state.write().expect("Dynamics write lock");
 
-        s.zoom_vel += ZOOM_SENS_PER_TICK * delta;
-
-        // Bias target toward focus for "zoom to cursor" feel, without changing orbit center.
-        if let Some(f) = focus {
-            s.position.target = f;
-        }
-    }
-
-    /// Integrate and publish to camera.
-    pub fn update(&self, dt: &core::time::Duration, camera: &Arc<Camera>) {
-        let mut s = self.state.write().unwrap();
-
-        let dt_s = dt.as_secs_f64().max(1e-6);
-        let decay = (-DAMPING_PER_SEC * dt_s).exp();
-
-        let mut pos = s.position.clone();
-
-        // ----- Build local frame for this step -----
-        // Use cached "up" from last pull start if available; otherwise geocentric up from eye.
-        let up_ref = s
-            .up_ref_from_pull
-            .or_else(|| safe_normalize(pos.eye.to_vec()))
-            .unwrap_or(Vector3::unit_z());
-
-        // Robust east/north spanning set
-        let mut east = safe_normalize(Vector3::unit_z().cross(up_ref))
-            .or_else(|| safe_normalize(Vector3::unit_x().cross(up_ref)))
-            .unwrap_or(Vector3::unit_x());
-        let north = up_ref.cross(east); // already orthonormal if inputs were
-
-        // ----- Apply angular motion (about ORIGIN) -----
-        let yaw = s.yaw_pitch_vel.x * dt_s;
-        let pitch = s.yaw_pitch_vel.y * dt_s;
-
-        if yaw.abs() > 0.0 || pitch.abs() > 0.0 {
-            let q_yaw = Quaternion::from_axis_angle(up_ref, Rad(yaw));
-            let q_pitch = Quaternion::from_axis_angle(east, Rad(pitch));
-            let q = q_yaw * q_pitch;
-
-            // Rotate vectors around origin (geocentric orbit)
-            pos.eye = Point3::from_vec(q.rotate_vector(pos.eye.to_vec()));
-            pos.target = Point3::from_vec(q.rotate_vector(pos.target.to_vec()));
-        }
-
-        // ----- Dolly (zoom), multiplicative for consistent feel -----
-        if s.zoom_vel.abs() > 0.0 {
-            let eye_vec = pos.eye.to_vec();
-            let r = eye_vec.magnitude();
-            let r_new = clamp(
-                r * (s.zoom_vel * dt_s).exp(),
-                WGS84_A + MIN_ALT_M,
-                WGS84_A + MAX_ALT_M,
-            );
-
-            let eye_dir = safe_normalize(eye_vec).unwrap_or(Vector3::unit_z());
-            pos.eye = Point3::from_vec(eye_dir * r_new);
-
-            // Keep target "biased" but don’t drag it to origin;
-            // optionally, you could ease target toward eye_dir * WGS84_A to emulate surface lock.
-        }
-
-        // ----- Safety & housekeeping -----
-        // Clamp radius again (handles cases with no zoom input)
-        let r = pos.eye.to_vec().magnitude();
-        let r_clamped = clamp(r, WGS84_A + MIN_ALT_M, WGS84_A + MAX_ALT_M);
-        if (r - r_clamped).abs() > 0.0 {
-            let eye_dir = safe_normalize(pos.eye.to_vec()).unwrap_or(Vector3::unit_z());
-            pos.eye = Point3::from_vec(eye_dir * r_clamped);
-        }
-
-        // Stable geocentric up from eye
-        //pos.up = safe_normalize(pos.eye.to_vec()).unwrap_or(Vector3::unit_z());
-
-        // Exponential damping
-        s.yaw_pitch_vel *= decay;
-        s.zoom_vel *= decay;
-
-        // Publish
-        s.position = pos.clone();
-        camera.update_dynamic_state(&pos);
-    }
-}
-
-// ---------- Utilities ----------
-#[inline]
-fn safe_normalize(v: Vector3<f64>) -> Option<Vector3<f64>> {
-    let m = v.magnitude();
-    if m.is_finite() && m > 0.0 {
-        Some(v / m)
-    } else {
-        None
+        camera.update_dynamic_state(&s.position);
     }
 }

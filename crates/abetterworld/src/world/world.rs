@@ -302,9 +302,11 @@ impl World {
     }
 
     pub fn input(&mut self, event: InputEvent) {
-        self.private
-            .input_state
-            .queue_event(&self.private.camera.dynamics(), event);
+        self.private.input_state.queue_event(
+            &self.private.camera.dynamics(),
+            &mut self.private.dynamics,
+            event,
+        );
 
         /*
         if let InputEvent::MouseMoved(x, y) = event {

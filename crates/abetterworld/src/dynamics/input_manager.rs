@@ -1,7 +1,10 @@
 use cgmath::{EuclideanSpace, Point2, Point3};
 
 use crate::{
-    dynamics::{self, screen_to_world_on_ellipsoid, CameraDynamicsData, Dynamics, Ellipsoid},
+    dynamics::{
+        self, screen_to_world_on_ellipsoid, world_to_screen, CameraDynamicsData, Dynamics,
+        Ellipsoid,
+    },
     world::{InputEvent, MouseButton},
 };
 
@@ -53,10 +56,37 @@ impl InputState {
         *self = InputState::new();
     }
 
-    pub fn queue_event(&mut self, dynamics_data: &CameraDynamicsData, event: InputEvent) {
+    pub fn queue_event(
+        &mut self,
+        dynamics_data: &CameraDynamicsData,
+        dynamics: &mut Dynamics,
+        event: InputEvent,
+    ) {
         match event {
             InputEvent::MouseMoved(x, y) => {
                 self.mouse_position = ScreenPosition::new(x as f64, y as f64, dynamics_data);
+                if self.mouse_button_states[MouseButton::Left as usize] {
+                    dynamics.rotate(
+                        dynamics_data,
+                        self.position_on_press[MouseButton::Left as usize],
+                        self.mouse_position,
+                    );
+                }
+
+                /*                 let back_to_screen = world_to_screen(
+                    self.mouse_position
+                        .world_position
+                        .unwrap_or(Point3::new(0.0, 0.0, 0.0)),
+                    dynamics_data,
+                );
+                println!(
+                    "screen pos: {:?} to world: {:?}",
+                    self.mouse_position.xy, self.mouse_position.world_position
+                );
+                println!(
+                    "world pos: {:?} back to screen: {:?}",
+                    self.mouse_position.world_position, back_to_screen
+                ); */
             }
 
             InputEvent::MouseScrolled(delta) => {
@@ -66,10 +96,14 @@ impl InputState {
             InputEvent::MouseButtonPressed(button) => {
                 self.mouse_button_states[button as usize] = true;
                 self.position_on_press[button as usize] = self.mouse_position;
+
+                //dynamics.begin_gesture(self.mouse_position);
             }
 
             InputEvent::MouseButtonReleased(button) => {
                 self.mouse_button_states[button as usize] = false;
+
+                //dynamics.end_gesture();
             }
 
             // keep your default/unhandled case:
@@ -80,7 +114,7 @@ impl InputState {
     }
 
     pub fn flush(&mut self, dynamics: &mut Dynamics) {
-        if (self.mouse_wheel_delta != 0.0) {
+        /*         if (self.mouse_wheel_delta != 0.0) {
             dynamics.zoom(self.mouse_wheel_delta, self.mouse_position.world_position);
         }
 
@@ -94,6 +128,6 @@ impl InputState {
             self.position_on_press[MouseButton::Left as usize] = self.mouse_position;
         }
 
-        self.mouse_wheel_delta = 0.0;
+        self.mouse_wheel_delta = 0.0; */
     }
 }
