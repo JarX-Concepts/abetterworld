@@ -56,7 +56,7 @@ mod tests {
         // Deterministic RNG (so failures reproduce)
         let mut rng = StdRng::seed_from_u64(42);
 
-        let tol_m = 2000.0; // 2 km tolerance (not supposed to be super precise, just not drifting away)
+        let tol_m = 1.0; // 1 m tolerance
 
         // Jitter the mouse ~20 frames, 0..5 px each axis (random sign), and verify lock
         for i in 0..20 {
@@ -73,6 +73,7 @@ mod tests {
                 InputEvent::MouseMoved(mouse.0, mouse.1),
             );
             im.flush(&mut model);
+            model.update(&core::time::Duration::from_millis(16), &camera);
             camera.update(None);
 
             // World position under the *new* cursor location after the rotation
