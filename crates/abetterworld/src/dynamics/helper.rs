@@ -97,14 +97,22 @@ pub fn world_to_screen(
     world: Point3<f64>,
     dynamics_data: &CameraDynamicsData,
 ) -> Option<Point2<f64>> {
-    let (vw, vh) = (dynamics_data.viewport_wh.0, dynamics_data.viewport_wh.1);
+    world_to_screen_proj(world, dynamics_data.viewport_wh, &dynamics_data.proj_view)
+}
+
+pub fn world_to_screen_proj(
+    world: Point3<f64>,
+    viewport_wh: (f64, f64),
+    proj_view: &Matrix4<f64>,
+) -> Option<Point2<f64>> {
+    let (vw, vh) = (viewport_wh.0, viewport_wh.1);
     if vw <= 0.0 || vh <= 0.0 {
         return None;
     }
 
     // world -> clip
     let world_h = Vector4::new(world.x, world.y, world.z, 1.0);
-    let clip = dynamics_data.proj_view * world_h;
+    let clip = proj_view * world_h;
 
     // Reject points with w ~ 0 or behind the camera (w <= 0 for standard RH OpenGL clip)
     if !clip.w.is_finite() || clip.w.abs() < 1e-12 || clip.w <= 0.0 {

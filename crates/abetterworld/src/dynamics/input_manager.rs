@@ -91,6 +91,8 @@ impl InputState {
 
             InputEvent::MouseScrolled(delta) => {
                 self.mouse_wheel_delta += delta;
+
+                dynamics.zoom(dynamics_data, delta, Some(self.mouse_position));
             }
 
             InputEvent::MouseButtonPressed(button) => {
