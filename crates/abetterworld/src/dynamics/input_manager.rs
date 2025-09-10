@@ -72,40 +72,20 @@ impl InputState {
                         self.mouse_position,
                     );
                 }
-
-                /*                 let back_to_screen = world_to_screen(
-                    self.mouse_position
-                        .world_position
-                        .unwrap_or(Point3::new(0.0, 0.0, 0.0)),
-                    dynamics_data,
-                );
-                println!(
-                    "screen pos: {:?} to world: {:?}",
-                    self.mouse_position.xy, self.mouse_position.world_position
-                );
-                println!(
-                    "world pos: {:?} back to screen: {:?}",
-                    self.mouse_position.world_position, back_to_screen
-                ); */
             }
 
             InputEvent::MouseScrolled(delta) => {
                 self.mouse_wheel_delta += delta;
-
                 dynamics.zoom(dynamics_data, delta, Some(self.mouse_position));
             }
 
             InputEvent::MouseButtonPressed(button) => {
                 self.mouse_button_states[button as usize] = true;
                 self.position_on_press[button as usize] = self.mouse_position;
-
-                //dynamics.begin_gesture(self.mouse_position);
             }
 
             InputEvent::MouseButtonReleased(button) => {
                 self.mouse_button_states[button as usize] = false;
-
-                //dynamics.end_gesture();
             }
 
             // keep your default/unhandled case:
@@ -115,21 +95,5 @@ impl InputState {
         }
     }
 
-    pub fn flush(&mut self, dynamics: &mut Dynamics) {
-        /*         if (self.mouse_wheel_delta != 0.0) {
-            dynamics.zoom(self.mouse_wheel_delta, self.mouse_position.world_position);
-        }
-
-        if self.mouse_button_states[MouseButton::Left as usize] {
-            let delta =
-                self.mouse_position.xy - self.position_on_press[MouseButton::Left as usize].xy;
-            dynamics.pull(
-                Point2::from_vec(delta),
-                self.position_on_press[MouseButton::Left as usize].world_position,
-            );
-            self.position_on_press[MouseButton::Left as usize] = self.mouse_position;
-        }
-
-        self.mouse_wheel_delta = 0.0; */
-    }
+    pub fn flush(&mut self, dynamics: &mut Dynamics) {}
 }

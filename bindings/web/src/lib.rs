@@ -1,4 +1,5 @@
 use abetterworld::{get_debug_config, InputEvent, MouseButton, World};
+use std::rc::Rc;
 use std::sync::Arc;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
@@ -232,7 +233,7 @@ impl<'window> State<'window> {
 struct WebApp {
     window: Option<Arc<Window>>,
     canvas: Option<web_sys::HtmlCanvasElement>,
-    state: Option<State<'static>>, // see lifetime note below
+    state: std::rc::Rc<std::cell::RefCell<Option<State<'static>>>>,
 }
 
 impl Default for WebApp {
@@ -240,24 +241,25 @@ impl Default for WebApp {
         Self {
             window: None,
             canvas: None,
-            state: None,
+            state: std::rc::Rc::new(std::cell::RefCell::new(None)),
         }
     }
 }
 
 impl ApplicationHandler for WebApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        // ⬇️ Replacement for WindowBuilder::new().with_...().build(&event_loop)
+        // Create window
         let attrs: WindowAttributes = Window::default_attributes()
             .with_title("A Better World WASM")
             .with_inner_size(winit::dpi::PhysicalSize::new(800, 600));
+
         let window = Arc::new(
             event_loop
                 .create_window(attrs)
                 .expect("create_window failed"),
         );
 
-        // ⬇️ Same canvas extraction you had before
+        // Extract canvas and attach to document
         let canvas = window.canvas().expect("Failed to get canvas");
         canvas.set_id("canvas");
         let document = web_sys::window().unwrap().document().unwrap();
@@ -271,20 +273,36 @@ impl ApplicationHandler for WebApp {
         canvas.style().set_property("display", "block").unwrap();
         canvas.style().set_property("margin", "0").unwrap();
 
-        // Set initial backing store size
+        // Backing store size (accounts for DPR)
         let physical_size = size_canvas_backing_store(&canvas);
 
-        // ⬇️ Initialize your State with (&window, &canvas), just like before
-        let mut state_now = pollster::block_on(State::new(&window, &canvas));
-        state_now.resize(physical_size);
-
-        // Store things on self
-        self.canvas = Some(canvas);
+        // Stash window/canvas on self
+        self.canvas = Some(canvas.clone());
         self.window = Some(Arc::clone(&window));
 
-        #[allow(unsafe_code)]
-        let state_static: State<'static> = unsafe { std::mem::transmute(state_now) };
-        self.state = Some(state_static);
+        // ---- WASM async init (no blocking) ----
+        // Clone what we need into the async task.
+        let state_cell = Rc::clone(&self.state); // Rc<RefCell<Option<State<'static>>>>
+        let window_arc = Arc::clone(self.window.as_ref().unwrap());
+        let canvas_el = canvas.clone();
+
+        wasm_bindgen_futures::spawn_local(async move {
+            // Build the State asynchronously
+            let mut state_now = State::new(&window_arc, &canvas_el).await;
+
+            // Apply the initial size (based on DPR-calculated backing store)
+            state_now.resize(physical_size);
+
+            // Keep your existing lifetime workaround
+            #[allow(unsafe_code)]
+            let state_static: State<'static> = unsafe { std::mem::transmute(state_now) };
+
+            // Publish it so the event loop can start updating/rendering
+            state_cell.replace(Some(state_static));
+
+            // Kick a redraw so about_to_wait() runs a frame soon
+            window_arc.request_redraw();
+        });
     }
 
     fn window_event(
@@ -293,7 +311,16 @@ impl ApplicationHandler for WebApp {
         _id: winit::window::WindowId,
         event: WindowEvent,
     ) {
-        let (Some(window), Some(state)) = (&self.window, &mut self.state) else {
+        let mut state_opt = self.state.borrow_mut();
+        let state = match state_opt.as_mut() {
+            Some(s) => s,
+            None => {
+                // not initialized yet
+                return;
+            }
+        };
+
+        let Some(window) = &self.window else {
             return;
         };
 
@@ -338,13 +365,13 @@ impl ApplicationHandler for WebApp {
             }
 
             WindowEvent::CursorMoved { position, .. } => {
-                state.input(InputEvent::MouseMoved(position.x as f32, position.y as f32));
+                state.input(InputEvent::MouseMoved(position.x, position.y));
             }
 
             WindowEvent::MouseWheel { delta, .. } => {
                 let scroll = match delta {
-                    winit::event::MouseScrollDelta::LineDelta(_, y) => y as f32,
-                    winit::event::MouseScrollDelta::PixelDelta(pos) => pos.y as f32,
+                    winit::event::MouseScrollDelta::LineDelta(_, y) => y as f64,
+                    winit::event::MouseScrollDelta::PixelDelta(pos) => pos.y,
                 };
                 state.input(InputEvent::MouseScrolled(scroll));
             }
@@ -354,7 +381,15 @@ impl ApplicationHandler for WebApp {
     }
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        let (Some(window), Some(state)) = (&self.window, &mut self.state) else {
+        let mut state_opt = self.state.borrow_mut();
+        let state = match state_opt.as_mut() {
+            Some(s) => s,
+            None => {
+                // not initialized yet
+                return;
+            }
+        };
+        let Some(window) = &self.window else {
             return;
         };
         state.update();

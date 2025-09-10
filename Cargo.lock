@@ -60,9 +60,6 @@ dependencies = [
  "threadpool",
  "tracing",
  "tracing-subscriber",
- "tracing-tracy",
- "tracy-client 0.18.0",
- "tracy-client-sys",
  "url",
  "urlencoding",
  "uuid",
@@ -4115,28 +4112,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tracing-tracy"
-version = "0.11.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0eaa1852afa96e0fe9e44caa53dc0bd2d9d05e0f2611ce09f97f8677af56e4ba"
-dependencies = [
- "tracing-core",
- "tracing-subscriber",
- "tracy-client 0.17.6",
-]
-
-[[package]]
-name = "tracy-client"
-version = "0.17.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "73202d787346a5418f8222eddb5a00f29ea47caf3c7d38a8f2f69f8455fa7c7e"
-dependencies = [
- "loom",
- "once_cell",
- "tracy-client-sys",
-]
-
-[[package]]
 name = "tracy-client"
 version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4697,7 +4672,7 @@ checksum = "63e58456885a6e343f2487a65ba0d19f87b8a9d8c9b69086352ade067d52b621"
 dependencies = [
  "parking_lot",
  "thiserror 2.0.16",
- "tracy-client 0.18.0",
+ "tracy-client",
  "wgpu",
 ]
 
