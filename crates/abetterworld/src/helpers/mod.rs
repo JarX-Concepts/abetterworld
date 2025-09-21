@@ -16,6 +16,9 @@ pub use platform::*;
 pub mod logging;
 pub use logging::*;
 
+pub mod frame_clock;
+pub use frame_clock::*;
+
 #[cfg(target_arch = "wasm32")]
 mod channel_wasm_async;
 #[cfg(target_arch = "wasm32")]

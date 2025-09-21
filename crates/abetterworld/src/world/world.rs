@@ -7,7 +7,7 @@ use crate::{
     dynamics::{camera_config, Camera, Dynamics, InputState},
     helpers::{
         channel::{channel, Receiver},
-        init_profiling, AbwError,
+        init_profiling, AbwError, FrameClock,
     },
     render::{
         build_debug_pipeline, build_frustum_render, build_pipeline, DepthBuffer, FrustumRender,
@@ -30,6 +30,8 @@ pub struct WorldPrivate {
 
     pub input_state: InputState,
     pub dynamics: Dynamics,
+
+    pub clock: FrameClock,
 }
 
 pub struct World {
@@ -208,6 +210,7 @@ impl World {
                 input_state: InputState::new(),
                 frustum_render,
                 receiver: render_rx,
+                clock: FrameClock::new(std::time::Duration::from_millis(16), 0.2),
             },
             render: RenderAndUpdate::new(),
             config: abw_config.clone(),
@@ -230,7 +233,7 @@ impl World {
             .camera
             .set_viewport(new_width as f64, new_height as f64);
 
-        // 3) (If using MSAA) also recreate your MSAA color target here
+        // 3) (If using MSAA) also recreate the MSAA color target here
     }
 
     #[instrument(skip(self, render_pass))]
@@ -245,12 +248,14 @@ impl World {
 
     #[instrument(skip(self, device, queue), fields(need_update = false))]
     pub fn update(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> Result<bool, AbwError> {
+        let tick = self.private.clock.tick();
+
         self.private.input_state.flush(&mut self.private.dynamics);
         self.private
             .dynamics
-            .update(&core::time::Duration::from_millis(16), &self.private.camera);
+            .update(&tick.elapsed, &self.private.camera);
 
-        const BUDGET: Duration = Duration::from_millis(20);
+        const BUDGET: Duration = Duration::from_millis(16);
 
         let mut needs_update = false;
 
@@ -307,23 +312,5 @@ impl World {
             &mut self.private.dynamics,
             event,
         );
-
-        /*
-        if let InputEvent::MouseMoved(x, y) = event {
-            let xy = Point2::new(x as f64, y as f64);
-
-            let ret_test = screen_to_world_on_ellipsoid(
-                xy,
-                &self.private.camera.proj_view_inv(),
-                &self.private.camera.position(),
-                Ellipsoid::default(),
-                0.0,
-            );
-            if let Some(p) = ret_test {
-                println!("World point at cursor: {:?}", p);
-            } else {
-                println!("No intersection at cursor");
-            }
-        } */
     }
 }

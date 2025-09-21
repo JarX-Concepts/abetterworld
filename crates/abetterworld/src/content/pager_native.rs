@@ -82,31 +82,3 @@ pub fn start_pager(
 fn build_client(threads: usize) -> Result<Client, AbwError> {
     Client::new(threads)
 }
-
-pub fn import_renderables(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    layout: &wgpu::BindGroupLayout,
-    content: &Arc<TileManager>,
-    receiver: &mut Receiver<Tile>,
-    budget: Duration,
-) -> Result<bool, AbwError> {
-    use std::time::Instant;
-
-    let deadline = Instant::now() + budget;
-    let mut needs_update = false;
-
-    while Instant::now() < deadline {
-        match receiver.try_recv() {
-            Ok(mut tile) => {
-                use crate::content::tiles;
-
-                let new_tile = tiles::content_render_setup(device, queue, layout, &mut tile)?;
-                content.add_renderable(new_tile);
-                needs_update = true;
-            }
-            Err(_) => break, // nothing left
-        }
-    }
-    Ok(needs_update)
-}
