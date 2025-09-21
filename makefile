@@ -9,10 +9,16 @@ build-web-release:
 	wasm-bindgen target/wasm32-unknown-unknown/release/abw_web.wasm --out-dir bindings/web/release/pkg --target web
 
 
-start-web:
+start-web-debug:
 	$(MAKE) build-web-debug
 	mkdir -p examples/web/pkg
 	cp -r bindings/web/debug/pkg/* examples/web/pkg
+	cd examples/web && python3 -m http.server 8080
+
+start-web-release:
+	$(MAKE) build-web-release
+	mkdir -p examples/web/pkg
+	cp -r bindings/web/release/pkg/* examples/web/pkg
 	cd examples/web && python3 -m http.server 8080
 
 test-web:

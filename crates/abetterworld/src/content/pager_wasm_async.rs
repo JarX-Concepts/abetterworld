@@ -33,18 +33,25 @@ pub fn start_pager(
         }
 
         // run update_pager every 2 seconds
+        let mut last_cam_gen = 0;
         loop {
-            if let Err(e) = update_pager(
-                source.clone(),
-                camera_src.clone(),
-                tile_mgr.clone(),
-                render_tx.clone(),
-            )
-            .map_err(|e| {
-                log::error!("Failed to update pager: {:?}", e);
-                e
-            }) {
-                log::error!("update_pager error: {:?}", e);
+            let new_gen = camera_src.generation();
+            if new_gen != last_cam_gen {
+                log::info!("Camera state has changed; updating pager");
+                last_cam_gen = new_gen;
+
+                if let Err(e) = update_pager(
+                    source.clone(),
+                    camera_src.clone(),
+                    tile_mgr.clone(),
+                    render_tx.clone(),
+                )
+                .map_err(|e| {
+                    log::error!("Failed to update pager: {:?}", e);
+                    e
+                }) {
+                    log::error!("update_pager error: {:?}", e);
+                }
             }
             // wait 2 seconds
             TimeoutFuture::new(2000).await;
@@ -105,7 +112,7 @@ fn update_pager(
 
         // this will run until the pager channel is closed
         if let Err(e) = priortize_loop(&cam, &mut pager_rx, &mut loader_tx_clone, false).await {
-            log::error!("Prioritized loop thread failed: {:?}", e);
+            log::info!("Prioritized loop thread ended: {:?}", e);
         }
 
         ACTIVE_JOBS.fetch_sub(1, Ordering::SeqCst);
