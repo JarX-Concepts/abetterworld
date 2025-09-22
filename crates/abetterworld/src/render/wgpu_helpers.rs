@@ -1,4 +1,4 @@
-use wgpu::{util::DeviceExt, wgc::pipeline};
+use wgpu::util::DeviceExt;
 
 use crate::{
     content::{DebugVertex, Vertex, MAX_RENDERABLE_NODES_US, MAX_RENDERABLE_TILES},

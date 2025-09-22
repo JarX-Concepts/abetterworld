@@ -85,8 +85,8 @@ impl RenderAndUpdate {
                         0,
                         node_counter..node_counter + 1,
                     );
-                    node_counter += 1;
                 }
+                node_counter += 1;
             }
         }
 
@@ -112,7 +112,8 @@ impl RenderAndUpdate {
 
         for (index, _renderable) in self.frame.tiles.iter().enumerate() {
             if index >= MAX_RENDERABLE_TILES_US {
-                log::warn!("Hit maximum number of volumes (Render)");
+                //log::warn!("Hit maximum number of volumes (Render)");
+                break;
             } else {
                 render_pass.draw_indexed(0..36, (index as i32 + 1) * 8, 0..1);
             }
@@ -230,6 +231,10 @@ impl RenderAndUpdate {
 
         if draw_tile_volumes {
             for (index, renderable) in self.frame.tiles.iter().enumerate() {
+                if index + 1 >= MAX_RENDERABLE_TILES_US {
+                    //log::warn!("Hit maximum number of volumes (Update)");
+                    break;
+                }
                 let new_frustum_vertices: Vec<DebugVertex> = renderable
                     .culling_volume
                     .corners
@@ -244,15 +249,11 @@ impl RenderAndUpdate {
                     })
                     .collect();
 
-                if index >= MAX_RENDERABLE_TILES_US {
-                    log::warn!("Hit maximum number of volumes (Update)");
-                } else {
-                    queue.write_buffer(
-                        &world.frustum_render.vertex_buffer,
-                        (index as u64 + 1) * SIZE_OF_VOLUME,
-                        bytemuck::cast_slice(&new_frustum_vertices),
-                    );
-                }
+                queue.write_buffer(
+                    &world.frustum_render.vertex_buffer,
+                    (index as u64 + 1) * SIZE_OF_VOLUME,
+                    bytemuck::cast_slice(&new_frustum_vertices),
+                );
             }
         }
 

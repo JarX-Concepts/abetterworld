@@ -1,10 +1,3 @@
-use wgpu::util::DeviceExt;
-
-use crate::{
-    content::{DebugVertex, Vertex},
-    helpers::{uniform_size, Uniforms},
-};
-
 pub struct DepthBuffer {
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
