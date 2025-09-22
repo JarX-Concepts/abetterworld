@@ -1,3 +1,6 @@
+mod test_control;
+use test_control::AutoZoom;
+
 use std::sync::Arc;
 use winit::event::ElementState;
 use winit::{
@@ -20,6 +23,8 @@ struct State<'window> {
     config: wgpu::SurfaceConfiguration,
     size: winit::dpi::PhysicalSize<u32>,
     world: World,
+
+    debug_auto_zoom: Option<AutoZoom>,
 }
 
 impl<'window> State<'window> {
@@ -75,7 +80,7 @@ impl<'window> State<'window> {
         surface.configure(&device, &config);
 
         let mut abw_config = get_debug_config();
-        abw_config.use_debug_camera = false;
+        abw_config.use_debug_camera = true;
         let world = World::new(&device, &config, &abw_config);
 
         Self {
@@ -85,6 +90,8 @@ impl<'window> State<'window> {
             config,
             size,
             world,
+
+            debug_auto_zoom: Some(AutoZoom::new()),
         }
     }
 
@@ -105,6 +112,19 @@ impl<'window> State<'window> {
     }
 
     fn update(&mut self) {
+        if let Some(script) = self.debug_auto_zoom.as_mut() {
+            if let Some(cam_pos) = script.step() {
+                // Use your provided interface; enable debug camera controls while auto-zooming.
+                self.world
+                    .set_camera_position(cam_pos, /*debug_camera=*/ true);
+            } else {
+                // Finished: clear script so it stops running.
+                self.debug_auto_zoom = None;
+                // Optionally: one last set with debug_camera=false to “hand back” to normal camera.
+                // self.set_camera_position(cam_pos, false);
+            }
+        }
+
         let _ = self
             .world
             .update(&self.device, &self.queue)

@@ -4,7 +4,7 @@ use crate::{
     content::{DebugVertex, Ray, RenderableMap, RenderableState, MAX_RENDERABLE_TILES_US},
     dynamics::FrustumPlanes,
     helpers::{is_bounding_volume_visible, AbwError, Uniforms},
-    render::{build_instances, upload_instances, SIZE_OF_VOLUME},
+    render::{build_instances, rebuild_tile_bg, upload_instances, SIZE_OF_VOLUME},
     world::WorldPrivate,
 };
 use std::sync::Arc;
@@ -196,11 +196,31 @@ impl RenderAndUpdate {
                 world.camera.planes()
             };
 
-            if let Some(instance_buffer) = world.pipeline.bindings.instance_buffer.as_mut() {
-                let renderable_tiles = world.content.renderable.read().unwrap();
-                self.frame = build_frame(&renderable_tiles, tile_culling, planes);
-                let renderable_instances = build_instances(&self.frame, eye_pos);
-                upload_instances(device, queue, instance_buffer, &renderable_instances);
+            let renderable_tiles = world.content.renderable.read().unwrap();
+            self.frame = build_frame(&renderable_tiles, tile_culling, planes);
+            let renderable_instances = build_instances(&self.frame, eye_pos);
+
+            // Short-lived borrow to check/ensure capacity and capture new capacity
+            let (resized, new_capacity) = {
+                if let Some(instance_buffer) = world.pipeline.bindings.instance_buffer.as_mut() {
+                    let resized =
+                        instance_buffer.ensure_capacity(device, renderable_instances.len());
+                    let capacity = instance_buffer.capacity;
+                    (resized, capacity)
+                } else {
+                    return Err(AbwError::Internal(
+                        "Missing instance buffer in pipeline bindings".to_string(),
+                    ));
+                }
+            };
+
+            if resized {
+                log::info!("Resized instance buffer to {} instances", new_capacity);
+                rebuild_tile_bg(device, &mut world.pipeline);
+            }
+
+            if let Some(instance_buffer) = world.pipeline.bindings.instance_buffer.as_ref() {
+                upload_instances(queue, instance_buffer, &renderable_instances);
             } else {
                 return Err(AbwError::Internal(
                     "Missing instance buffer in pipeline bindings".to_string(),

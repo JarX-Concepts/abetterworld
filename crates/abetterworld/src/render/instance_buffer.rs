@@ -34,6 +34,7 @@ impl Instance3x4 {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct InstanceBuffer {
     pub buf: wgpu::Buffer,
     pub capacity: usize, // #instances
@@ -48,15 +49,22 @@ impl InstanceBuffer {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+
         Self { buf, capacity }
     }
 
-    pub fn ensure_capacity(&mut self, device: &wgpu::Device, needed: usize) {
+    pub fn ensure_capacity(&mut self, device: &wgpu::Device, needed: usize) -> bool {
         if needed <= self.capacity {
-            return;
+            return false;
         }
+        log::info!(
+            "Growing instance buffer from {} to {} instances",
+            self.capacity,
+            needed
+        );
         let new_cap = needed.next_power_of_two().max(self.capacity * 3 / 2);
         *self = Self::new(device, new_cap);
+        true
     }
 }
 
@@ -92,12 +100,14 @@ pub fn build_instances(frame: &RenderFrame, eye_pos: &Point3<f64>) -> Vec<Instan
         .collect()
 }
 
-pub fn upload_instances(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    ibuf: &mut InstanceBuffer,
-    instances: &[Instance3x4],
-) {
-    ibuf.ensure_capacity(device, instances.len());
-    queue.write_buffer(&ibuf.buf, 0, bytemuck::cast_slice(instances));
+pub fn upload_instances(queue: &wgpu::Queue, ibuf: &InstanceBuffer, instances: &[Instance3x4]) {
+    if instances.len() > ibuf.capacity {
+        log::error!(
+            "Instance buffer too small ({}), need {}",
+            ibuf.capacity,
+            instances.len()
+        );
+    } else if instances.len() > 0 {
+        queue.write_buffer(&ibuf.buf, 0, bytemuck::cast_slice(instances));
+    }
 }

@@ -1,4 +1,4 @@
-use wgpu::util::DeviceExt;
+use wgpu::{util::DeviceExt, wgc::pipeline};
 
 use crate::{
     content::{DebugVertex, Vertex, MAX_RENDERABLE_NODES_US, MAX_RENDERABLE_TILES},
@@ -8,6 +8,7 @@ use crate::{
 
 pub struct BindingData {
     pub tile_bg: wgpu::BindGroup,
+    pub tile_bg_layout: wgpu::BindGroupLayout,
     pub instance_buffer: Option<InstanceBuffer>,
     pub camera_buffer: Option<wgpu::Buffer>,
 }
@@ -164,10 +165,40 @@ pub fn build_pipeline(
         texture_bind_group_layout: Some(texture_bind_group_layout),
         bindings: BindingData {
             tile_bg: tile_bind_group,
+            tile_bg_layout: tile_bind_group_layout,
             instance_buffer: Some(instance_buffer),
             camera_buffer: Some(camera_buf),
         },
     }
+}
+
+pub fn rebuild_tile_bg(device: &wgpu::Device, pipeline: &mut RenderPipeline) {
+    let new_tile_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("Tile Bind Group"),
+        layout: &pipeline.bindings.tile_bg_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: pipeline
+                    .bindings
+                    .camera_buffer
+                    .as_ref()
+                    .unwrap()
+                    .as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: pipeline
+                    .bindings
+                    .instance_buffer
+                    .as_ref()
+                    .unwrap()
+                    .buf
+                    .as_entire_binding(),
+            },
+        ],
+    });
+    pipeline.bindings.tile_bg = new_tile_bg;
 }
 
 pub fn build_debug_pipeline(
@@ -269,6 +300,7 @@ pub fn build_debug_pipeline(
         pipeline: debug_pipeline,
         texture_bind_group_layout: None,
         bindings: BindingData {
+            tile_bg_layout: camera_bind_group_layout,
             tile_bg: camera_bind_group,
             instance_buffer: None,
             camera_buffer: Some(camera_uniform_buffer),

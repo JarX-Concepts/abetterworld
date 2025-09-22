@@ -28,6 +28,11 @@ impl Dynamics {
         }
     }
 
+    pub fn set_position(&self, pos: &PositionState) {
+        let mut s = self.state.write().expect("Dynamics write lock");
+        s.position = pos.clone();
+    }
+
     pub fn zoom(
         &self,
         dynamics_data: &CameraDynamicsData,
