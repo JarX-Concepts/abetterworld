@@ -1,4 +1,4 @@
-use std::f64::consts::PI;
+use cgmath::{Matrix3, Point3, Rad, Vector3};
 
 /// Converts geodetic coordinates (latitude, longitude, elevation) to Y-up ECEF.
 /// Assumes WGS84 ellipsoid.
@@ -39,7 +39,7 @@ pub fn geodetic_to_ecef_y_up(lat_deg: f64, lon_deg: f64, elevation_m: f64) -> (f
 /// Assumes WGS84 ellipsoid.
 /// - `lat_deg` and `lon_deg` are in degrees
 /// - `elevation_m` is in meters above sea level
-pub fn geodetic_to_ecef_z_up(lat_deg: f64, lon_deg: f64, elevation_m: f64) -> (f64, f64, f64) {
+pub fn geodetic_to_ecef_z_up(lat_deg: f64, lon_deg: f64, elevation_m: f64) -> Point3<f64> {
     // WGS84 constants
     const A: f64 = 6378137.0; // semi-major axis in meters
     const E2: f64 = 6.69437999014e-3; // first eccentricity squared
@@ -61,5 +61,31 @@ pub fn geodetic_to_ecef_z_up(lat_deg: f64, lon_deg: f64, elevation_m: f64) -> (f
     let y = (n + elevation_m) * cos_lat * sin_lon;
     let z = (n * (1.0 - E2) + elevation_m) * sin_lat;
 
-    (x, y, z)
+    Point3::new(x, y, z)
+}
+
+pub fn hpr_to_forward_up(heading: f64, pitch: f64, roll: f64) -> (Vector3<f64>, Vector3<f64>) {
+    let (h, p, r) = (
+        Rad(heading.to_radians()),
+        Rad(pitch.to_radians()),
+        Rad(roll.to_radians()),
+    );
+
+    // Rotation matrices
+    let rh = Matrix3::from_angle_y(h); // heading (yaw)
+    let rp = Matrix3::from_angle_x(p); // pitch
+    let rr = Matrix3::from_angle_z(r); // roll
+
+    // Combined rotation: heading → pitch → roll
+    let rot = rh * rp * rr;
+
+    // Apply to basis vectors
+    let forward = rot * Vector3::new(0.0, 0.0, -1.0);
+    let up = rot * Vector3::new(0.0, 1.0, 0.0);
+
+    (forward, up)
+}
+
+pub fn target_from_distance(eye: Point3<f64>, forward: &Vector3<f64>, dist: f64) -> Point3<f64> {
+    eye + forward * dist
 }

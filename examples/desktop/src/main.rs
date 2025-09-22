@@ -321,7 +321,7 @@ impl ApplicationHandler for App {
 
 // ---------------- main ----------------
 
-fn main() {
+pub fn main() {
     dotenv::dotenv().ok();
     env_logger::init();
     log::info!("Starting A Better World application...");

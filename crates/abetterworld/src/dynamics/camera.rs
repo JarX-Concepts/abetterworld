@@ -148,7 +148,7 @@ impl Camera {
         self.dirty.store(true, Ordering::Relaxed);
     }
 
-    pub fn update_dynamic_state(&self, new_state: &PositionState) {
+    pub fn set_position(&self, new_state: &PositionState) {
         let mut updated_state = self.user_state.write().unwrap();
         // is it different
         if updated_state.position != *new_state {
@@ -321,7 +321,7 @@ impl Camera {
 pub fn init_camera(geodetic_pos: Point3<f64>) -> Camera {
     let main_eye = geodetic_to_ecef_z_up(geodetic_pos[0], geodetic_pos[1], geodetic_pos[2]);
 
-    let eye = Point3::new(main_eye.0, main_eye.1, main_eye.2);
+    let eye = Point3::new(main_eye.x, main_eye.y, main_eye.z);
     let target = Point3::new(0.0, 0.0, 0.0);
     let up = Vector3::unit_z();
     let camera = Camera::new(CameraUserPosition {

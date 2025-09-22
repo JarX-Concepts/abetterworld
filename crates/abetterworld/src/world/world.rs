@@ -1,13 +1,15 @@
+use cgmath::{Point3, Vector3};
 use tracing::instrument;
 
 use crate::{
     cache::init_tileset_cache,
     content::{import_renderables, start_pager, Tile, TileManager},
     decode::init,
-    dynamics::{camera_config, Camera, Dynamics, InputState},
+    dynamics::{camera_config, Camera, Dynamics, InputState, PositionState},
     helpers::{
         channel::{channel, Receiver},
-        init_profiling, AbwError, FrameClock,
+        geodetic_to_ecef_z_up, hpr_to_forward_up, hpr_to_target_up, init_profiling,
+        target_from_distance, AbwError, FrameClock,
     },
     render::{
         build_debug_pipeline, build_frustum_render, build_pipeline, DepthBuffer, FrustumRender,
@@ -157,6 +159,25 @@ pub enum InputEvent {
     PointerCapture(bool),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Location {
+    Geodetic((f64, f64, f64)),
+    Geocentric((f64, f64, f64)),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Orientation {
+    HeadingPitchRoll((f64, f64, f64)),
+    TargetUp((f64, f64, f64, f64, f64, f64)),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CameraPosition {
+    pub location: Location,
+    pub orientation: Orientation,
+}
+
+// backpressure limit on new tiles per frame
 pub const MAX_NEW_TILES_PER_FRAME: usize = 4;
 
 impl World {
@@ -312,5 +333,34 @@ impl World {
             &mut self.private.dynamics,
             event,
         );
+    }
+
+    pub fn set_camera_position(&self, position: CameraPosition, debug_camera: bool) {
+        let camera = if debug_camera {
+            self.private.debug_camera.as_ref()
+        } else {
+            Some(&self.private.camera)
+        };
+
+        if let Some(cam) = camera {
+            let loc = match position.location {
+                Location::Geodetic((lon, lat, alt)) => geodetic_to_ecef_z_up(lon, lat, alt),
+                Location::Geocentric((x, y, z)) => Point3::new(x, y, z),
+            };
+            let (target, up) = match position.orientation {
+                Orientation::HeadingPitchRoll((h, p, r)) => {
+                    let (f, u) = hpr_to_forward_up(h, p, r);
+                    (target_from_distance(loc, &f, 1.0), u)
+                }
+                Orientation::TargetUp((tx, ty, tz, ux, uy, uz)) => {
+                    (Point3::new(tx, ty, tz), Vector3::new(ux, uy, uz))
+                }
+            };
+            cam.set_position(&PositionState {
+                eye: loc,
+                target,
+                up,
+            });
+        }
     }
 }

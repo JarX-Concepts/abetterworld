@@ -1,10 +1,9 @@
 use crate::dynamics::{
-    view_ray_from_screen_with_pose, world_to_screen, world_to_screen_proj, Camera,
-    CameraDynamicsData, PositionState, ScreenPosition,
+    view_ray_from_screen_with_pose, world_to_screen_proj, Camera, CameraDynamicsData,
+    PositionState, ScreenPosition,
 };
 use cgmath::{
-    EuclideanSpace, InnerSpace, Matrix4, One, Point2, Point3, Quaternion, Rad, Rotation, Rotation3,
-    Vector3,
+    InnerSpace, Matrix4, One, Point2, Point3, Quaternion, Rad, Rotation, Rotation3, Vector3,
 };
 use std::sync::{Arc, RwLock};
 
@@ -343,6 +342,6 @@ impl Dynamics {
     pub fn update(&self, _dt: &core::time::Duration, camera: &Arc<Camera>) {
         let s = self.state.write().expect("Dynamics write lock");
 
-        camera.update_dynamic_state(&s.position);
+        camera.set_position(&s.position);
     }
 }
