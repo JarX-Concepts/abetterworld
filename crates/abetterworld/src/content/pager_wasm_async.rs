@@ -110,7 +110,7 @@ fn update_pager(
         log::info!("Starting prioritized loop");
 
         // this will run until the pager channel is closed
-        if let Err(e) = priortize_loop(&cam, &mut pager_rx, &mut loader_tx_clone, false).await {
+        if let Err(e) = priortize_loop(&cam, &mut pager_rx, &mut loader_tx_clone).await {
             log::info!("Prioritized loop thread ended: {:?}", e);
         }
 

@@ -53,7 +53,7 @@ pub fn start_pager(
         let cam = Arc::clone(&camera_src);
         thread::spawn(move || {
             set_thread_name!("Prioritizer");
-            priortize_loop(&cam, &mut pager_rx, &mut loader_tx, true)
+            priortize_loop(&cam, &mut pager_rx, &mut loader_tx)
                 .platform_await()
                 .expect("Failed to run prioritizer loop");
         });

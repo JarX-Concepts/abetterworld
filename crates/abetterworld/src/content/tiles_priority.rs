@@ -9,6 +9,8 @@ use crate::{
     },
 };
 use cgmath::MetricSpace;
+#[cfg(target_arch = "wasm32")]
+use gloo_timers::future::TimeoutFuture;
 
 pub async fn prioritize(
     backlog: &mut Vec<Tile>,
@@ -71,7 +73,6 @@ pub async fn priortize_loop(
     cam: &Arc<Camera>,
     pager_rx: &mut Receiver<Tile>,
     loader_tx: &mut Sender<Tile>,
-    enable_sleep: bool,
 ) -> Result<(), AbwError> {
     let mut backlog: Vec<Tile> = Vec::new();
     let mut last_cam_gen = 0;
@@ -80,11 +81,11 @@ pub async fn priortize_loop(
         let did_something =
             prioritize(&mut backlog, &mut last_cam_gen, pager_rx, loader_tx, &cam).await?;
 
-        if did_something {
-            // No new tiles or camera movement, sleep briefly to avoid busy-waiting
-            if enable_sleep {
-                thread::sleep(Duration::from_millis(10));
-            }
-        }
+        let wait_duration = if did_something { 1 } else { 20 };
+
+        #[cfg(target_arch = "wasm32")]
+        TimeoutFuture::new(wait_duration).await;
+        #[cfg(not(target_arch = "wasm32"))]
+        thread::sleep(Duration::from_millis(wait_duration));
     }
 }

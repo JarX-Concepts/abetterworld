@@ -74,7 +74,9 @@ impl<'window> State<'window> {
 
         surface.configure(&device, &config);
 
-        let world = World::new(&device, &config, &get_debug_config());
+        let mut abw_config = get_debug_config();
+        abw_config.use_debug_camera = false;
+        let world = World::new(&device, &config, &abw_config);
 
         Self {
             surface,

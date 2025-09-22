@@ -18,7 +18,7 @@ pub fn get_debug_config() -> Config {
             url: "https://tile.googleapis.com/v1/3dtiles/root.json".to_string(),
         },
         geodetic_position: (34.4208, -119.6982, 6_378_137.0 * 2.0), // Santa Barbara
-        cache_dir: "../tilesets".to_string(),
+        cache_dir: "./tilesets".to_string(),
         use_debug_camera: true,
         debug_camera_geodetic_position: (34.4208, -119.6982, 50000.0),
         debug_camera_render_frustum: true,

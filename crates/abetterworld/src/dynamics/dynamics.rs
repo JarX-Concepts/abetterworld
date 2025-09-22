@@ -35,13 +35,19 @@ impl Dynamics {
         amount: f64,                     // +in / -out
         lock_pt: Option<ScreenPosition>, // pixel + optional world hit
     ) {
-        use cgmath::{Basis3, Matrix3};
+        use cgmath::Matrix3;
 
         // ---- Tunables ----
-        const ZOOM_SENS: f64 = 0.00025; // zoom gain
-        const MIN_SURFACE_RADIUS: f64 = 6_356_752.0 + 3.0; // ~WGS84_B + a tiny standoff
+        const ZOOM_SENS: f64 = 0.00025; // base zoom gain (kept)
+        const MIN_SURFACE_RADIUS: f64 = 6_356_752.0 + 3.0; // ~WGS84_B + tiny standoff
         const MIN_EYE_RADIUS: f64 = MIN_SURFACE_RADIUS + 0.5;
         const MAX_EYE_RADIUS: f64 = 50_000_000.0;
+
+        // New: per-tick multiplicative cap in log-radius (stricter near ground)
+        const LOG_STEP_NEAR: f64 = 0.008; // ~±8% radius change per tick near ground
+        const LOG_STEP_FAR: f64 = 0.30; // ~±30% per tick when far out
+
+        // Screen-space alignment params (unchanged)
         const ITER: usize = 2; // Gauss-Newton iterations per zoom tick
         const EPS: f64 = 1e-4; // finite-diff step (radians)
         const ANGLE_CLAMP: f64 = 0.05; // max correction per iteration (rad)
@@ -57,11 +63,31 @@ impl Dynamics {
         let r_now = eye_vec.magnitude().max(MIN_EYE_RADIUS);
         let dir_now = eye_vec / r_now;
 
-        let altitude = (r_now - MIN_SURFACE_RADIUS).max(0.0);
-        let altitude_gain = (1.0 + (altitude / 50_000.0)).ln().clamp(0.1, 1.6);
+        // ---- Tunables (altitude -> gain) ----
+        const EARTH_RADIUS_M: f64 = 6_371_000.0; // round WGS84 radius
+        const G_MIN: f64 = 0.00001; // tiny near-surface zoom gain
+        const G_MAX: f64 = 1.6; // aggressive far-away gain
+        const G_GAMMA: f64 = 1.0; // 1.0 = linear in t; >1 slows early ramp
 
-        let r_next = (r_now * (-amount * ZOOM_SENS * altitude_gain).exp())
-            .clamp(MIN_EYE_RADIUS, MAX_EYE_RADIUS);
+        // ... you already have:
+        let altitude = (r_now - MIN_SURFACE_RADIUS).max(0.0);
+
+        // Dimensionless altitude and smooth ramp in [0,1)
+        let h = altitude / EARTH_RADIUS_M;
+        let t = h / (1.0 + h);
+
+        // Final altitude-scaled zoom gain
+        let altitude_gain = G_MIN + (G_MAX - G_MIN) * t.powf(G_GAMMA);
+
+        // Also cap the per-tick multiplicative change in log-radius space.
+        // Interpolate the cap between near and far based on t.
+        let max_log_step = LOG_STEP_NEAR + (LOG_STEP_FAR - LOG_STEP_NEAR) * t;
+
+        // Compute desired log step and clamp
+        let desired_log_step = -amount * ZOOM_SENS * altitude_gain;
+        let log_step = desired_log_step.clamp(-max_log_step, max_log_step);
+
+        let r_next = (r_now * log_step.exp()).clamp(MIN_EYE_RADIUS, MAX_EYE_RADIUS);
 
         let mut eye = center + dir_now * r_next;
         let mut up = s.position.up.normalize();
@@ -93,8 +119,7 @@ impl Dynamics {
                     pose.target = center;
                     pose.up = up;
 
-                    // Full view
-                    let view64 = Matrix4::look_at_rh(pose.eye, Point3::new(0.0, 0.0, 0.0), pose.up);
+                    let view64 = Matrix4::look_at_rh(pose.eye, center, pose.up);
                     let proj_view_full = dynamics_data.proj * view64;
 
                     if let Some(pix) =
@@ -102,43 +127,35 @@ impl Dynamics {
                     {
                         // Pixel error: desired - current
                         let err = sp.xy - pix;
-
-                        // Early exit if already tight
                         if err.magnitude2() < 0.25 {
-                            // < 0.5 px^2
-                            break;
+                            break; // < 0.5 px^2
                         }
 
-                        // Build tangent basis at current eye direction (geocentric)
-                        let view_dir = (center - eye).normalize(); // pointing from eye toward center
-                                                                   // Prefer a stable lateral axis orthogonal to up
-                        let u = view_dir.cross(up);
-                        let u = if u.magnitude2() > 0.0 {
-                            u.normalize()
-                        } else {
-                            // Degenerate: pick any orthogonal
-                            let alt = view_dir.cross(Vector3::new(1.0, 0.0, 0.0));
-                            if alt.magnitude2() > 0.0 {
-                                alt.normalize()
+                        // Tangent basis at current eye direction (geocentric)
+                        let view_dir = (center - eye).normalize(); // from eye toward center
+                        let u = {
+                            let u0 = view_dir.cross(up);
+                            if u0.magnitude2() > 0.0 {
+                                u0.normalize()
                             } else {
-                                view_dir.cross(Vector3::new(0.0, 1.0, 0.0)).normalize()
+                                let alt = view_dir.cross(Vector3::new(1.0, 0.0, 0.0));
+                                if alt.magnitude2() > 0.0 {
+                                    alt.normalize()
+                                } else {
+                                    view_dir.cross(Vector3::new(0.0, 1.0, 0.0)).normalize()
+                                }
                             }
                         };
-                        let v = u.cross(view_dir).normalize(); // completes right-handed basis on tangent plane
+                        let v = u.cross(view_dir).normalize();
 
-                        // Finite-difference Jacobian J: how pixels move for tiny rotations about u and v
+                        // Finite-difference Jacobian
                         let mut probe = |axis: Vector3<f64>| -> Option<Point2<f64>> {
                             let (eye_p, up_p) = apply_center_rot(axis, EPS, eye, up);
                             let mut pose_p = pose.clone();
                             pose_p.eye = eye_p;
                             pose_p.up = up_p;
 
-                            // Full view
-                            let view64 = Matrix4::look_at_rh(
-                                pose_p.eye,
-                                Point3::new(0.0, 0.0, 0.0),
-                                pose_p.up,
-                            );
+                            let view64 = Matrix4::look_at_rh(pose_p.eye, center, pose_p.up);
                             let proj_view_full = dynamics_data.proj * view64;
 
                             world_to_screen_proj(p_lock, dynamics_data.viewport_wh, &proj_view_full)
@@ -154,7 +171,6 @@ impl Dynamics {
                             None => break,
                         };
 
-                        // Columns of J are the per-axis pixel deltas / EPS
                         let j_col_u = (pix_u - pix0) * (1.0 / EPS);
                         let j_col_v = (pix_v - pix0) * (1.0 / EPS);
 
@@ -166,9 +182,9 @@ impl Dynamics {
                         let det = a * d - b * c;
 
                         if det.abs() < 1e-12 {
-                            // Ill-conditioned; take a tiny step toward geodesic to lock
+                            // Ill-conditioned; tiny geodesic step toward lock
                             let to_lock = (p_lock - eye).normalize();
-                            let want = to_lock.cross(view_dir); // axis that would yaw/pitch toward lock
+                            let want = to_lock.cross(view_dir);
                             let angle = (err.magnitude() * 0.0005).clamp(-ANGLE_CLAMP, ANGLE_CLAMP);
                             let (eye2, up2) = apply_center_rot(want, angle, eye, up);
                             eye = eye2;
@@ -177,21 +193,16 @@ impl Dynamics {
                         }
 
                         let inv = (1.0 / det) * Matrix3::new(d, -b, 0.0, -c, a, 0.0, 0.0, 0.0, 1.0);
-                        // Multiply inv * [err.x, err.y, 0]
-                        let du = inv.x.x * err.x + inv.x.y * err.y;
-                        let dv = inv.y.x * err.x + inv.y.y * err.y;
+                        let du =
+                            (inv.x.x * err.x + inv.x.y * err.y).clamp(-ANGLE_CLAMP, ANGLE_CLAMP);
+                        let dv =
+                            (inv.y.x * err.x + inv.y.y * err.y).clamp(-ANGLE_CLAMP, ANGLE_CLAMP);
 
-                        // Clamp correction
-                        let du = du.clamp(-ANGLE_CLAMP, ANGLE_CLAMP);
-                        let dv = dv.clamp(-ANGLE_CLAMP, ANGLE_CLAMP);
-
-                        // Apply combined small rotation about u then v (order is fine for small angles)
                         let (eye1, up1) = apply_center_rot(u, du, eye, up);
                         let (eye2, up2) = apply_center_rot(v, dv, eye1, up1);
                         eye = eye2;
                         up = up2;
                     } else {
-                        // If projection failed, bail out of alignment
                         break;
                     }
                 }
