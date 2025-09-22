@@ -7,7 +7,10 @@ use crate::{
     render::{build_instances, rebuild_tile_bg, upload_instances, SIZE_OF_VOLUME},
     world::WorldPrivate,
 };
-use std::sync::Arc;
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 pub struct RenderAndUpdate {
     frame: RenderFrame,
@@ -29,23 +32,58 @@ pub struct RenderFrame {
     pub tiles: Vec<Arc<RenderableState>>,
 }
 
-// Flatten to a stable list (ideally grouped by mesh/material)
 fn build_frame(
     latest_render: &RenderableMap,
     tile_culling: bool,
     planes: FrustumPlanes,
 ) -> RenderFrame {
+    // --- Phase 1: count observed children per parent ---
+    let mut observed_children: HashMap<u64, usize> = HashMap::new();
+    for t in latest_render.values() {
+        if let Some(pid) = t.tile.parent {
+            *observed_children.entry(pid).or_default() += 1;
+        }
+    }
+
+    // Parents considered "refined" iff parent is present and observed == expected
+    let mut refined_parents: HashSet<u64> = HashSet::new();
+    for (&pid, &obs) in &observed_children {
+        if let Some(parent) = latest_render.get(&pid) {
+            if obs == parent.tile.num_children {
+                refined_parents.insert(pid);
+            }
+        }
+    }
+
+    // --- Phase 2: select drawables ---
     let mut frame = RenderFrame { tiles: Vec::new() };
 
-    for (_, r) in latest_render.iter() {
+    for r in latest_render.values() {
+        // 1) Frustum culling
         if tile_culling && !is_bounding_volume_visible(&planes, &r.culling_volume) {
             continue;
         }
+
+        // 2) If THIS tile has all its children present, skip it
+        if r.tile.num_children > 0 {
+            let obs = observed_children.get(&r.tile.id).copied().unwrap_or(0);
+            if obs == r.tile.num_children {
+                continue;
+            }
+        }
+
+        // 3) If it has a parent, only render when parent is refined
+        if let Some(pid) = r.tile.parent {
+            if !refined_parents.contains(&pid) {
+                continue;
+            }
+        }
+
         frame.tiles.push(r.clone());
     }
+
     frame
 }
-
 impl RenderAndUpdate {
     pub fn new() -> Self {
         Self {

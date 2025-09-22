@@ -13,6 +13,7 @@ pub const MAX_RENDERABLE_NODES_US: usize = MAX_RENDERABLE_NODES as usize;
 #[derive(Debug, Clone, PartialEq)]
 pub struct Tile {
     pub counter: u64,
+    pub num_children: usize,
     pub parent: Option<u64>,
     pub id: u64,
     pub uri: String,
@@ -38,6 +39,7 @@ impl Tile {
     pub fn default() -> Self {
         Tile {
             counter: 0,
+            num_children: 0,
             parent: None,
             id: 0,
             uri: String::new(),

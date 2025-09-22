@@ -238,9 +238,9 @@ impl TileSetImporter {
         use std::collections::VecDeque;
 
         let mut stack = VecDeque::new();
-        stack.push_back((root_tile, tileset_url.to_string(), session));
+        stack.push_back((root_tile, tileset_url.to_string(), session, None));
 
-        while let Some((tile, base_url, session)) = stack.pop_back() {
+        while let Some((tile, base_url, session, parent_id)) = stack.pop_back() {
             let mut added_geom = false;
 
             let needs_refinement = needs_refinement(
@@ -248,8 +248,10 @@ impl TileSetImporter {
                 &tile.bounding_volume,
                 tile.geometric_error,
                 1024.0,
-                100.0,
+                50.0,
             );
+
+            let mut new_parent_id = None;
 
             if let Some(content) = &tile.content {
                 let tile_url = resolve_url(&base_url, &content.uri)?;
@@ -274,15 +276,21 @@ impl TileSetImporter {
                                 "Failed to parse tileset JSON: {}",
                                 String::from_utf8_lossy(&bytes)
                             ))?;
-                        stack.push_back((tileset.root, tile_url.clone(), current_session));
+                        stack.push_back((
+                            tileset.root,
+                            tile_url.clone(),
+                            current_session.clone(),
+                            parent_id,
+                        ));
                     }
-                } else if is_glb(&tile_url)
-                    && (refine_mode == "ADD" || tile.children.is_none() || !needs_refinement)
-                {
+                }
+
+                if is_glb(&tile_url) {
                     added_geom = true;
 
                     let tile_url = add_key_and_session(&tile_url, key, &current_session);
                     let tile_id = hash_uri(&tile_url);
+                    new_parent_id = Some(tile_id);
 
                     if !self.current_pass_tiles.contains(&tile_id) {
                         self.current_pass_tiles.insert(tile_id);
@@ -290,7 +298,8 @@ impl TileSetImporter {
                         if !self.tile_manager.has_tile(tile_id) {
                             let new_tile = Tile {
                                 counter: self.current_pass_tiles.len() as u64,
-                                parent: None,
+                                num_children: tile.children.as_ref().map_or(0, |c| c.len()),
+                                parent: parent_id,
                                 id: tile_id,
                                 uri: tile_url,
                                 volume: tile.bounding_volume.clone(),
@@ -314,7 +323,12 @@ impl TileSetImporter {
             if needs_refinement || !added_geom {
                 if let Some(children) = &tile.children {
                     for child in children.iter().cloned() {
-                        stack.push_back((child, base_url.clone(), session.clone()));
+                        stack.push_back((
+                            child,
+                            base_url.clone(),
+                            session.clone(),
+                            new_parent_id.clone(),
+                        ));
                     }
                 }
             }
