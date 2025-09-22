@@ -3,7 +3,7 @@ use wgpu::util::DeviceExt;
 use crate::{
     content::{DebugVertex, Vertex, MAX_RENDERABLE_NODES_US, MAX_RENDERABLE_TILES},
     helpers::Uniforms,
-    render::InstanceBuffer,
+    render::{recommended_format, DepthBuffer, DepthMode, InstanceBuffer},
 };
 
 pub struct BindingData {
@@ -17,6 +17,7 @@ pub struct RenderPipeline {
     pub pipeline: wgpu::RenderPipeline,
     pub bindings: BindingData,
     pub texture_bind_group_layout: Option<wgpu::BindGroupLayout>,
+    pub depth: Option<DepthBuffer>,
 }
 
 pub fn build_pipeline(
@@ -115,6 +116,15 @@ pub fn build_pipeline(
         source: wgpu::ShaderSource::Wgsl(include_str!("../../assets/shader.wgsl").into()),
     });
 
+    let depth = DepthBuffer::new(
+        device,
+        config.width,
+        config.height,
+        recommended_format(),
+        1,
+        DepthMode::Normal,
+    );
+
     // Create the render pipeline.
     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("Render Pipeline"),
@@ -145,13 +155,7 @@ pub fn build_pipeline(
             unclipped_depth: false,
             conservative: false,
         },
-        depth_stencil: Some(wgpu::DepthStencilState {
-            format: wgpu::TextureFormat::Depth24Plus, // match your texture
-            depth_write_enabled: true,                // write to the depth buffer
-            depth_compare: wgpu::CompareFunction::LessEqual, // typical for 3D
-            stencil: wgpu::StencilState::default(),   // usually default
-            bias: wgpu::DepthBiasState::default(),    // optional slope‐bias
-        }),
+        depth_stencil: depth.depth_stencil_state(),
         multisample: wgpu::MultisampleState {
             count: 1,
             mask: !0,
@@ -163,6 +167,7 @@ pub fn build_pipeline(
     RenderPipeline {
         pipeline,
         texture_bind_group_layout: Some(texture_bind_group_layout),
+        depth: Some(depth),
         bindings: BindingData {
             tile_bg: tile_bind_group,
             tile_bg_layout: tile_bind_group_layout,
@@ -204,6 +209,7 @@ pub fn rebuild_tile_bg(device: &wgpu::Device, pipeline: &mut RenderPipeline) {
 pub fn build_debug_pipeline(
     device: &wgpu::Device,
     config: &wgpu::SurfaceConfiguration,
+    shared_depth: &DepthBuffer,
 ) -> RenderPipeline {
     let debug_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("Debug Shader"),
@@ -281,13 +287,7 @@ pub fn build_debug_pipeline(
             unclipped_depth: false,
             conservative: false,
         },
-        depth_stencil: Some(wgpu::DepthStencilState {
-            format: wgpu::TextureFormat::Depth24Plus,
-            depth_write_enabled: true,
-            depth_compare: wgpu::CompareFunction::Less,
-            stencil: wgpu::StencilState::default(),
-            bias: wgpu::DepthBiasState::default(),
-        }),
+        depth_stencil: shared_depth.depth_stencil_state(),
         multisample: wgpu::MultisampleState {
             count: 1,
             mask: !0,
@@ -299,6 +299,7 @@ pub fn build_debug_pipeline(
     RenderPipeline {
         pipeline: debug_pipeline,
         texture_bind_group_layout: None,
+        depth: None,
         bindings: BindingData {
             tile_bg_layout: camera_bind_group_layout,
             tile_bg: camera_bind_group,

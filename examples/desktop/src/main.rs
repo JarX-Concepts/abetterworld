@@ -1,5 +1,5 @@
 mod test_control;
-use test_control::AutoZoom;
+use test_control::AutoTour;
 
 use std::sync::Arc;
 use winit::event::ElementState;
@@ -24,7 +24,7 @@ struct State<'window> {
     size: winit::dpi::PhysicalSize<u32>,
     world: World,
 
-    debug_auto_zoom: Option<AutoZoom>,
+    debug_auto_zoom: Option<AutoTour>,
 }
 
 impl<'window> State<'window> {
@@ -80,7 +80,7 @@ impl<'window> State<'window> {
         surface.configure(&device, &config);
 
         let mut abw_config = get_debug_config();
-        abw_config.use_debug_camera = true;
+        abw_config.use_debug_camera = false;
         let world = World::new(&device, &config, &abw_config);
 
         Self {
@@ -91,7 +91,7 @@ impl<'window> State<'window> {
             size,
             world,
 
-            debug_auto_zoom: Some(AutoZoom::new()),
+            debug_auto_zoom: Some(AutoTour::new()),
         }
     }
 
@@ -116,7 +116,7 @@ impl<'window> State<'window> {
             if let Some(cam_pos) = script.step() {
                 // Use your provided interface; enable debug camera controls while auto-zooming.
                 self.world
-                    .set_camera_position(cam_pos, /*debug_camera=*/ true);
+                    .set_camera_position(cam_pos, /*debug_camera=*/ false);
             } else {
                 // Finished: clear script so it stops running.
                 self.debug_auto_zoom = None;
@@ -159,14 +159,7 @@ impl<'window> State<'window> {
                     },
                     depth_slice: None,
                 })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: self.world.get_depth_view(),
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Discard,
-                    }),
-                    stencil_ops: None,
-                }),
+                depth_stencil_attachment: Some(self.world.get_depth_attachment()),
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });

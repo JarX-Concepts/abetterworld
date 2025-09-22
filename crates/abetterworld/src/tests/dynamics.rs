@@ -6,6 +6,7 @@ mod tests {
     use rand::rngs::StdRng;
     use rand::{Rng, SeedableRng};
 
+    use crate::render::DepthMode;
     use crate::{
         dynamics::{init_camera, screen_to_world_on_ellipsoid, Dynamics, Ellipsoid, InputState},
         world::MouseButton,
@@ -20,7 +21,7 @@ mod tests {
         // Camera
         let camera = Arc::new(init_camera(nyc_pt));
         camera.set_viewport(1024.0, 768.0);
-        camera.update(None);
+        camera.update(None, DepthMode::ReverseZ);
 
         // Dynamics/model + input
         let mut model = Dynamics::new(camera.position());
@@ -41,7 +42,7 @@ mod tests {
             InputEvent::MouseButtonPressed(MouseButton::Left),
         );
         im.flush(&mut model);
-        camera.update(None);
+        camera.update(None, DepthMode::ReverseZ);
 
         // Baseline world position under the cursor (ellipsoid, elevation 0)
         let ellipsoid = Ellipsoid::default();
@@ -74,7 +75,7 @@ mod tests {
             );
             im.flush(&mut model);
             model.update(&core::time::Duration::from_millis(16), &camera);
-            camera.update(None);
+            camera.update(None, DepthMode::ReverseZ);
 
             // World position under the *new* cursor location after the rotation
             let world_pos = screen_to_world_on_ellipsoid(

@@ -21,7 +21,6 @@ use std::{sync::Arc, time::Duration};
 pub struct WorldPrivate {
     pub camera: Arc<Camera>,
     pub pipeline: RenderPipeline,
-    pub depth: DepthBuffer,
 
     pub debug_camera: Option<Arc<Camera>>,
     pub debug_pipeline: RenderPipeline,
@@ -194,15 +193,9 @@ impl World {
         let (camera, debug_camera_option) = camera_config(abw_config);
 
         let pipeline = build_pipeline(device, config);
-        let depth = DepthBuffer::new(
-            device,
-            config.width,
-            config.height,
-            wgpu::TextureFormat::Depth24Plus,
-            1,
-        );
 
-        let debug_pipeline = build_debug_pipeline(device, config);
+        let debug_pipeline =
+            build_debug_pipeline(device, config, &pipeline.depth.as_ref().unwrap());
         let frustum_render = build_frustum_render(device);
 
         let tile_content = Arc::new(TileManager::new());
@@ -226,7 +219,6 @@ impl World {
                 debug_pipeline,
                 camera: camera,
                 debug_camera: debug_camera_option,
-                depth,
                 content: tile_content,
                 input_state: InputState::new(),
                 frustum_render,
@@ -239,7 +231,16 @@ impl World {
     }
 
     pub fn get_depth_view(&self) -> &wgpu::TextureView {
-        &self.private.depth.view
+        &self.private.pipeline.depth.as_ref().unwrap().view
+    }
+
+    pub fn get_depth_attachment(&self) -> wgpu::RenderPassDepthStencilAttachment {
+        self.private
+            .pipeline
+            .depth
+            .as_ref()
+            .unwrap()
+            .attachment_clear()
     }
 
     pub fn resize(&mut self, device: &wgpu::Device, new_width: u32, new_height: u32) {
@@ -248,7 +249,12 @@ impl World {
         }
 
         // 2) Recreate depth buffer to match new size
-        self.private.depth.resize(device, new_width, new_height);
+        self.private
+            .pipeline
+            .depth
+            .as_mut()
+            .unwrap()
+            .resize(device, new_width, new_height);
 
         self.private
             .camera
@@ -293,11 +299,13 @@ impl World {
             )?;
         }
 
+        let depth_mode = self.private.pipeline.depth.as_ref().unwrap().mode;
+
         // Update the debug camera if it exists
         if let Some(debug_camera) = self.private.debug_camera.as_ref() {
             let min_distance = self.render.get_min_distance(&debug_camera.position().eye);
 
-            let (_, _, dirty) = debug_camera.update(min_distance);
+            let (_, _, dirty) = debug_camera.update(min_distance, depth_mode);
             if dirty {
                 needs_update = true;
             }
@@ -305,7 +313,7 @@ impl World {
         let min_distance = self
             .render
             .get_min_distance(&self.private.camera.position().eye);
-        let (eye_pos, uniform, dirty) = self.private.camera.update(min_distance);
+        let (eye_pos, uniform, dirty) = self.private.camera.update(min_distance, depth_mode);
         if dirty {
             needs_update = true;
         }

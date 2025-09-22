@@ -100,7 +100,7 @@ impl Dynamics {
         if let Some(sp) = lock_pt {
             if let Some(p_lock) = sp.world_position {
                 // Small helper: apply a rotation (axis in world, angle in rad) about the *center*
-                let mut apply_center_rot =
+                let apply_center_rot =
                     |axis: Vector3<f64>, angle: f64, eye_in: Point3<f64>, up_in: Vector3<f64>| {
                         if axis.magnitude2() == 0.0 || angle.abs() < 1e-12 {
                             (eye_in, up_in)
@@ -153,7 +153,7 @@ impl Dynamics {
                         let v = u.cross(view_dir).normalize();
 
                         // Finite-difference Jacobian
-                        let mut probe = |axis: Vector3<f64>| -> Option<Point2<f64>> {
+                        let probe = |axis: Vector3<f64>| -> Option<Point2<f64>> {
                             let (eye_p, up_p) = apply_center_rot(axis, EPS, eye, up);
                             let mut pose_p = pose.clone();
                             pose_p.eye = eye_p;
@@ -250,11 +250,11 @@ impl Dynamics {
         // 1) Build unit direction to the locked point from the rotation center (globe center).
         //    If you orbit around world origin, target is (0,0,0). If not, replace with your center.
         let center = Point3::new(0.0, 0.0, 0.0);
-        let vP = p_lock - center;
-        if vP.magnitude2() == 0.0 {
+        let v_p = p_lock - center;
+        if v_p.magnitude2() == 0.0 {
             return;
         }
-        let vP = vP.normalize();
+        let v_p = v_p.normalize();
 
         // 2) Get the current *pre-rotation* view ray for `to.xy`, in world space.
         //    You need a helper like:
@@ -271,7 +271,7 @@ impl Dynamics {
         };
 
         // 3) Shortest-arc rotation that maps r_to -> vP. (Stable antiparallel handling)
-        let q = shortest_arc_quat(r_to, vP);
+        let q = shortest_arc_quat(r_to, v_p);
         if q.is_none() {
             return;
         }

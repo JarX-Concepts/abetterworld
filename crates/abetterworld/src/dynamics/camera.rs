@@ -9,10 +9,12 @@ use std::sync::{
 };
 
 use crate::{
+    dynamics::{proj_reverse_z_infinite_f64, proj_reverse_z_infinite_inv_f64},
     helpers::{
         decompose_matrix64_to_uniform, extract_frustum_planes, geodetic_to_ecef_z_up,
         remove_translation, Uniforms,
     },
+    render::DepthMode,
     Config,
 };
 
@@ -165,8 +167,11 @@ impl Camera {
         self.generation.load(Ordering::Relaxed)
     }
 
-    /// internal: recompute cam_world and UBO
-    pub fn update(&self, distance_to_geom: Option<f64>) -> (Point3<f64>, Uniforms, bool) {
+    pub fn update(
+        &self,
+        distance_to_geom: Option<f64>,
+        depth_mode: DepthMode,
+    ) -> (Point3<f64>, Uniforms, bool) {
         // Fast path: read-only, with minimal lock time.
         if !self.dirty.load(Ordering::Acquire) {
             let eye = {
@@ -185,10 +190,10 @@ impl Camera {
             let us = self.user_state.read().unwrap();
             (
                 us.position,
-                us.near,
-                us.far,
-                us.fovy,
-                us.aspect,
+                us.near,   // Option<f64>
+                us.far,    // Option<f64> (ignored for reverse-Z)
+                us.fovy,   // Deg<f64>
+                us.aspect, // f64
                 us.viewport_wh,
             )
         };
@@ -203,22 +208,48 @@ impl Camera {
         let altitude = (d - EARTH_RADIUS_M).max(1.0);
         let max_distance = distance_to_geom.unwrap_or(altitude);
 
-        // More aggressive scaling for space views
-        let near_scale = if altitude > 50_000.0 { 0.5 } else { 0.25 };
-
+        // Near choice (retain your behavior; consider swapping for the adaptive recipe later)
+        let near_scale = if altitude > 50_000.0 { 0.5 } else { 0.05 };
         let near = near_override.unwrap_or((max_distance * near_scale).clamp(NEAR_MIN, NEAR_MAX));
-        let far = far_override.unwrap_or(d);
 
-        // Projection (f64 for precision)
-        let proj64 = cgmath::perspective(fovy, aspect, near, far);
+        log::info!("near: {}", near);
+
+        // Far only matters on the forward-Z path; keep your previous default
+        let far_fwd = far_override.unwrap_or(d);
+
+        // Projection (f64 for precision), chosen by depth mode
+        let proj64 = match depth_mode {
+            DepthMode::Normal => cgmath::perspective(fovy, aspect, near, far_fwd),
+            DepthMode::ReverseZ => proj_reverse_z_infinite_f64(fovy.into(), aspect, near),
+        };
 
         // Full view
         let view64 = Matrix4::look_at_rh(eye, target, up);
 
         // CPU culling / world->clip
         let proj_view_full = proj64 * view64;
-        let planes = extract_frustum_planes(&proj_view_full);
-        let proj_view_inv = proj_view_full.invert().unwrap_or(Matrix4::identity());
+        let (planes, proj_view_inv) = match depth_mode {
+            DepthMode::Normal => {
+                let inv = proj_view_full.invert().unwrap_or_else(|| {
+                    // avoid identity fallback poisoning; use a conservative alternative
+                    let vi = view64.invert().unwrap_or(Matrix4::identity());
+                    let pi = cgmath::perspective(fovy, aspect, near, far_fwd)
+                        .invert()
+                        .unwrap_or(Matrix4::identity());
+                    vi * pi
+                });
+                (extract_frustum_planes(&proj_view_full), inv)
+            }
+            DepthMode::ReverseZ => {
+                // Robust inverse for reverse-Z infinite
+                let p_inv = proj_reverse_z_infinite_inv_f64(fovy.into(), aspect, near);
+                let v_inv = view64.invert().unwrap_or(Matrix4::identity());
+                let pv_inv = v_inv * p_inv;
+
+                // this needs to be fixed for reverse z buffer...
+                (extract_frustum_planes(&proj_view_full), pv_inv)
+            }
+        };
 
         // GPU camera uniform (translation removed; CPU pre-translates models by -eye)
         let view_no_translation64 = remove_translation(view64); // ~R^T
@@ -229,7 +260,10 @@ impl Camera {
         {
             let mut ds = self.derived_state.write().unwrap();
             ds.near = near;
-            ds.far = far;
+            ds.far = match depth_mode {
+                DepthMode::Normal => far_fwd,
+                DepthMode::ReverseZ => f64::INFINITY, // document: GPU uses infinite far
+            };
             ds.planes = planes;
             ds.uniform = uniform;
         }
@@ -244,7 +278,10 @@ impl Camera {
         if let Ok(mut state) = self.paging_state.write() {
             *state = CameraRefinementData {
                 position: cam_world,
-                far,
+                far: match depth_mode {
+                    DepthMode::Normal => far_fwd,
+                    DepthMode::ReverseZ => f64::INFINITY,
+                },
                 fovy,
             };
         }
@@ -332,7 +369,6 @@ pub fn init_camera(geodetic_pos: Point3<f64>) -> Camera {
         far: None,
         viewport_wh: (0.0, 0.0),
     });
-    camera.update(None);
 
     camera
 }

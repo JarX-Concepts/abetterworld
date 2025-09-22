@@ -1,4 +1,4 @@
-use cgmath::{EuclideanSpace, InnerSpace, Matrix4, Point2, Point3, Vector3, Vector4};
+use cgmath::{EuclideanSpace, InnerSpace, Matrix4, Point2, Point3, Rad, Vector3, Vector4};
 
 use crate::dynamics::{CameraDynamicsData, PositionState};
 
@@ -21,6 +21,28 @@ impl Default for Ellipsoid {
             c: WGS84_B,
         }
     }
+}
+
+#[inline]
+pub fn proj_reverse_z_infinite_f64(fov_y: Rad<f64>, aspect: f64, near: f64) -> Matrix4<f64> {
+    // RH, wgpu/D3D 0..1 depth, reverse-Z, infinite far
+    let f = 1.0 / (0.5 * fov_y.0).tan();
+    let c0 = Vector4::new(f / aspect, 0.0, 0.0, 0.0);
+    let c1 = Vector4::new(0.0, f, 0.0, 0.0);
+    let c2 = Vector4::new(0.0, 0.0, 0.0, -1.0);
+    let c3 = Vector4::new(0.0, 0.0, near, 0.0);
+    Matrix4::from_cols(c0, c1, c2, c3)
+}
+
+#[inline]
+pub fn proj_reverse_z_infinite_inv_f64(fov_y: Rad<f64>, aspect: f64, near: f64) -> Matrix4<f64> {
+    // Closed-form inverse of the matrix above
+    let f = 1.0 / (0.5 * fov_y.0).tan();
+    let c0 = Vector4::new(aspect / f, 0.0, 0.0, 0.0);
+    let c1 = Vector4::new(0.0, 1.0 / f, 0.0, 0.0);
+    let c2 = Vector4::new(0.0, 0.0, 0.0, -1.0);
+    let c3 = Vector4::new(0.0, 0.0, 1.0 / near, 0.0);
+    Matrix4::from_cols(c0, c1, c2, c3)
 }
 
 /// Convert screen pixel -> ray in world space, then intersect with ellipsoid.
