@@ -212,8 +212,6 @@ impl Camera {
         let near_scale = if altitude > 50_000.0 { 0.5 } else { 0.05 };
         let near = near_override.unwrap_or((max_distance * near_scale).clamp(NEAR_MIN, NEAR_MAX));
 
-        log::info!("near: {}", near);
-
         // Far only matters on the forward-Z path; keep your previous default
         let far_fwd = far_override.unwrap_or(d);
 

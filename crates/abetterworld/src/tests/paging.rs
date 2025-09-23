@@ -8,44 +8,61 @@ mod tests {
     use cgmath::Point3;
 
     use crate::{
-        cache::init_tileset_cache,
-        content::{start_pager, Tile, TileManager},
+        cache::{get_tileset_cache, init_tileset_cache},
+        content::{
+            pager_native::build_client, parser_iteration, Tile, TileManager, TileSetImporter,
+        },
         decode::init,
         dynamics::init_camera,
         helpers::{channel::channel, PlatformAwait},
+        render::DepthMode,
     };
 
     #[test]
     fn test_paging() {
         init_tileset_cache("../tilesets");
+        let cache = get_tileset_cache();
+        cache.clear().expect("Failed to clear cache");
 
-        let camera = init_camera(Point3::new(51.5074, -0.1278, 100.0)); // London
+        let camera = init_camera(Point3::new(34.4208, -119.6982, 6_378_137.0 * 2.0)); // Santa Barbara
 
         let tile_content = Arc::new(TileManager::new());
         let debug_camera_source = Arc::new(camera);
+        debug_camera_source.update(None, DepthMode::ReverseZ);
 
-        let (loader_tx, render_rx) = channel::<Tile>(20);
+        let (loader_tx, render_rx) = channel::<Tile>(200000);
+
+        let client = build_client(4).expect("Failed to build client");
+
+        eprintln!("Starting paging test");
 
         let _ = init();
-        let _ = start_pager(
-            crate::Source::Google {
+        let mut pager = TileSetImporter::new(client, loader_tx.clone(), tile_content);
+
+        let _ = parser_iteration(
+            &crate::Source::Google {
                 key: GOOGLE_API_KEY.to_string(),
                 url: GOOGLE_API_URL.to_string(),
             },
-            debug_camera_source.clone(),
-            tile_content.clone(),
-            loader_tx,
-        );
+            &debug_camera_source.clone().refinement_data(),
+            &mut pager,
+        )
+        .platform_await()
+        .expect("Failed to load content in worker thread");
 
+        drop(loader_tx); // close sender so we can finish receiving */
         let mut tile_counter = 0;
-        while tile_counter < 50 {
-            match render_rx.recv().platform_await() {
+        loop {
+            match render_rx.try_recv() {
                 Ok(_tile) => {
                     tile_counter += 1;
                 }
                 Err(_) => break, // either empty or sender gone
             }
         }
+
+        eprintln!("Received {} tiles", tile_counter);
+
         assert!(tile_counter > 0, "Expected to receive some tiles");
     }
 }

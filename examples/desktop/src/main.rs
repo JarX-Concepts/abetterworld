@@ -11,6 +11,9 @@ use winit::{
     window::{Window, WindowAttributes},
 };
 
+const DEBUG_PATH: bool = true;
+const DEBUG_CAMERA: bool = false;
+
 // --- your existing imports ---
 use abetterworld::{get_debug_config, InputEvent, Key, MouseButton, World};
 
@@ -80,7 +83,7 @@ impl<'window> State<'window> {
         surface.configure(&device, &config);
 
         let mut abw_config = get_debug_config();
-        abw_config.use_debug_camera = false;
+        abw_config.use_debug_camera = DEBUG_CAMERA;
         let world = World::new(&device, &config, &abw_config);
 
         Self {
@@ -91,7 +94,11 @@ impl<'window> State<'window> {
             size,
             world,
 
-            debug_auto_zoom: Some(AutoTour::new()),
+            debug_auto_zoom: if DEBUG_PATH {
+                Some(AutoTour::new())
+            } else {
+                None
+            },
         }
     }
 
@@ -115,8 +122,7 @@ impl<'window> State<'window> {
         if let Some(script) = self.debug_auto_zoom.as_mut() {
             if let Some(cam_pos) = script.step() {
                 // Use your provided interface; enable debug camera controls while auto-zooming.
-                self.world
-                    .set_camera_position(cam_pos, /*debug_camera=*/ false);
+                self.world.set_camera_position(cam_pos, DEBUG_CAMERA);
             } else {
                 // Finished: clear script so it stops running.
                 self.debug_auto_zoom = None;

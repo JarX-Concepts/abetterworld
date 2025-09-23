@@ -61,18 +61,22 @@ fn resolve_url(base: &str, relative: &str) -> Result<String, AbwError> {
     })
 }
 
-fn is_nested_tileset(uri: &str) -> bool {
+fn is_nested_ext(uri: &str, ext: &str) -> bool {
     Url::parse(uri)
-        .map(|url| url.path().ends_with(".json"))
+        .map(|url| url.path().ends_with(ext))
         .unwrap_or_else(|_| {
             uri.split('?')
                 .next()
-                .map_or(false, |path| path.ends_with(".json"))
+                .map_or(false, |path| path.ends_with(ext))
         })
 }
 
+fn is_nested_tileset(uri: &str) -> bool {
+    is_nested_ext(uri, ".json")
+}
+
 fn is_glb(uri: &str) -> bool {
-    uri.trim_end_matches('/').ends_with(".glb")
+    is_nested_ext(uri, ".glb")
 }
 
 fn extract_session(url: &str) -> Option<&str> {
@@ -206,6 +210,24 @@ impl TileSetImporter {
     ) -> Result<(), AbwError> {
         let (content_type, bytes) = self.download_content(url, key, &None).await?;
 
+        // save the raw tileset for debugging
+
+        {
+            use std::fs;
+            use std::path::Path;
+            let filename = format!("data_debug/{}.json", hash_uri(url));
+            if !Path::new(&filename).exists() {
+                if let Err(e) = fs::create_dir_all("tilesets") {
+                    eprintln!("Failed to create tilesets dir: {}", e);
+                }
+            }
+            if let Err(e) = fs::write(&filename, &bytes) {
+                eprintln!("Failed to write tileset debug file {}: {}", filename, e);
+            } else {
+                log::info!("Wrote tileset debug file: {}", filename);
+            }
+        }
+
         match content_type.as_str() {
             "application/json" | "application/json; charset=UTF-8" => {
                 let tileset: GltfTileset =
@@ -240,7 +262,7 @@ impl TileSetImporter {
         let mut stack = VecDeque::new();
         stack.push_back((root_tile, tileset_url.to_string(), session, None));
 
-        while let Some((tile, base_url, session, parent_id)) = stack.pop_back() {
+        while let Some((tile, base_url, session, parent_id)) = stack.pop_front() {
             let mut added_geom = false;
 
             let needs_refinement = needs_refinement(
@@ -307,6 +329,8 @@ impl TileSetImporter {
                             };
 
                             self.tile_manager.add_tile(&new_tile);
+
+                            //log::info!("Added new tile: {:?}", new_tile);
 
                             self.sender.send(new_tile).await.map_err(|_| {
                                 AbwError::TileLoading("Failed to send new tile".into())

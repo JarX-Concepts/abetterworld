@@ -83,7 +83,7 @@ impl DepthBuffer {
     pub fn compare_fn(&self) -> wgpu::CompareFunction {
         match self.mode {
             DepthMode::Normal => wgpu::CompareFunction::Less,
-            DepthMode::ReverseZ => wgpu::CompareFunction::Greater,
+            DepthMode::ReverseZ => wgpu::CompareFunction::GreaterEqual,
         }
     }
 

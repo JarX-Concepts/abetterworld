@@ -55,6 +55,8 @@ pub async fn prioritize(
         *last_cam_gen = new_gen;
     }
 
+    log::info!("Backlog size: {}", backlog.len());
+
     // feed workers -----------------------------------------------------
     while let Some(tile) = backlog.last() {
         // ≈ cheapest (small dist) at back
