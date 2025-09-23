@@ -5,7 +5,7 @@ use crate::helpers::channel::Sender;
 use crate::helpers::{hash_uri, AbwError, TileLoadingContext};
 use crate::Source;
 use bytes::Bytes;
-use cgmath::InnerSpace;
+use cgmath::{InnerSpace, Point3};
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -93,36 +93,52 @@ fn add_key_and_session(url: &str, key: &str, session: &Option<Arc<String>>) -> S
     url.to_string()
 }
 
-fn needs_refinement(
-    camera: &CameraRefinementData,
-    bounding_volume: &BoundingVolume,
+#[inline]
+fn sphere_clearance_distance(eye: Point3<f64>, center: Point3<f64>, radius: f64) -> f64 {
+    let d = (center - eye).magnitude() - radius.max(0.0);
+    // Clamp to small positive to avoid division-by-zero; 0.5–2.0 m also fine.
+    d.max(1e-2)
+}
+
+#[inline]
+fn compute_sse(
     geometric_error: f64,
-    screen_height: f64,
-    sse_threshold: f64,
+    viewport_height_px: f64,
+    fovy_rad: f64,
+    eye_to_surface_distance_m: f64,
+) -> f64 {
+    let denom = (fovy_rad * 0.5).tan() * 2.0;
+    if !denom.is_finite() || denom <= 0.0 {
+        return f64::INFINITY;
+    }
+    (geometric_error * viewport_height_px) / (denom * eye_to_surface_distance_m)
+}
+
+/// Drop-in `needs_refinement` using the 12-number box.
+pub fn needs_refinement(
+    camera: &CameraRefinementData,
+    bv: &BoundingVolume, // <- your Google 12-number box
+    geometric_error: f64,
+    screen_height_pixels: f64, // pass *device* pixels if you render at DPR>1
+    sse_threshold: f64,        // e.g., 16–30; start around 20
 ) -> bool {
-    if !geometric_error.is_finite() || geometric_error > 1e20 {
-        return true; // Always refine root/sentinel
+    // 0) Sentinel/invalid GEs: refine to drill down
+    if !geometric_error.is_finite() || geometric_error > 1.0e20 {
+        return true;
     }
 
-    let obb = bounding_volume.to_obb();
-    let cam_pos = camera.position;
-    let closest_point = obb.closest_point(cam_pos);
+    // 1) Convert OBB -> bounding sphere
+    let (center, radius) = bv.to_bounding_sphere();
 
-    let is_inside = (closest_point - cam_pos).magnitude() < f64::EPSILON;
-    let dist = if is_inside {
-        0.0
-    } else {
-        let diagonal = obb.half_axes.iter().map(|a| a.magnitude()).sum::<f64>() * 2.0;
-        (closest_point - cam_pos).magnitude().max(diagonal * 0.01)
-    };
+    // 2) Clearance distance from eye to outside of sphere
+    let dist = sphere_clearance_distance(camera.position, center, radius);
 
-    // 3. Compute vertical FOV (in radians)
-    let vertical_fov = camera.fovy.0.to_radians();
+    // 3) FOV in radians
+    let fovy_rad = camera.fovy.0.to_radians();
 
-    // 4. SSE formula
-    let sse = (geometric_error * screen_height) / (dist * (vertical_fov * 0.5).tan() * 2.0);
+    // 4) Classic 3D Tiles SSE
+    let sse = compute_sse(geometric_error, screen_height_pixels, fovy_rad, dist);
 
-    // 5. Needs refinement?
     sse > sse_threshold
 }
 
@@ -152,7 +168,7 @@ pub async fn parser_thread(
     let mut pager = TileSetImporter::new(client, pager_tx.clone(), tile_mgr);
 
     let mut last_cam_gen = 0;
-    loop {
+    {
         let span = span!(Level::TRACE, "pager pass");
         let _enter = span.enter();
 
@@ -174,6 +190,8 @@ pub async fn parser_thread(
         drop(_enter);
         drop(span);
     }
+
+    Ok(())
 }
 
 impl TileSetImporter {
@@ -211,8 +229,7 @@ impl TileSetImporter {
         let (content_type, bytes) = self.download_content(url, key, &None).await?;
 
         // save the raw tileset for debugging
-
-        {
+        if false {
             use std::fs;
             use std::path::Path;
             let filename = format!("data_debug/{}.json", hash_uri(url));
@@ -270,7 +287,7 @@ impl TileSetImporter {
                 &tile.bounding_volume,
                 tile.geometric_error,
                 1024.0,
-                50.0,
+                20.0,
             );
 
             let mut new_parent_id = None;

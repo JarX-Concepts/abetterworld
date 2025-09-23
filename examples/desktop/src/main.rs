@@ -11,8 +11,9 @@ use winit::{
     window::{Window, WindowAttributes},
 };
 
-const DEBUG_PATH: bool = true;
+const DEBUG_PATH: bool = false;
 const DEBUG_CAMERA: bool = false;
+const DEBUG_VOLUMES: bool = true;
 
 // --- your existing imports ---
 use abetterworld::{get_debug_config, InputEvent, Key, MouseButton, World};
@@ -84,6 +85,7 @@ impl<'window> State<'window> {
 
         let mut abw_config = get_debug_config();
         abw_config.use_debug_camera = DEBUG_CAMERA;
+        abw_config.debug_render_volumes = DEBUG_VOLUMES;
         let world = World::new(&device, &config, &abw_config);
 
         Self {

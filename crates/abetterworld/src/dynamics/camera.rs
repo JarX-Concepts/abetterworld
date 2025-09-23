@@ -25,14 +25,14 @@ const NEAR_MAX: f64 = 10_000.0; // Upper limit for near to avoid blowing out nea
 
 #[derive(Debug, Clone)]
 pub struct CameraRefinementData {
-    pub position: Vector3<f64>,
+    pub position: Point3<f64>,
     pub far: f64,
     pub fovy: Deg<f64>,
 }
 impl CameraRefinementData {
     fn default() -> CameraRefinementData {
         CameraRefinementData {
-            position: Vector3::zero(),
+            position: Point3::new(0.0, 0.0, 0.0),
             far: 0.0,
             fovy: Deg(45.0),
         }
@@ -275,7 +275,7 @@ impl Camera {
         // ---- 4) Update aux states in separate short writes. ----
         if let Ok(mut state) = self.paging_state.write() {
             *state = CameraRefinementData {
-                position: cam_world,
+                position: eye,
                 far: match depth_mode {
                     DepthMode::Normal => far_fwd,
                     DepthMode::ReverseZ => f64::INFINITY,

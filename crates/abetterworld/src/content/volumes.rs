@@ -1,4 +1,4 @@
-use cgmath::{Matrix3, SquareMatrix, Vector3, Zero};
+use cgmath::{InnerSpace, Matrix3, Point3, SquareMatrix, Vector3, Zero};
 use serde::Deserialize;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -32,9 +32,26 @@ impl BoundingVolume {
         }
     }
 
-    pub fn center(&self) -> Vector3<f64> {
+    pub fn center(&self) -> Point3<f64> {
         let b = &self.bounding_box;
-        Vector3::new(b[0], b[1], b[2])
+        Point3::new(b[0], b[1], b[2])
+    }
+
+    /// Returns (center, radius) for a covering sphere of the 12-number OBB.
+    #[inline]
+    pub fn to_bounding_sphere(&self) -> (Point3<f64>, f64) {
+        let b = &self.bounding_box;
+        let center = Point3::new(b[0], b[1], b[2]);
+
+        // Half-axes (vectors from center to box faces)
+        let a0 = Vector3::new(b[3], b[4], b[5]);
+        let a1 = Vector3::new(b[6], b[7], b[8]);
+        let a2 = Vector3::new(b[9], b[10], b[11]);
+
+        // Radius = sqrt(||a0||^2 + ||a1||^2 + ||a2||^2)
+        let r2 = a0.magnitude2() + a1.magnitude2() + a2.magnitude2();
+        let radius = r2.sqrt().max(0.0);
+        (center, radius)
     }
 
     pub fn to_obb(&self) -> OrientedBoundingBox {
