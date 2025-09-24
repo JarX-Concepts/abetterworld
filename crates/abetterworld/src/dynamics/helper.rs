@@ -23,9 +23,13 @@ impl Default for Ellipsoid {
     }
 }
 
-#[inline]
 pub fn proj_reverse_z_infinite_f64(fovy: Rad<f64>, aspect: f64, near: f64) -> Matrix4<f64> {
     let f = 1.0 / (0.5 * fovy.0).tan();
+    // Columns shown (col-major):
+    // col0 = [ f/aspect, 0, 0, 0 ]
+    // col1 = [ 0, f, 0, 0 ]
+    // col2 = [ 0, 0, 0, -1 ]   // w' = -z_view (positive for z_view<0)
+    // col3 = [ 0, 0,  near, 0 ]// z' = near * 1  (reverse-Z, infinite far)
     Matrix4::new(
         f / aspect,
         0.0,
@@ -38,24 +42,22 @@ pub fn proj_reverse_z_infinite_f64(fovy: Rad<f64>, aspect: f64, near: f64) -> Ma
         0.0,
         0.0,
         0.0,
-        -1.0, // col2  (m23 = +1)
+        -1.0, // col2   (col2.w = -1)
         0.0,
         0.0,
         near,
-        0.0, // col3  (m32 = +near)
+        0.0, // col3   (col3.z = near)
     )
 }
 
-#[inline]
-pub fn proj_reverse_z_infinite_inv_f64(
-    fovy: cgmath::Rad<f64>,
-    aspect: f64,
-    near: f64,
-) -> Matrix4<f64> {
+pub fn proj_reverse_z_infinite_inv_f64(fovy: Rad<f64>, aspect: f64, near: f64) -> Matrix4<f64> {
     let f = 1.0 / (0.5 * fovy.0).tan();
-    // columns:               //   rows shown for clarity:
+    // Inverse columns:
+    // col0 = [ aspect/f, 0, 0, 0 ]
+    // col1 = [ 0, 1/f, 0, 0 ]
+    // col2 = [ 0, 0, 0, 1/near ]
+    // col3 = [ 0, 0, -1, 0 ]      // note the -1 here (1/s, with s = -1)
     Matrix4::new(
-        // [ a/f,   0,    0,    0 ]
         aspect / f,
         0.0,
         0.0,
@@ -63,15 +65,15 @@ pub fn proj_reverse_z_infinite_inv_f64(
         0.0,
         1.0 / f,
         0.0,
-        0.0, // col1       // [  0 , 1/f,   0,    0 ]
+        0.0, // col1
         0.0,
         0.0,
         0.0,
-        1.0 / near, // col2   // [  0 ,  0 ,   0, 1/n ]
+        1.0 / near, // col2
         0.0,
         0.0,
-        1.0,
-        0.0, // col3     // [  0 ,  0 ,   1,   0 ]
+        -1.0,
+        0.0, // col3
     )
 }
 
