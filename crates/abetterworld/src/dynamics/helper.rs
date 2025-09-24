@@ -24,95 +24,127 @@ impl Default for Ellipsoid {
 }
 
 #[inline]
-pub fn proj_reverse_z_infinite_f64(fov_y: Rad<f64>, aspect: f64, near: f64) -> Matrix4<f64> {
-    // RH, wgpu/D3D 0..1 depth, reverse-Z, infinite far
-    let f = 1.0 / (0.5 * fov_y.0).tan();
-    let c0 = Vector4::new(f / aspect, 0.0, 0.0, 0.0);
-    let c1 = Vector4::new(0.0, f, 0.0, 0.0);
-    let c2 = Vector4::new(0.0, 0.0, 0.0, -1.0);
-    let c3 = Vector4::new(0.0, 0.0, near, 0.0);
-    Matrix4::from_cols(c0, c1, c2, c3)
+pub fn proj_reverse_z_infinite_f64(fovy: Rad<f64>, aspect: f64, near: f64) -> Matrix4<f64> {
+    let f = 1.0 / (0.5 * fovy.0).tan();
+    Matrix4::new(
+        f / aspect,
+        0.0,
+        0.0,
+        0.0, // col0
+        0.0,
+        f,
+        0.0,
+        0.0, // col1
+        0.0,
+        0.0,
+        0.0,
+        -1.0, // col2  (m23 = +1)
+        0.0,
+        0.0,
+        near,
+        0.0, // col3  (m32 = +near)
+    )
 }
 
 #[inline]
-pub fn proj_reverse_z_infinite_inv_f64(fov_y: Rad<f64>, aspect: f64, near: f64) -> Matrix4<f64> {
-    // Closed-form inverse of the matrix above
-    let f = 1.0 / (0.5 * fov_y.0).tan();
-    let c0 = Vector4::new(aspect / f, 0.0, 0.0, 0.0);
-    let c1 = Vector4::new(0.0, 1.0 / f, 0.0, 0.0);
-    let c2 = Vector4::new(0.0, 0.0, 0.0, -1.0);
-    let c3 = Vector4::new(0.0, 0.0, 1.0 / near, 0.0);
-    Matrix4::from_cols(c0, c1, c2, c3)
+pub fn proj_reverse_z_infinite_inv_f64(
+    fovy: cgmath::Rad<f64>,
+    aspect: f64,
+    near: f64,
+) -> Matrix4<f64> {
+    let f = 1.0 / (0.5 * fovy.0).tan();
+    // columns:               //   rows shown for clarity:
+    Matrix4::new(
+        // [ a/f,   0,    0,    0 ]
+        aspect / f,
+        0.0,
+        0.0,
+        0.0, // col0
+        0.0,
+        1.0 / f,
+        0.0,
+        0.0, // col1       // [  0 , 1/f,   0,    0 ]
+        0.0,
+        0.0,
+        0.0,
+        1.0 / near, // col2   // [  0 ,  0 ,   0, 1/n ]
+        0.0,
+        0.0,
+        1.0,
+        0.0, // col3     // [  0 ,  0 ,   1,   0 ]
+    )
 }
 
-/// Convert screen pixel -> ray in world space, then intersect with ellipsoid.
-/// `screen_px`: (x,y) in pixels, origin at top-left of the viewport.
-/// `elevation_m`: add this many meters along the ellipsoid normal (use 0.0 if not needed).
 pub fn screen_to_world_on_ellipsoid(
     screen_px: Point2<f64>,
-    dynamics_data: &CameraDynamicsData,
+    dynamics: &CameraDynamicsData, // exposes proj_inv, view_inv, eye, viewport_wh
     ellipsoid: Ellipsoid,
     elevation_m: f64,
 ) -> Option<Point3<f64>> {
-    let (vw, vh) = (dynamics_data.viewport_wh.0, dynamics_data.viewport_wh.1);
+    let (vw, vh) = dynamics.viewport_wh;
     if vw <= 0.0 || vh <= 0.0 {
+        eprintln!("Invalid viewport: vw={}, vh={}", vw, vh);
         return None;
     }
 
-    // 1) Screen -> NDC (x,y in [-1,1], y flipped)
+    // 1) Screen → NDC
     let x_ndc = (screen_px.x / vw) * 2.0 - 1.0;
     let y_ndc = 1.0 - (screen_px.y / vh) * 2.0;
 
-    // Two clip-space points along the view ray (z = -1 near, z = 1 far in OpenGL-style clip space)
-    let near_clip = cgmath::Vector4::new(x_ndc, y_ndc, -1.0, 1.0);
-    let far_clip = cgmath::Vector4::new(x_ndc, y_ndc, 1.0, 1.0);
+    // 2) Build VIEW ray exactly like ray_from_proj_view
+    let tan_half_fov_x = 1.0 / dynamics.proj.x.x; // m00 = f/aspect
+    let tan_half_fov_y = 1.0 / dynamics.proj.y.y; // m11 = f
+    let dir_view = Vector3::new(
+        x_ndc * tan_half_fov_x,
+        y_ndc * tan_half_fov_y,
+        -1.0, // RH, forward = -Z
+    )
+    .normalize();
 
-    // 2) Unproject to world space
-    let near_world_h = dynamics_data.proj_view_inv * near_clip;
-    let far_world_h = dynamics_data.proj_view_inv * far_clip;
+    // 3) Rotate to WORLD (w=0 to ignore translation)
+    let dir_world4 = dynamics.view_inv * Vector4::new(dir_view.x, dir_view.y, dir_view.z, 0.0);
+    let mut dir = Vector3::new(dir_world4.x, dir_world4.y, dir_world4.z).normalize();
 
-    // Homogeneous divide
-    let near_world = Point3::from_vec((near_world_h.truncate() / near_world_h.w).into());
-    let far_world = Point3::from_vec((far_world_h.truncate() / far_world_h.w).into());
+    let origin = dynamics.eye;
 
-    // 3) Ray: origin = eye, dir = normalized (far - near) OR (point - eye)
-    // Using (far - near) is numerically stable and independent of slight eye mismatch.
-    let mut dir = far_world - near_world;
-    if dir.magnitude2() == 0.0 {
-        // Fallback: use (far - eye)
-        dir = far_world - dynamics_data.eye;
-        if dir.magnitude2() == 0.0 {
-            return None;
-        }
+    // Safety: if ray points away from Earth center, flip it
+    if dir.dot(origin.to_vec()) > 0.0 {
+        dir = -dir;
     }
-    let dir = dir.normalize();
-    let origin = dynamics_data.eye;
 
-    // 4) Intersect ray with ellipsoid centered at origin (ECEF assumption)
+    // 4) Intersect and elevate (unchanged)
     let t = intersect_ray_ellipsoid(origin, dir, ellipsoid)?;
-
-    // 5) Point at intersection
     let p = origin + dir * t;
+    Some(apply_elevation(p, ellipsoid, elevation_m))
+}
 
-    if elevation_m == 0.0 {
-        return Some(p);
-    }
+// ----- small helpers -----
 
-    // 6) Offset by elevation along ellipsoid surface normal
-    // For ellipsoid x^2/a^2 + y^2/b^2 + z^2/c^2 = 1, the (non-unit) normal at p is:
-    // n ~ (x/a^2, y/b^2, z/c^2).
-    let n_raw = Vector3::new(
-        p.x / (ellipsoid.a * ellipsoid.a),
-        p.y / (ellipsoid.b * ellipsoid.b),
-        p.z / (ellipsoid.c * ellipsoid.c),
-    );
-    let n = if n_raw.magnitude2() > 0.0 {
+#[inline]
+fn is_inside_ellipsoid(p: Point3<f64>, e: Ellipsoid) -> bool {
+    let x = p.x / e.a;
+    let y = p.y / e.b;
+    let z = p.z / e.c;
+    (x * x + y * y + z * z) <= 1.0
+}
+
+#[inline]
+fn ellipsoid_normal(p: Point3<f64>, e: Ellipsoid) -> Vector3<f64> {
+    let n_raw = Vector3::new(p.x / (e.a * e.a), p.y / (e.b * e.b), p.z / (e.c * e.c));
+    if n_raw.magnitude2() > 0.0 {
         n_raw.normalize()
     } else {
         Vector3::unit_z()
-    };
+    }
+}
 
-    Some(Point3::from_vec((p.to_vec() + n * elevation_m).into()))
+#[inline]
+fn apply_elevation(p: Point3<f64>, e: Ellipsoid, elevation_m: f64) -> Point3<f64> {
+    if elevation_m == 0.0 {
+        return p;
+    }
+    let n = ellipsoid_normal(p, e); // outward
+    Point3::from_vec((p.to_vec() + n * elevation_m).into())
 }
 
 pub fn world_to_screen(
@@ -129,29 +161,31 @@ pub fn world_to_screen_proj(
 ) -> Option<Point2<f64>> {
     let (vw, vh) = (viewport_wh.0, viewport_wh.1);
     if vw <= 0.0 || vh <= 0.0 {
+        eprintln!("Invalid viewport: ({}, {})", vw, vh);
         return None;
     }
 
-    // world -> clip
     let world_h = Vector4::new(world.x, world.y, world.z, 1.0);
-    let clip = proj_view * world_h;
+    let clip = *proj_view * world_h;
+    eprintln!("world={:?}, world_h={:?}, clip={:?}", world, world_h, clip);
 
-    // Reject points with w ~ 0 or behind the camera (w <= 0 for standard RH OpenGL clip)
-    if !clip.w.is_finite() || clip.w.abs() < 1e-12 || clip.w <= 0.0 {
+    // Reject points with invalid w (but allow either sign)
+    if !clip.w.is_finite() || clip.w.abs() < 1e-12 {
         return None;
     }
 
     // clip -> NDC
-    let ndc = clip.truncate() / clip.w; // [-1,1] each
+    let ndc = clip.truncate() / clip.w; // x,y∈[-1,1], z∈[0,1] for reverse-Z
 
-    // (optional) Cull if outside NDC, including depth if you want only on-screen hits
-    // if ndc.x < -1.0 || ndc.x > 1.0 || ndc.y < -1.0 || ndc.y > 1.0 || ndc.z < -1.0 || ndc.z > 1.0 {
+    // Optional strict on-screen check
+    // if ndc.x < -1.0 || ndc.x > 1.0 || ndc.y < -1.0 || ndc.y > 1.0 || ndc.z < 0.0 || ndc.z > 1.0 {
+    //     eprintln!("Rejected off-screen ndc={:?}", ndc);
     //     return None;
     // }
 
-    // NDC -> pixels (y-down)
     let x_px = (ndc.x + 1.0) * 0.5 * vw;
     let y_px = (1.0 - ndc.y) * 0.5 * vh;
+    eprintln!("pixel=({}, {})", x_px, y_px);
 
     if x_px.is_finite() && y_px.is_finite() {
         Some(Point2::new(x_px, y_px))
@@ -160,103 +194,181 @@ pub fn world_to_screen_proj(
     }
 }
 
-/// Intersect ray (origin o, dir d) with a centered unit sphere.
-/// Returns the *nearest positive* intersection point in world coords (not normalized).
 fn ray_hit_ellipsoid(
     o: Vector3<f64>,
-    d: Vector3<f64>,
+    d: Vector3<f64>, // need not be unit; t is in world units
     ax: f64,
     ay: f64,
     az: f64,
 ) -> Option<Vector3<f64>> {
-    // Scale world so ellipsoid -> unit sphere
-    let sx = 1.0 / ax;
-    let sy = 1.0 / ay;
-    let sz = 1.0 / az;
+    let inv2x = 1.0 / (ax * ax);
+    let inv2y = 1.0 / (ay * ay);
+    let inv2z = 1.0 / (az * az);
 
-    let oe = Vector3::new(o.x * sx, o.y * sy, o.z * sz);
-    let de = Vector3::new(d.x * sx, d.y * sy, d.z * sz); // not necessarily unit; OK
+    eprintln!("Origin o={:?}, dir d={:?}", o, d);
+    eprintln!("Axes = ({:.3}, {:.3}, {:.3})", ax, ay, az);
+    eprintln!("inv2 = ({:.6}, {:.6}, {:.6})", inv2x, inv2y, inv2z);
 
-    // Intersect with unit sphere: |oe + t de|^2 = 1
-    let a = de.dot(de);
-    let b = 2.0 * oe.dot(de);
-    let c = oe.dot(oe) - 1.0;
-    let disc = b * b - 4.0 * a * c;
-    if disc < 0.0 {
-        return None;
+    let a = d.x * d.x * inv2x + d.y * d.y * inv2y + d.z * d.z * inv2z;
+    let b = 2.0 * (o.x * d.x * inv2x + o.y * d.y * inv2y + o.z * d.z * inv2z);
+    let mut c = o.x * o.x * inv2x + o.y * o.y * inv2y + o.z * o.z * inv2z - 1.0;
+    let inside = c < 0.0;
+
+    eprintln!("Quadratic coeffs: a={:.12}, b={:.12}, c={:.12}", a, b, c);
+    eprintln!("Inside ellipsoid? {}", inside);
+
+    const EPS_A: f64 = 1e-18;
+    if a.abs() < EPS_A {
+        eprintln!("Degenerate direction (a≈0)");
+        return if inside { Some(o) } else { None }.map(|_| o);
     }
 
-    let sqrt_disc = disc.sqrt();
-    let t0 = (-b - sqrt_disc) / (2.0 * a);
-    let t1 = (-b + sqrt_disc) / (2.0 * a);
-    let t = if t0 > 0.0 {
-        t0
-    } else if t1 > 0.0 {
-        t1
-    } else {
+    let mut disc = b * b - 4.0 * a * c;
+    eprintln!("Discriminant raw={:.12}", disc);
+    const EPS_DISC: f64 = 1e-12;
+    if disc < 0.0 && disc > -EPS_DISC {
+        eprintln!("Clamping near-zero discriminant to 0");
+        disc = 0.0;
+    }
+    if disc < 0.0 {
+        eprintln!("No real roots (disc < 0)");
         return None;
+    }
+    let sqrt_disc = disc.sqrt();
+    eprintln!("sqrt_disc={:.12}", sqrt_disc);
+
+    let q = -0.5 * (b + if b >= 0.0 { sqrt_disc } else { -sqrt_disc });
+    let t0 = q / a;
+    let t1 = if q != 0.0 { c / q } else { -b / (2.0 * a) };
+
+    eprintln!("q={:.12}, t0={:.12}, t1={:.12}", q, t0, t1);
+
+    let (t_min, t_max) = if t0 <= t1 { (t0, t1) } else { (t1, t0) };
+    eprintln!("t_min={:.12}, t_max={:.12}", t_min, t_max);
+
+    let t = if inside {
+        if t_max >= 0.0 {
+            eprintln!("Inside: picking exit t_max={:.12}", t_max);
+            t_max
+        } else {
+            eprintln!("Inside: no forward exit");
+            return None;
+        }
+    } else {
+        if t_min >= 0.0 {
+            eprintln!("Outside: picking nearest root t_min={:.12}", t_min);
+            t_min
+        } else if t_max >= 0.0 {
+            eprintln!("Outside: t_min<0, picking t_max={:.12}", t_max);
+            t_max
+        } else {
+            eprintln!("Outside: both roots negative, no hit");
+            return None;
+        }
     };
 
-    let hit_e = oe + de * t;
-    // Map back to world space
-    Some(Vector3::new(hit_e.x / sx, hit_e.y / sy, hit_e.z / sz))
+    let hit = o + d * t;
+    eprintln!("Hit point = {:?}", hit);
+    Some(hit)
 }
 
-fn ray_from_proj_view_inv(
-    pv_inv: &Matrix4<f64>,
-    xy: Point2<f64>,
+pub fn ray_from_proj_view(
+    proj: &Matrix4<f64>,
+    view_inv: &Matrix4<f64>,
+    eye: Point3<f64>,
+    pixel: Point2<f64>,
     viewport_wh: (f64, f64),
 ) -> Option<(Vector3<f64>, Vector3<f64>)> {
     let (w, h) = viewport_wh;
     if w <= 1.0 || h <= 1.0 {
+        eprintln!("Invalid viewport size: w={}, h={}", w, h);
         return None;
     }
 
-    // Screen -> NDC
-    let x_ndc = (xy.x / w) * 2.0 - 1.0;
-    let y_ndc = 1.0 - (xy.y / h) * 2.0;
+    // Screen -> NDC (-1..1), y up
+    let x_ndc = (pixel.x / w) * 2.0 - 1.0;
+    let y_ndc = 1.0 - (pixel.y / h) * 2.0;
+    eprintln!(
+        "pixel={:?}, viewport=({:.3},{:.3}), NDC=({:.6},{:.6})",
+        pixel, w, h, x_ndc, y_ndc
+    );
 
-    // Clip-space points on near/far planes
-    let near_clip = Vector4::new(x_ndc, y_ndc, -1.0, 1.0);
-    let far_clip = Vector4::new(x_ndc, y_ndc, 1.0, 1.0);
+    // Get tangents of half-FOVs from the projection
+    let tan_half_fov_x = 1.0 / proj.x.x; // proj[0][0]
+    let tan_half_fov_y = 1.0 / proj.y.y; // proj[1][1]
+    eprintln!(
+        "proj[0][0]={:.6}, proj[1][1]={:.6}, tan_half_fov=({:.6},{:.6})",
+        proj.x.x, proj.y.y, tan_half_fov_x, tan_half_fov_y
+    );
 
-    // Unproject
-    let mut near_w = *pv_inv * near_clip;
-    let mut far_w = *pv_inv * far_clip;
-    if near_w.w.abs() < 1e-18 || far_w.w.abs() < 1e-18 {
+    // View-space ray direction (RH, camera forward = -Z)
+    let dir_view = Vector3::new(x_ndc * tan_half_fov_x, y_ndc * tan_half_fov_y, -1.0).normalize();
+    eprintln!(
+        "dir_view(before normalize) = ({:.6},{:.6},{:.6})",
+        x_ndc * tan_half_fov_x,
+        y_ndc * tan_half_fov_y,
+        -1.0
+    );
+    eprintln!("dir_view(normalized) = {:?}", dir_view);
+
+    // Rotate to world (ignore translation via w=0)
+    let dir_world4 = *view_inv * Vector4::new(dir_view.x, dir_view.y, dir_view.z, 0.0);
+    let mut dir_world = Vector3::new(dir_world4.x, dir_world4.y, dir_world4.z);
+    eprintln!("dir_world4 = {:?}", dir_world4);
+    eprintln!("dir_world (pre-normalize) = {:?}", dir_world);
+
+    if dir_world.magnitude2() == 0.0 || !dir_world.magnitude2().is_finite() {
+        eprintln!("Invalid dir_world vector: {:?}", dir_world);
         return None;
     }
-    near_w /= near_w.w;
-    far_w /= far_w.w;
+    dir_world = dir_world.normalize();
+    eprintln!("dir_world (normalized) = {:?}", dir_world);
 
-    let p_near = Vector3::new(near_w.x, near_w.y, near_w.z);
-    let p_far = Vector3::new(far_w.x, far_w.y, far_w.z);
-    let dir = (p_far - p_near).normalize();
-    Some((p_near, dir))
+    let origin = Vector3::new(eye.x, eye.y, eye.z);
+    eprintln!("eye = {:?}, origin = {:?}", eye, origin);
+
+    Some((origin, dir_world))
 }
 
-/// Your original signature, upgraded to prefer unprojection via proj_view_inv.
-/// Falls back to FOV/aspect path if proj_view_inv is unavailable in your dynamics data.
 pub fn view_ray_from_screen_with_pose(
     dynamics_data: &CameraDynamicsData,
-    pose: &PositionState,
+    _pose: &PositionState, // not needed; avoid unused warning
     xy: Point2<f64>,
 ) -> Option<Vector3<f64>> {
-    // If you can expose proj_view_inv from `dynamics_data`, use it:
-    let pv_inv = dynamics_data.proj_view_inv;
+    let (ray_o, ray_d) = ray_from_proj_view(
+        &dynamics_data.proj,
+        &dynamics_data.view_inv,
+        dynamics_data.eye,
+        xy,
+        dynamics_data.viewport_wh,
+    )?;
 
-    if let Some((ray_o, ray_d)) = ray_from_proj_view_inv(&pv_inv, xy, dynamics_data.viewport_wh) {
-        // Intersect with ellipsoid centered at origin (WGS-84: a,a,b)
-        let o = ray_o; // world coords
-        let d = ray_d;
-        if let Some(hit) = ray_hit_ellipsoid(o, d, WGS84_A, WGS84_A, WGS84_B) {
-            return Some(hit.normalize()); // direction from center
-        } else {
-            // If ellipsoid fails (e.g., pointing away), you can early return None.
-            return None;
-        }
+    eprintln!(
+        "view_ray_from_screen_with_pose: xy={:?}, ray_o={:?}, ray_d={:?}",
+        xy, ray_o, ray_d
+    );
+
+    let hit = ray_hit_ellipsoid(ray_o, ray_d, WGS84_A, WGS84_A, WGS84_B)?;
+    eprintln!("view_ray_from_screen_with_pose: hit={:?}", hit);
+
+    // Verify hit lies on ellipsoid
+    let eq_val = (hit.x * hit.x) / (WGS84_A * WGS84_A)
+        + (hit.y * hit.y) / (WGS84_A * WGS84_A)
+        + (hit.z * hit.z) / (WGS84_B * WGS84_B);
+    eprintln!("ellipsoid eq check ≈ {:.12}", eq_val);
+
+    let len2 = hit.magnitude2();
+    if len2 == 0.0 || !len2.is_finite() {
+        eprintln!("Invalid hit vector len2={}", len2);
+        return None;
     }
-    return None;
+    let dir_center = hit / len2.sqrt();
+    eprintln!(
+        "view_ray_from_screen_with_pose: dir_center={:?}",
+        dir_center
+    );
+
+    Some(dir_center)
 }
 
 /// Project a point on the ellipsoid, optionally offset by `elevation_m` along the ellipsoid normal.
@@ -275,59 +387,103 @@ pub fn world_on_ellipsoid_to_screen(
     world_to_screen(p, dynamics_data)
 }
 
-/// Ellipsoid surface normal (unit) at a world point on the ellipsoid.
-/// For x^2/a^2 + y^2/b^2 + z^2/c^2 = 1, non-unit normal ~ (x/a^2, y/b^2, z/c^2).
-#[inline]
-fn ellipsoid_normal(p: Point3<f64>, e: Ellipsoid) -> Vector3<f64> {
-    let n = Vector3::new(p.x / (e.a * e.a), p.y / (e.b * e.b), p.z / (e.c * e.c));
-    let m2 = n.magnitude2();
-    if m2 > 0.0 {
-        n / m2.sqrt()
-    } else {
-        Vector3::unit_z()
-    }
-}
-
 /// Solve quadratic for ray/ellipsoid intersection.
 /// Ray: r(t) = O + t*D, t >= 0
 /// Ellipsoid: (x/a)^2 + (y/b)^2 + (z/c)^2 = 1
-fn intersect_ray_ellipsoid(origin: Point3<f64>, dir: Vector3<f64>, e: Ellipsoid) -> Option<f64> {
-    // Scale space so ellipsoid becomes unit sphere:
-    // Define O' = (Ox/a, Oy/b, Oz/c), D' = (Dx/a, Dy/b, Dz/c)
-    let o = Vector3::new(origin.x / e.a, origin.y / e.b, origin.z / e.c);
-    let d = Vector3::new(dir.x / e.a, dir.y / e.b, dir.z / e.c);
+pub fn intersect_ray_ellipsoid(
+    origin: Point3<f64>,
+    dir: Vector3<f64>, // need not be unit; t is in world units
+    e: Ellipsoid,
+) -> Option<f64> {
+    // Precompute inverse-squared axes (metric matrix diag)
+    let inv2 = Vector3::new(1.0 / (e.a * e.a), 1.0 / (e.b * e.b), 1.0 / (e.c * e.c));
 
-    // Intersection with unit sphere: ||O' + t D'||^2 = 1
-    // => (d·d) t^2 + 2 (o·d) t + (o·o - 1) = 0
-    let a = d.dot(d);
-    let b = 2.0 * o.dot(d);
-    let c = o.dot(o) - 1.0;
+    let o = Vector3::new(origin.x, origin.y, origin.z);
+    let d = dir;
 
-    // If origin is already inside the ellipsoid, treat t=0 as "hit" (or push outward)
-    if c <= 0.0 {
-        return Some(0.0);
+    // Quadratic: (o + t d)^T M (o + t d) = 1
+    // A t^2 + B t + C = 0
+    let a = d.x * d.x * inv2.x + d.y * d.y * inv2.y + d.z * d.z * inv2.z;
+    let b = 2.0 * (o.x * d.x * inv2.x + o.y * d.y * inv2.y + o.z * d.z * inv2.z);
+    let mut c = (o.x * o.x) * inv2.x + (o.y * o.y) * inv2.y + (o.z * o.z) * inv2.z - 1.0;
+
+    // Inside? We'll want the exit root (positive t)
+    let inside = c < 0.0;
+
+    // Degenerate direction
+    const EPS_A: f64 = 1e-18;
+    if a.abs() < EPS_A {
+        // Direction parallel to a tangent plane (or zero)
+        return if inside { Some(0.0) } else { None };
     }
 
-    let disc = b * b - 4.0 * a * c;
+    // Discriminant with tolerance
+    let mut disc = b * b - 4.0 * a * c;
+    const EPS_DISC: f64 = 1e-12;
+    if disc < 0.0 && disc > -EPS_DISC {
+        disc = 0.0; // treat as tangent
+    }
     if disc < 0.0 {
         return None;
     }
 
     let sqrt_disc = disc.sqrt();
-    let t0 = (-b - sqrt_disc) / (2.0 * a);
-    let t1 = (-b + sqrt_disc) / (2.0 * a);
 
-    // We want the smallest non-negative t
-    let t_min = if t0 >= 0.0 && t1 >= 0.0 {
-        t0.min(t1)
-    } else if t0 >= 0.0 {
-        t0
-    } else if t1 >= 0.0 {
-        t1
+    // Stable quadratic solution
+    // q = -0.5 * (b + sign(b)*sqrt_disc)
+    let q = -0.5 * (b + if b >= 0.0 { sqrt_disc } else { -sqrt_disc });
+    let t0 = q / a;
+    let t1 = if q != 0.0 { c / q } else { -b / (2.0 * a) }; // fallback if q==0
+
+    // Order roots
+    let (t_min, t_max) = if t0 <= t1 { (t0, t1) } else { (t1, t0) };
+
+    if inside {
+        // expect t_min < 0 < t_max; take forward exit
+        return if t_max >= 0.0 { Some(t_max) } else { None };
+    }
+
+    // Outside: smallest non-negative root
+    if t_min >= 0.0 {
+        Some(t_min)
+    } else if t_max >= 0.0 {
+        Some(t_max)
     } else {
-        // Both behind the camera
-        return None;
-    };
+        None
+    }
+}
 
-    Some(t_min)
+pub fn view_ray_dir_from_screen(
+    dyns: &CameraDynamicsData, // must expose proj_inv, view_inv, viewport_wh
+    _pose: &PositionState,     // not used here, but handy if you vary per pose
+    xy: Point2<f64>,
+) -> Option<Vector3<f64>> {
+    let (w, h) = dyns.viewport_wh;
+    if w <= 1.0 || h <= 1.0 {
+        return None;
+    }
+
+    // Screen -> NDC
+    let x_ndc = (xy.x / w) * 2.0 - 1.0;
+    let y_ndc = 1.0 - (xy.y / h) * 2.0;
+
+    // Reverse-Z near plane point in VIEW space (z=1)
+    let p_view_h = dyns.proj_inv * Vector4::new(x_ndc, y_ndc, 1.0, 1.0);
+    if !p_view_h.w.is_finite() || p_view_h.w.abs() < 1e-18 {
+        return None;
+    }
+    let p_view = p_view_h.truncate() / p_view_h.w;
+
+    // View-space forward ray through that pixel. Negate if your convention is -Z forward.
+    let dir_view = -(p_view.normalize());
+
+    // Rotate to world; w=0 so translation is ignored
+    let dir_world4 = dyns.view_inv * Vector4::new(dir_view.x, dir_view.y, dir_view.z, 0.0);
+    let mut dir_world = Vector3::new(dir_world4.x, dir_world4.y, dir_world4.z);
+    if dir_world.magnitude2() == 0.0 || !dir_world.magnitude2().is_finite() {
+        return None;
+    }
+    dir_world = dir_world.normalize();
+
+    Some(dir_world)
 }

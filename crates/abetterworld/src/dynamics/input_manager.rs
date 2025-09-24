@@ -1,8 +1,10 @@
+use std::sync::Arc;
+
 use cgmath::{EuclideanSpace, Point2, Point3};
 
 use crate::{
     dynamics::{
-        self, screen_to_world_on_ellipsoid, world_to_screen, CameraDynamicsData, Dynamics,
+        self, screen_to_world_on_ellipsoid, world_to_screen, Camera, CameraDynamicsData, Dynamics,
         Ellipsoid,
     },
     world::{InputEvent, MouseButton},
@@ -61,6 +63,7 @@ impl InputState {
         dynamics_data: &CameraDynamicsData,
         dynamics: &mut Dynamics,
         event: InputEvent,
+        camera: &Arc<Camera>,
     ) {
         match event {
             InputEvent::MouseMoved(x, y) => {

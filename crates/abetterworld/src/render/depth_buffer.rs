@@ -1,20 +1,11 @@
-#[derive(Clone, Copy, Debug)]
-pub enum DepthMode {
-    Normal,   // Forward-Z (compare: Less, clear: 1.0)
-    ReverseZ, // Reverse-Z (compare: Greater, clear: 0.0)
-}
-
 pub struct DepthBuffer {
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
     pub format: wgpu::TextureFormat,
     pub sample_count: u32,
-    pub mode: DepthMode,
 }
 
-/// Prefer a float depth format for best reverse-Z precision; fall back to Depth24Plus.
 pub fn recommended_format() -> wgpu::TextureFormat {
-    // Depth32Float is widely available; Depth24Plus is guaranteed.
     wgpu::TextureFormat::Depth32Float
 }
 
@@ -25,7 +16,6 @@ impl DepthBuffer {
         height: u32,
         format: wgpu::TextureFormat, // e.g., Depth32Float (preferred) or Depth24Plus
         sample_count: u32,
-        mode: DepthMode,
     ) -> Self {
         let size = wgpu::Extent3d {
             width,
@@ -51,7 +41,6 @@ impl DepthBuffer {
             view,
             format,
             sample_count,
-            mode,
         }
     }
 
@@ -59,32 +48,19 @@ impl DepthBuffer {
         if width == 0 || height == 0 {
             return; // minimized window guard
         }
-        *self = Self::new(
-            device,
-            width,
-            height,
-            self.format,
-            self.sample_count,
-            self.mode,
-        );
+        *self = Self::new(device, width, height, self.format, self.sample_count);
     }
 
     /// Clear value appropriate for the mode (use in your render pass).
     #[inline]
     pub fn clear_value(&self) -> f32 {
-        match self.mode {
-            DepthMode::Normal => 1.0,   // far in forward-Z
-            DepthMode::ReverseZ => 0.0, // far in reverse-Z
-        }
+        0.0
     }
 
     /// Compare function appropriate for the mode (use in your pipeline).
     #[inline]
     pub fn compare_fn(&self) -> wgpu::CompareFunction {
-        match self.mode {
-            DepthMode::Normal => wgpu::CompareFunction::Less,
-            DepthMode::ReverseZ => wgpu::CompareFunction::GreaterEqual,
-        }
+        wgpu::CompareFunction::GreaterEqual
     }
 
     /// Convenience builder for a depth attachment with a clear.

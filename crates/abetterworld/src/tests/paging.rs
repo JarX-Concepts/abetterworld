@@ -15,7 +15,6 @@ mod tests {
         decode::init,
         dynamics::init_camera,
         helpers::{channel::channel, PlatformAwait},
-        render::DepthMode,
     };
 
     #[test]
@@ -28,7 +27,7 @@ mod tests {
 
         let tile_content = Arc::new(TileManager::new());
         let debug_camera_source = Arc::new(camera);
-        debug_camera_source.update(None, DepthMode::ReverseZ);
+        debug_camera_source.update();
 
         let (loader_tx, render_rx) = channel::<Tile>(200000);
 

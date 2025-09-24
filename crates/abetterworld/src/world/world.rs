@@ -299,13 +299,11 @@ impl World {
             )?;
         }
 
-        let depth_mode = self.private.pipeline.depth.as_ref().unwrap().mode;
-
         // Update the debug camera if it exists
         if let Some(debug_camera) = self.private.debug_camera.as_ref() {
             let min_distance = self.render.get_min_distance(&debug_camera.position().eye);
 
-            let (_, _, dirty) = debug_camera.update(min_distance, depth_mode);
+            let (_, _, dirty) = debug_camera.update();
             if dirty {
                 needs_update = true;
             }
@@ -313,7 +311,7 @@ impl World {
         let min_distance = self
             .render
             .get_min_distance(&self.private.camera.position().eye);
-        let (eye_pos, uniform, dirty) = self.private.camera.update(min_distance, depth_mode);
+        let (eye_pos, uniform, dirty) = self.private.camera.update();
         if dirty {
             needs_update = true;
         }
@@ -340,6 +338,7 @@ impl World {
             &self.private.camera.dynamics(),
             &mut self.private.dynamics,
             event,
+            &self.private.camera,
         );
     }
 
