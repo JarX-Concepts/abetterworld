@@ -17,7 +17,6 @@ pub fn import_renderables(
     receiver: &mut Receiver<Tile>,
     budget: Duration,
 ) -> Result<bool, AbwError> {
-    log::info!("Importing renderables with budget {:?}", budget);
     if budget.is_zero() {
         return Ok(false);
     }
@@ -47,10 +46,5 @@ pub fn import_renderables(
         }
     }
 
-    log::info!(
-        "Importing renderables done, took {:?}, needs_update={}",
-        start.elapsed(),
-        needs_update
-    );
     Ok(needs_update)
 }

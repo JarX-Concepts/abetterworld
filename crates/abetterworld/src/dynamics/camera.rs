@@ -182,8 +182,6 @@ impl Camera {
                 let ds = self.derived_state.read().unwrap();
                 ds.uniform
             };
-            // light trace
-            eprintln!("[update] fast path (clean) eye={:?}", eye);
             return (eye, uniform, false);
         }
 
@@ -204,11 +202,6 @@ impl Camera {
         let up = position.up;
         let (vw, vh) = viewport_wh;
 
-        eprintln!(
-        "[update] inputs:\n  eye={:?}\n  target={:?}\n  up={:?}\n  fovy(deg)={:?}\n  aspect={:.6}\n  viewport=({:.0}x{:.0})",
-        eye, target, up, fovy, aspect, vw, vh
-    );
-
         // ---- 2) Heavy math lock-free ----
         let (_lat, _lon, altitude) = ecef_to_lla_wgs84(eye);
         let near_scale = match altitude {
@@ -217,22 +210,9 @@ impl Camera {
             _ => 100.0,
         };
         let near = near_override.unwrap_or(near_scale).max(1e-4);
-        eprintln!(
-            "[update] altitude={:.3} m  near(chosen)={:.6} (override={:?})",
-            altitude, near, near_override
-        );
 
         // Projection (reverse-Z, infinite far)
         let proj64 = proj_reverse_z_infinite_f64(fovy.into(), aspect, near);
-        // Expect (row-major for display):
-        // [ m00,   0,   0,  0 ]
-        // [  0 , m11,   0,  0 ]
-        // [  0 ,  0 ,  0,  n ]   <-- reverse-Z infinite
-        // [  0 ,  0 ,  1,  0 ]
-        eprintln!(
-            "[update] proj key entries: m00={:.12}, m11={:.12}, m23={:.12}, m32={:.12}",
-            proj64.x.x, proj64.y.y, proj64.z.w, proj64.w.z
-        );
 
         let view64 = Matrix4::look_at_rh(eye, target, up);
 
@@ -262,10 +242,6 @@ impl Camera {
             .fold(0.0f64, f64::max)
         }
         let rot_res = rot_orthonorm_residual(&view64);
-        eprintln!(
-            "[update] view rotation orthonormal residual (∞-norm) = {:.3e}",
-            rot_res
-        );
 
         // World->clip
         let proj_view_full = proj64 * view64;
@@ -292,10 +268,6 @@ impl Camera {
         let proj_inv_res = inv_check(&proj64, &p_inv);
         let view_inv_res = inv_check(&view64, &v_inv);
         let pv_inv_res = inv_check(&proj_view_full, &proj_view_inv);
-        eprintln!(
-        "[update] inverse residuals: ‖P·P⁻¹−I‖∞={:.3e}, ‖V·V⁻¹−I‖∞={:.3e}, ‖(PV)·(PV)⁻¹−I‖∞={:.3e}",
-        proj_inv_res, view_inv_res, pv_inv_res
-    );
 
         // GPU uniform (P * R^T)
         let view_no_translation64 = remove_translation(view64); // ~R^T
@@ -312,16 +284,6 @@ impl Camera {
                 pv_rot_res = pv_rot_res.max((pv_no_trans[c][r] - proj_view_rot64[c][r]).abs());
             }
         }
-        eprintln!(
-            "[update] P*R^T residual vs uniform source (∞-norm) = {:.3e}",
-            pv_rot_res
-        );
-
-        // Frustum sanity (just print near plane ‘d’ and a count)
-        eprintln!(
-            "[update] frustum planes set; viewport=({:.0}x{:.0}), near={:.6}, far=inf",
-            vw, vh, near
-        );
 
         // ---- 3) Commit derived_state ----
         {
@@ -356,11 +318,6 @@ impl Camera {
                 viewport_wh,
             };
         }
-
-        eprintln!(
-        "[update] dynamics snapshot:\n  eye={:?}\n  fov_y(deg)={:?}\n  near={:.6}\n  proj.m00={:.6} proj.m11={:.6} m23={:.6} m32={:.6}",
-        eye, fovy, near, proj64.x.x, proj64.y.y, proj64.z.w, proj64.w.z
-    );
 
         (eye, uniform, true)
     }

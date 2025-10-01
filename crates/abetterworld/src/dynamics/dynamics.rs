@@ -238,6 +238,7 @@ impl Dynamics {
         dynamics_data: &CameraDynamicsData,
         from: ScreenPosition,
         to: ScreenPosition,
+        rotation_pt: Option<Point3<f64>>,
     ) {
         // Must know the locked world point from the pre-rotation pose.
         let p_lock = match from.world_position {
@@ -249,7 +250,7 @@ impl Dynamics {
 
         // 1) Build unit direction to the locked point from the rotation center (globe center).
         //    If you orbit around world origin, target is (0,0,0). If not, replace with your center.
-        let center = Point3::new(0.0, 0.0, 0.0);
+        let center = rotation_pt.unwrap_or(Point3::new(0.0, 0.0, 0.0));
         let v_p = p_lock - center;
         if v_p.magnitude2() == 0.0 {
             return;
@@ -341,6 +342,136 @@ impl Dynamics {
             let angle = s.atan2(dot); // stable atan2(|cross|, dot)
             Some(Quaternion::from_axis_angle(axis, Rad(angle)))
         }
+    }
+
+    pub fn pivot(
+        &self,
+        dynamics_data: &CameraDynamicsData,
+        from: ScreenPosition,
+        to: ScreenPosition,
+        pivot_override: Option<Point3<f64>>,
+    ) {
+        let p_pivot = match (pivot_override, from.world_position) {
+            (Some(p), _) => p,
+            (None, Some(p)) => p,
+            _ => return,
+        };
+
+        let mut s = self.state.write().expect("Dynamics write lock");
+
+        // ---- Tunables ----
+        const MIN_SURFACE_RADIUS: f64 = 6_356_752.0 + 3.0;
+        const MIN_EYE_RADIUS: f64 = MIN_SURFACE_RADIUS + 0.5;
+        const MAX_EYE_RADIUS: f64 = 50_000_000.0;
+
+        // Positive = drag up tilts camera up
+        const PITCH_SIGN: f64 = 1.0;
+
+        // Sensitivity multiplier (was 0.85, now > 1.0 for more responsive feel)
+        const SENS_MULT: f64 = 1.5;
+
+        // Clamp per-frame deltas
+        const MAX_STEP_RAD: f64 = 0.08; // ~4.5°
+
+        // ---- Helpers ----
+        #[inline]
+        fn rotate_about_point(q: Quaternion<f64>, pt: Point3<f64>, p: Point3<f64>) -> Point3<f64> {
+            pt + q.rotate_vector(p - pt)
+        }
+
+        // Derive angular scale from proj
+        let vp_w = dynamics_data.viewport_wh.0.max(1.0);
+        let vp_h = dynamics_data.viewport_wh.1.max(1.0);
+
+        fn fovy_from_proj(m: &Matrix4<f64>) -> Option<f64> {
+            let fy = m.y.y;
+            if fy.is_finite() && fy > 0.0 {
+                return Some(2.0 * (1.0 / fy).atan());
+            }
+            None
+        }
+        let aspect = (vp_w / vp_h).max(1e-6);
+        let fovy = fovy_from_proj(&dynamics_data.proj).unwrap_or(55f64.to_radians());
+        let fovx = 2.0 * ((fovy * 0.5).tan() * aspect).atan();
+
+        let yaw_per_px = (fovx / vp_w) * SENS_MULT;
+        let pitch_per_px = (fovy / vp_h) * SENS_MULT;
+
+        let delta = to.xy - from.xy;
+        if delta.x.abs() < 0.001 && delta.y.abs() < 0.001 {
+            return;
+        }
+
+        let mut yaw = (-delta.x) * yaw_per_px;
+        let mut pitch = (PITCH_SIGN * delta.y) * pitch_per_px;
+
+        yaw = yaw.clamp(-MAX_STEP_RAD, MAX_STEP_RAD);
+        pitch = pitch.clamp(-MAX_STEP_RAD, MAX_STEP_RAD);
+
+        let center = Point3::new(0.0, 0.0, 0.0);
+        let n_pivot = {
+            let v = p_pivot - center;
+            if v.magnitude2() == 0.0 {
+                Vector3::unit_z()
+            } else {
+                v.normalize()
+            }
+        };
+
+        let mut eye = s.position.eye;
+        let mut target = s.position.target;
+        let mut up = s.position.up.normalize();
+
+        // Apply yaw
+        if yaw.abs() > 1e-9 {
+            let qy = Quaternion::from_axis_angle(n_pivot, Rad(yaw));
+            eye = rotate_about_point(qy, p_pivot, eye);
+            target = rotate_about_point(qy, p_pivot, target);
+            up = qy.rotate_vector(up).normalize();
+        }
+
+        // Apply pitch
+        if pitch.abs() > 1e-9 {
+            let view_dir = (target - eye).normalize();
+            let right = {
+                let r = view_dir.cross(up);
+                if r.magnitude2() > 0.0 {
+                    r.normalize()
+                } else {
+                    n_pivot.cross(view_dir).normalize()
+                }
+            };
+            let qp = Quaternion::from_axis_angle(right, Rad(pitch));
+            eye = rotate_about_point(qp, p_pivot, eye);
+            target = rotate_about_point(qp, p_pivot, target);
+            up = qp.rotate_vector(up).normalize();
+        }
+
+        // Enforce radius
+        let r_now = (eye - center)
+            .magnitude()
+            .clamp(MIN_EYE_RADIUS, MAX_EYE_RADIUS);
+        eye = center + (eye - center).normalize() * r_now;
+
+        // Commit
+        s.position.eye = eye;
+        s.position.target = target;
+        s.position.up = {
+            let view = s.position.target - s.position.eye;
+            let view_n = if view.magnitude2() > 0.0 {
+                view.normalize()
+            } else {
+                Vector3::new(0.0, 0.0, -1.0)
+            };
+            let right = view_n.cross(up);
+            if right.magnitude2() > 0.0 {
+                right.normalize().cross(view_n).normalize()
+            } else {
+                up.normalize()
+            }
+        };
+
+        s.rotation_pt = p_pivot;
     }
 
     /// Integrate momentum (if you still want inertial feel) & publish.

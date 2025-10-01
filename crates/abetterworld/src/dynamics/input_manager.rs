@@ -1,14 +1,10 @@
-use std::sync::Arc;
-
-use cgmath::{EuclideanSpace, Point2, Point3};
-
 use crate::{
-    dynamics::{
-        self, screen_to_world_on_ellipsoid, world_to_screen, Camera, CameraDynamicsData, Dynamics,
-        Ellipsoid,
-    },
+    dynamics::{screen_to_world_on_ellipsoid, Camera, CameraDynamicsData, Dynamics, Ellipsoid},
     world::{InputEvent, MouseButton},
+    Key,
 };
+use cgmath::{Point2, Point3};
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy)]
 pub struct ScreenPosition {
@@ -42,6 +38,8 @@ pub struct InputState {
     pub mouse_position: ScreenPosition,
     pub position_on_press: [ScreenPosition; MouseButton::Count as usize],
     pub mouse_wheel_delta: f64,
+
+    pub keyboard_states: [bool; Key::Count as usize], // simple key state tracking
 }
 
 impl InputState {
@@ -51,6 +49,7 @@ impl InputState {
             position_on_press: [ScreenPosition::default(); MouseButton::Count as usize],
             mouse_position: ScreenPosition::default(),
             mouse_wheel_delta: 0.0,
+            keyboard_states: [false; Key::Count as usize],
         }
     }
 
@@ -67,13 +66,24 @@ impl InputState {
     ) {
         match event {
             InputEvent::MouseMoved(x, y) => {
+                let last_mouse_position = self.mouse_position;
                 self.mouse_position = ScreenPosition::new(x as f64, y as f64, dynamics_data);
                 if self.mouse_button_states[MouseButton::Left as usize] {
-                    dynamics.rotate(
-                        dynamics_data,
-                        self.position_on_press[MouseButton::Left as usize],
-                        self.mouse_position,
-                    );
+                    if self.keyboard_states[Key::Shift as usize] {
+                        dynamics.pivot(
+                            dynamics_data,
+                            last_mouse_position,
+                            self.mouse_position,
+                            self.position_on_press[MouseButton::Left as usize].world_position,
+                        );
+                    } else {
+                        dynamics.rotate(
+                            dynamics_data,
+                            self.position_on_press[MouseButton::Left as usize],
+                            self.mouse_position,
+                            None,
+                        );
+                    }
                 }
             }
 
@@ -89,6 +99,13 @@ impl InputState {
 
             InputEvent::MouseButtonReleased(button) => {
                 self.mouse_button_states[button as usize] = false;
+            }
+
+            InputEvent::KeyPressed(key) => {
+                self.keyboard_states[key as usize] = true;
+            }
+            InputEvent::KeyReleased(key) => {
+                self.keyboard_states[key as usize] = false;
             }
 
             // keep your default/unhandled case:

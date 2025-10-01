@@ -87,6 +87,7 @@ pub enum Key {
     Escape,
     Meta,
     // Add more as needed
+    Count,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -275,7 +276,7 @@ impl World {
     pub fn update(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> Result<bool, AbwError> {
         let tick = self.private.clock.tick();
 
-        log::info!("Frame tick: {:?}", tick);
+        //log::info!("Frame tick: {:?}", tick);
 
         self.private.input_state.flush(&mut self.private.dynamics);
         self.private
