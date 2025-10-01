@@ -109,7 +109,10 @@ pub fn parse_glb(glb: &[u8]) -> Result<(Value, Vec<u8>), Box<std::io::Error>> {
     Ok((json, bin_buf))
 }
 
-pub fn build_meshes(json: &Value, bin: &[u8]) -> Result<Vec<OwnedDecodedMesh>, std::io::Error> {
+pub async fn build_meshes(
+    json: &Value,
+    bin: &[u8],
+) -> Result<Vec<OwnedDecodedMesh>, std::io::Error> {
     let mut results = Vec::new();
 
     if let Some(meshes) = json.get("meshes").and_then(|v| v.as_array()) {
@@ -140,7 +143,7 @@ pub fn build_meshes(json: &Value, bin: &[u8]) -> Result<Vec<OwnedDecodedMesh>, s
 
                                 if end <= bin.len() && start < end {
                                     // Use a slice directly, NOT .to_vec()
-                                    let mut mesh_data = decode(&bin[start..end])?;
+                                    let mut mesh_data = decode(&bin[start..end]).await?;
 
                                     if let Some(material_idx) =
                                         primitive.get("material").and_then(|v| v.as_u64())

@@ -77,5 +77,11 @@ pub async fn download_content(
         .insert(content_url.to_string(), content_type.clone(), bytes.clone())
         .await?;
 
+    log::info!(
+        "Downloaded content from {}, {} bytes",
+        content_url,
+        bytes.len()
+    );
+
     Ok((content_type, bytes))
 }

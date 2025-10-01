@@ -14,9 +14,10 @@ pub struct Vertex {
 #[derive(Clone, Debug, PartialEq)]
 pub struct DecodedMesh {
     pub vertices: *mut Vertex,
-    pub vertex_count: i32,
+    pub vertex_count: u32,
     pub indices: *mut u32,
-    pub index_count: i32,
+    pub index_count: u32,
+    pub job_id: u32,
 }
 unsafe impl Send for DecodedMesh {}
 unsafe impl Sync for DecodedMesh {}

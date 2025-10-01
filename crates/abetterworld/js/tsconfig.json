@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "target": "ES2020", // modern JS output
+    "module": "ES2020", // emit as ES modules
+    "moduleResolution": "Node", // how TS finds your imports
+    "outDir": "./dist", // where compiled JS goes
+    "rootDir": "./src", // where your TS source lives
+    "strict": true, // enable all strict type checks
+    "esModuleInterop": true, // smoother import/export
+    "skipLibCheck": true, // skip type checking .d.ts from node_modules
+    "lib": ["ES2020", "DOM", "WebWorker"] // DOM APIs + worker globals
+  },
+  "include": ["src/**/*"]
+}

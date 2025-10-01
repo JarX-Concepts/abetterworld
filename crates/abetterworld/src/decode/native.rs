@@ -11,18 +11,14 @@ impl Drop for InnerDecodedMesh {
     }
 }
 
-pub fn init() -> Result<(), std::io::Error> {
-    // No-op for native, as we don't need to initialize anything
-    Ok(())
-}
-
-pub fn decode(data: &[u8]) -> Result<OwnedDecodedMesh, std::io::Error> {
+pub async fn decode(data: &[u8]) -> Result<OwnedDecodedMesh, std::io::Error> {
     unsafe {
         let mut mesh = DecodedMesh {
             vertices: std::ptr::null_mut(),
             vertex_count: 0,
             indices: std::ptr::null_mut(),
             index_count: 0,
+            job_id: 0,
         };
 
         if !decode_draco_mesh_interleaved(data.as_ptr(), data.len(), &mut mesh) {

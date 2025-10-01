@@ -57,11 +57,12 @@ async fn download_content_for_tile(
     download_content_for_tile_shared(&key, load, content_type, bytes)
 }
 
-fn process_content_bytes(load: &mut Tile, bytes: Vec<u8>) -> Result<(), AbwError> {
+async fn process_content_bytes(load: &mut Tile, bytes: Vec<u8>) -> Result<(), AbwError> {
     let (gltf_json, gltf_bin) =
         parse_glb(&bytes).tile_loading(&format!("Failed to parse GLB: URI: {}", load.uri,))?;
 
     let meshes = build_meshes(&gltf_json, &gltf_bin)
+        .await
         .tile_loading(&format!("Failed to parse GLB meshes: URI: {}", load.uri,))?;
 
     let textures = parse_textures_from_gltf(&gltf_json, &gltf_bin)
@@ -128,7 +129,7 @@ pub async fn content_load(
     }
 
     let data = download_content_for_tile(source, client, &tile).await?;
-    process_content_bytes(tile, data)
+    process_content_bytes(tile, data).await
 }
 
 pub fn content_render_setup(

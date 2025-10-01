@@ -4,7 +4,6 @@ use cgmath::{Point3, Vector3};
 use crate::{
     cache::init_tileset_cache,
     content::{import_renderables, start_pager, Tile, TileManager},
-    decode::init,
     dynamics::{self, camera_config, Camera, Dynamics, InputState, PositionState},
     helpers::{
         channel::{channel, Receiver},
@@ -204,7 +203,6 @@ impl World {
 
         let (loader_tx, render_rx) = channel::<Tile>(MAX_NEW_TILES_PER_FRAME * 2);
 
-        let _ = init();
         let _ = start_pager(
             abw_config.source.clone(),
             Arc::clone(debug_camera_option.as_ref().unwrap_or(&camera)),
@@ -276,6 +274,8 @@ impl World {
     //#[instrument(skip(self, device, queue), fields(need_update = false))]
     pub fn update(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> Result<bool, AbwError> {
         let tick = self.private.clock.tick();
+
+        log::info!("Frame tick: {:?}", tick);
 
         self.private.input_state.flush(&mut self.private.dynamics);
         self.private

@@ -27,3 +27,5 @@ target/
 **/draco/**/CMakeCache.txt
 **/draco/**/Makefile
 **/draco/**/cmake_install.cmake
+
+**/node_modules/**

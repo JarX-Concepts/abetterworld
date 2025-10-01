@@ -352,11 +352,10 @@ impl TileSetImporter {
                             self.sender.send(new_tile).await.map_err(|_| {
                                 AbwError::TileLoading("Failed to send new tile".into())
                             })?;
-                        } else {
-                            // give up CPU time to other tasks
-                            #[cfg(target_arch = "wasm32")]
-                            TimeoutFuture::new(1).await;
                         }
+                        // give up CPU time to other tasks
+                        #[cfg(target_arch = "wasm32")]
+                        TimeoutFuture::new(1).await;
                     }
                 }
             }
