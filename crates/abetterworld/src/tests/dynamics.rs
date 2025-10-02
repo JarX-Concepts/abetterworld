@@ -3,8 +3,6 @@ mod tests {
     use std::sync::Arc;
 
     use cgmath::{InnerSpace, Point2, Point3};
-    use rand::rngs::StdRng;
-    use rand::{Rng, SeedableRng};
 
     use crate::render::DepthMode;
     use crate::{
@@ -54,20 +52,37 @@ mod tests {
         )
         .expect("baseline world pos");
 
-        // Deterministic RNG (so failures reproduce)
-        let mut rng = StdRng::seed_from_u64(42);
-
         let tol_m = 1.0; // 1 m tolerance
 
-        // Jitter the mouse ~20 frames, 0..5 px each axis (random sign), and verify lock
-        for i in 0..20 {
-            // Random 0..=5, random sign
-            let dx = (rng.gen_range(0.0..=5.0)) * if rng.gen_bool(0.5) { 1.0 } else { -1.0 };
-            let dy = (rng.gen_range(0.0..=5.0)) * if rng.gen_bool(0.5) { 1.0 } else { -1.0 };
+        // Deterministic sequence of dx/dy offsets (simulated jitter)
+        let offsets: &[(f64, f64)] = &[
+            (1.0, 1.0),
+            (2.0, -1.0),
+            (-1.0, 2.0),
+            (-2.0, -2.0),
+            (0.5, 0.5),
+            (1.5, -0.5),
+            (-0.5, 1.5),
+            (-1.5, -1.5),
+            (3.0, 1.0),
+            (-3.0, -1.0),
+            (2.0, 2.0),
+            (-2.0, -2.0),
+            (0.0, 4.0),
+            (4.0, 0.0),
+            (-4.0, 0.0),
+            (0.0, -4.0),
+            (5.0, 5.0),
+            (-5.0, 5.0),
+            (5.0, -5.0),
+            (-5.0, -5.0),
+        ];
+
+        for (i, (dx, dy)) in offsets.iter().enumerate() {
             mouse.0 += dx;
             mouse.1 += dy;
 
-            // Feed input + integrate one frame (no momentum assumed)
+            // Feed input + integrate one frame
             im.queue_event(
                 &camera.dynamics(),
                 &mut model,
@@ -77,7 +92,7 @@ mod tests {
             model.update(&core::time::Duration::from_millis(16), &camera);
             camera.update(None, DepthMode::ReverseZ);
 
-            // World position under the *new* cursor location after the rotation
+            // World position under the *new* cursor location
             let world_pos = screen_to_world_on_ellipsoid(
                 Point2::new(mouse.0, mouse.1),
                 &camera.dynamics(),
@@ -88,7 +103,6 @@ mod tests {
 
             let drift = (world_pos - baseline).magnitude();
 
-            // Helpful debug print on failure thresholds
             if drift > tol_m {
                 eprintln!(
                     "Frame {}: drift {:.9} m exceeds tol {:.9} m; mouse=({:.1},{:.1}) d=({:+.1},{:+.1}) world={:?} baseline={:?}",
@@ -105,7 +119,7 @@ mod tests {
             );
         }
 
-        // Release mouse (optional; ensures clean input state for other tests)
+        // Release mouse
         im.queue_event(
             &camera.dynamics(),
             &mut model,
