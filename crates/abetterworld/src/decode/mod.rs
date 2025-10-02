@@ -7,7 +7,7 @@ mod native;
 mod wasm;
 
 #[cfg(target_arch = "wasm32")]
-pub use wasm::decode;
+pub use wasm::DracoClient;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use native::decode;
+pub use native::DracoClient;

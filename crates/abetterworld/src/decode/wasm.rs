@@ -142,46 +142,39 @@ impl DracoClient {
 
         (fut, cancel_fn)
     }
+
+    pub async fn decode(&self, data: &[u8]) -> Result<OwnedDecodedMesh, std::io::Error> {
+        log::info!("WASM decode of {} bytes", data.len());
+        // Borrow the client briefly from the thread-local storage to start the decode.
+        // The returned future does not hold a long-lived borrow of the client, so this
+        // short borrow is safe.
+        let (fut, _cancel) = self.decode_with_cancel(data);
+
+        match fut.await {
+            Ok(mesh) => {
+                log::info!(
+                    "WASM decode complete: {} vertices, {} indices",
+                    mesh.vertex_count,
+                    mesh.index_count
+                );
+
+                Ok(OwnedDecodedMesh {
+                    inner: std::sync::Arc::new(crate::decode::types::InnerDecodedMesh {
+                        data: mesh,
+                    }),
+                    material_index: None,
+                })
+            }
+            Err(e) => Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Draco decode failed: {:?}", e),
+            )),
+        }
+    }
 }
 
 impl Drop for DracoClient {
     fn drop(&mut self) {
         self.inner.dispose();
-    }
-}
-
-thread_local! {
-    static CLIENT: std::cell::RefCell<Option<DracoClient>> =
-        std::cell::RefCell::new(Some(DracoClient::new("/pkg/draco-wrapper.js")));
-}
-
-pub async fn decode(data: &[u8]) -> Result<OwnedDecodedMesh, std::io::Error> {
-    log::info!("WASM decode of {} bytes", data.len());
-    // Borrow the client briefly from the thread-local storage to start the decode.
-    // The returned future does not hold a long-lived borrow of the client, so this
-    // short borrow is safe.
-    let (fut, _cancel) = CLIENT.with(|c| {
-        let client_ref = c.borrow();
-        let client = client_ref.as_ref().expect("Draco client missing");
-        client.decode_with_cancel(data)
-    });
-
-    match fut.await {
-        Ok(mesh) => {
-            log::info!(
-                "WASM decode complete: {} vertices, {} indices",
-                mesh.vertex_count,
-                mesh.index_count
-            );
-
-            Ok(OwnedDecodedMesh {
-                inner: std::sync::Arc::new(crate::decode::types::InnerDecodedMesh { data: mesh }),
-                material_index: None,
-            })
-        }
-        Err(e) => Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("Draco decode failed: {:?}", e),
-        )),
     }
 }
