@@ -140,12 +140,13 @@ pub extern "C" fn Java_com_jarxconcepts_abetterworld_Renderer_nativeInitRenderer
     .expect("No suitable adapter");
 
     // 5) Device/Queue
+    let mut limits = wgpu::Limits::downlevel_defaults();
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("Android Device"),
         required_features: wgpu::Features::empty(),
-        required_limits: wgpu::Limits::downlevel_webgl2_defaults(),
+        required_limits: limits.using_resolution(adapter.limits()),
         memory_hints: wgpu::MemoryHints::Performance,
-        trace: wgpu::Trace::Off, // consider enabling later
+        trace: wgpu::Trace::Off,
     }))
     .unwrap();
 
@@ -311,14 +312,7 @@ pub extern "C" fn Java_com_jarxconcepts_abetterworld_Renderer_nativeRender(
                 },
                 depth_slice: None,
             })],
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: g.abw.get_depth_view(),
-                depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(1.0), // far plane
-                    store: wgpu::StoreOp::Discard,
-                }),
-                stencil_ops: None,
-            }),
+            depth_stencil_attachment: Some(g.abw.get_depth_attachment()),
 
             occlusion_query_set: None,
             timestamp_writes: None,

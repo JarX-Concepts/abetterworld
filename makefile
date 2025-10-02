@@ -1,10 +1,12 @@
 .PHONY: build-web run-web
 
 build-web-debug:
+	cd crates/abetterworld/js && npm install && npm run build && cd ../..
 	cargo build --target wasm32-unknown-unknown --manifest-path bindings/web/Cargo.toml
 	wasm-bindgen target/wasm32-unknown-unknown/debug/abw_web.wasm --out-dir bindings/web/debug/pkg --target web
 
 build-web-release:
+	cd crates/abetterworld/js && npm install && npm run build && cd ../..
 	cargo build --target wasm32-unknown-unknown --manifest-path bindings/web/Cargo.toml --release
 	wasm-bindgen target/wasm32-unknown-unknown/release/abw_web.wasm --out-dir bindings/web/release/pkg --target web
 
@@ -13,12 +15,14 @@ start-web-debug:
 	$(MAKE) build-web-debug
 	mkdir -p examples/web/pkg
 	cp -r bindings/web/debug/pkg/* examples/web/pkg
+	cp -r crates/abetterworld/js/dist/draco-wrapper.js examples/web/pkg
 	cd examples/web && python3 -m http.server 8080
 
 start-web-release:
 	$(MAKE) build-web-release
 	mkdir -p examples/web/pkg
 	cp -r bindings/web/release/pkg/* examples/web/pkg
+	cp -r crates/abetterworld/js/dist/draco-wrapper.js examples/web/pkg
 	cd examples/web && python3 -m http.server 8080
 
 test-web:

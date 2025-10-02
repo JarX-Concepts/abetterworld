@@ -12,7 +12,6 @@ mod tests {
         content::{
             pager_native::build_client, parser_iteration, Tile, TileManager, TileSetImporter,
         },
-        decode::init,
         dynamics::init_camera,
         helpers::{channel::channel, PlatformAwait},
     };
@@ -35,7 +34,6 @@ mod tests {
 
         eprintln!("Starting paging test");
 
-        let _ = init();
         let mut pager = TileSetImporter::new(client, loader_tx.clone(), tile_content);
 
         let _ = parser_iteration(

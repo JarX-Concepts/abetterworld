@@ -3,8 +3,6 @@ mod tests {
     use std::sync::Arc;
 
     use cgmath::{InnerSpace, Point2, Point3};
-    use rand::rngs::StdRng;
-    use rand::{Rng, SeedableRng};
 
     use crate::dynamics::world_to_screen_proj;
     use crate::{
@@ -73,16 +71,35 @@ mod tests {
             check_pos,
         );
 
-        // Deterministic RNG (so failures reproduce)
-        let mut rng = StdRng::seed_from_u64(42);
-
         let tol_m = 1.0; // 1 m tolerance
 
-        // Jitter the mouse ~20 frames, 0..5 px each axis (random sign), and verify lock
-        for i in 0..20 {
-            // Random 0..=5, random sign
-            let dx = (rng.gen_range(0.0..=5.0)) * if rng.gen_bool(0.5) { 1.0 } else { -1.0 };
-            let dy = (rng.gen_range(0.0..=5.0)) * if rng.gen_bool(0.5) { 1.0 } else { -1.0 };
+        // Deterministic sequence of ~20 small jitter offsets (px)
+        // (keeps prior magnitude characteristics: roughly within ±5 px)
+        let offsets: &[(f64, f64)] = &[
+            (1.0, 1.0),
+            (2.0, -1.0),
+            (-1.0, 2.5),
+            (-2.0, -2.0),
+            (0.5, 0.5),
+            (1.5, -0.5),
+            (-0.5, 1.5),
+            (-1.5, -1.5),
+            (3.0, 1.0),
+            (-3.0, -1.0),
+            (2.0, 2.0),
+            (-2.0, -2.0),
+            (0.0, 4.0),
+            (4.0, 0.0),
+            (-4.0, 0.0),
+            (0.0, -4.0),
+            (5.0, 5.0),
+            (-5.0, 5.0),
+            (5.0, -5.0),
+            (-5.0, -5.0),
+        ];
+
+        // Apply each deterministic offset and verify the lock
+        for (i, (dx, dy)) in offsets.iter().enumerate() {
             mouse.x += dx;
             mouse.y += dy;
 
@@ -108,7 +125,6 @@ mod tests {
 
             let drift = (world_pos - baseline).magnitude();
 
-            // Helpful debug print on failure thresholds
             if drift > tol_m {
                 eprintln!(
                     "Frame {}: drift {:.9} m exceeds tol {:.9} m; mouse=({:.1},{:.1}) d=({:+.1},{:+.1}) world={:?} baseline={:?}",

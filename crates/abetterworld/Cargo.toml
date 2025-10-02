@@ -20,9 +20,6 @@ wasm = 'all(target_arch = "wasm32", target_os = "unknown")'
 paging_test = []
 profile-tracy = []
 
-[dev-dependencies]
-rand = "0.8"
-
 [dependencies]
 wgpu = { workspace = true }
 wgpu-profiler = { version = "0.24", optional = true, features = ["tracy"] }
@@ -88,11 +85,3 @@ tracy-client     = { version = "=0.18.0", optional = false, default-features = f
 tracing-tracy    = { version = "=0.11.4", optional = false }
 tracing = "0.1"
 tracing-subscriber = "0.3"
-
-[target.wasm32-unknown-unknown]
-rustflags = ["-C", "target-feature=+atomics"]
-# You also need `bulk-memory` for Rust < 1.87. For 1.87+ it's enabled by default
-# rustflags = ["-C", "target-feature=+atomics,+bulk-memory"]
-
-[unstable]
-build-std = ["panic_abort", "std"]

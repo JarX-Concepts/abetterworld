@@ -4,7 +4,7 @@ import android.view.Surface
 
 object Renderer {
     init {
-        System.loadLibrary("abetterworld_android")
+        System.loadLibrary("abw_android")
     }
 
     external fun nativeCreateState(): Long

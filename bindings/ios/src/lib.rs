@@ -118,7 +118,7 @@ pub extern "C" fn abetterworld_ios_init(
     }))
     .expect("Failed to create device");
 
-    let texture_format = wgpu::TextureFormat::Rgba8Unorm;
+    let texture_format = wgpu::TextureFormat::Bgra8UnormSrgb;
 
     // Create a render texture with drawable size
     let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -300,14 +300,7 @@ pub extern "C" fn abetterworld_ios_render(ptr: *mut ABetterWorldiOS) {
                 depth_slice: None,
             })],
 
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: state.abw.get_depth_view(),
-                depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(1.0), // far plane
-                    store: wgpu::StoreOp::Discard,
-                }),
-                stencil_ops: None,
-            }),
+            depth_stencil_attachment: Some(state.abw.get_depth_attachment()),
 
             timestamp_writes: None,
             occlusion_query_set: None,

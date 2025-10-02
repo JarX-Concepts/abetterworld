@@ -37,11 +37,14 @@ public class ABetterWorldRenderer {
         print("Initializing with dimensions: \(width) x \(height)")
         
         self.metalLayer = layer
-        layer.pixelFormat = .bgra8Unorm
+        layer.pixelFormat = .bgra8Unorm_srgb
+        if layer.responds(to: #selector(setter: CAMetalLayer.colorspace)) {
+            layer.colorspace = CGColorSpace(name: CGColorSpace.sRGB)
+        }
         layer.framebufferOnly = false
 
         // Add these debugging settings
-        layer.backgroundColor = CGColor(red: 1.0, green: 0.0, blue: 0.0, alpha: 0.3) // Red tint
+        layer.backgroundColor = CGColor(red: 0.0, green: 0.0, blue: 0.0, alpha: 0.3) // Red tint
         print("Layer frame: \(layer.frame)")
         print("Layer bounds: \(layer.bounds)")
         

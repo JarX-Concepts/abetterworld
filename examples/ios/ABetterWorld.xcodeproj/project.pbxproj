@@ -7,12 +7,12 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		0F896ECF2E5A335E008F75AF /* abw_ios.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0F896ECE2E5A335E008F75AF /* abw_ios.xcframework */; };
+		0FCBC7932E8EDE0700A2E282 /* abw_ios.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0FCBC7922E8EDE0700A2E282 /* abw_ios.xcframework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		0F896ECE2E5A335E008F75AF /* abw_ios.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = abw_ios.xcframework; path = ../../target/xcframework/release/abw_ios.xcframework; sourceTree = "<group>"; };
 		0F8D58A22E43C8D300903B7D /* ABetterWorld.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ABetterWorld.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		0FCBC7922E8EDE0700A2E282 /* abw_ios.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = abw_ios.xcframework; path = ../../target/xcframework/release/abw_ios.xcframework; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -41,7 +41,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				0F896ECF2E5A335E008F75AF /* abw_ios.xcframework in Frameworks */,
+				0FCBC7932E8EDE0700A2E282 /* abw_ios.xcframework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -68,7 +68,7 @@
 		0F8D58D42E43CC8000903B7D /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
-				0F896ECE2E5A335E008F75AF /* abw_ios.xcframework */,
+				0FCBC7922E8EDE0700A2E282 /* abw_ios.xcframework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
