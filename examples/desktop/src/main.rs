@@ -12,8 +12,8 @@ use winit::{
 };
 
 const DEBUG_PATH: bool = false;
-const DEBUG_CAMERA: bool = false;
-const DEBUG_VOLUMES: bool = true;
+const DEBUG_CAMERA: bool = true;
+const DEBUG_VOLUMES: bool = false;
 
 // --- your existing imports ---
 use abetterworld::{get_debug_config, InputEvent, Key, MouseButton, World};

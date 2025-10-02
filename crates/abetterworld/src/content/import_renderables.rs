@@ -28,7 +28,7 @@ pub fn import_renderables(
     loop {
         // Respect the budget before starting another expensive setup.
         if start.elapsed() >= budget {
-            break;
+            //break;
         }
 
         match receiver.try_recv() {

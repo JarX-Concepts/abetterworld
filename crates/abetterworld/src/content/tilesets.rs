@@ -168,7 +168,7 @@ pub async fn parser_thread(
     let mut pager = TileSetImporter::new(client, pager_tx.clone(), tile_mgr);
 
     let mut last_cam_gen = 0;
-    {
+    loop {
         //let span = span!(Level::TRACE, "pager pass");
         //let _enter = span.enter();
 

@@ -2,7 +2,7 @@
 mod tests {
     use std::sync::Arc;
 
-    pub const GOOGLE_API_KEY: &str = "AIzaSyD526Czd1rD44BZE2d2R70-fBEdDdf6vZQ";
+    pub const GOOGLE_API_KEY: &str = "Google Key";
     pub const GOOGLE_API_URL: &str = "https://tile.googleapis.com/v1/3dtiles/root.json";
 
     use cgmath::Point3;

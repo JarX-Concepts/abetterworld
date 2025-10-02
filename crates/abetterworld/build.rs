@@ -36,6 +36,7 @@ fn main() {
         .define("DRACO_JS_GLUE", "OFF")
         .define("DRACO_TESTS", "OFF")
         .define("DRACO_ANIMATION_ENCODING", "OFF")
+        .define("DRACO_BUILD_TOOLS", "OFF") // <-- add this
         .define("CMAKE_BUILD_TYPE", "Release")
         .cxxflag("-std=c++17")
         .out_dir(&out_dir);
@@ -66,8 +67,15 @@ fn main() {
             .define("CMAKE_SYSTEM_PROCESSOR", arch)
             .generator("Unix Makefiles");
     } else if is_macos {
+        // Make sure cmake picks the right min version (overrides polluted env)
+        env::set_var("MACOSX_DEPLOYMENT_TARGET", "15.0");
+        // (Optional but helpful) clear stray SDKROOT if set
+        env::remove_var("SDKROOT");
+
         let sdk = apple_sdk_path("macosx");
+
         cmake_cfg
+            .always_configure(true) // <-- ensure CMakeCache is refreshed
             .define("CMAKE_SYSTEM_NAME", "Darwin")
             .define("CMAKE_OSX_SYSROOT", &sdk)
             .define("CMAKE_OSX_DEPLOYMENT_TARGET", "15.0")
@@ -136,7 +144,8 @@ fn main() {
             .flag(&sdk)
             .flag("-arch")
             .flag("arm64")
-            .flag("-mmacosx-version-min=15.0");
+            .flag("-stdlib=libc++") // <-- add
+            .flag("-mmacosx-version-min=15.0"); // <-- add
     } else if is_android {
         let cc_target = if target.starts_with("aarch64") {
             "aarch64-linux-android"
