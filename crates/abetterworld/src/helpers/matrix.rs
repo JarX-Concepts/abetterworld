@@ -25,42 +25,39 @@ pub fn uniform_size(min_uniform_buffer_offset_alignment: usize) -> usize {
     align_to(uniform_size, min_uniform_buffer_offset_alignment)
 }
 
-/// Convert f64 Matrix4 to Uniforms (offset + f32 transform matrix)
 pub fn decompose_matrix64_to_uniform(mat: &Matrix4<f64>) -> Uniforms {
-    let translation = Vector3::new(mat.w.x, mat.w.y, mat.w.z);
-    //let offset = translation.map(|v| v as f32);
-    let offset = Vector3::new(0.0, 0.0, 0.0);
+    #[inline]
+    fn f32_cast(x: f64) -> f32 {
+        let y = x as f32;
+        debug_assert!(x.is_finite(), "non-finite in uniform matrix");
+        y
+    }
 
-    // Subtract the coarse offset from the translation
-    let offset_as_f64 = Vector3::new(offset.x as f64, offset.y as f64, offset.z as f64);
-    let _remainder_translation = translation - offset_as_f64;
-
-    // Convert the whole matrix to f32
     let mat32 = [
         [
-            mat.x.x as f32,
-            mat.x.y as f32,
-            mat.x.z as f32,
-            mat.x.w as f32,
-        ],
+            f32_cast(mat.x.x),
+            f32_cast(mat.x.y),
+            f32_cast(mat.x.z),
+            f32_cast(mat.x.w),
+        ], // col 0
         [
-            mat.y.x as f32,
-            mat.y.y as f32,
-            mat.y.z as f32,
-            mat.y.w as f32,
-        ],
+            f32_cast(mat.y.x),
+            f32_cast(mat.y.y),
+            f32_cast(mat.y.z),
+            f32_cast(mat.y.w),
+        ], // col 1
         [
-            mat.z.x as f32,
-            mat.z.y as f32,
-            mat.z.z as f32,
-            mat.z.w as f32,
-        ],
+            f32_cast(mat.z.x),
+            f32_cast(mat.z.y),
+            f32_cast(mat.z.z),
+            f32_cast(mat.z.w),
+        ], // col 2
         [
-            mat.w.x as f32,
-            mat.w.y as f32,
-            mat.w.z as f32,
-            mat.w.w as f32,
-        ],
+            f32_cast(mat.w.x),
+            f32_cast(mat.w.y),
+            f32_cast(mat.w.z),
+            f32_cast(mat.w.w),
+        ], // col 3
     ];
 
     Uniforms { mat: mat32 }
@@ -78,10 +75,12 @@ pub fn recompose_uniform_to_matrix64(uniforms: &Uniforms) -> Matrix4<f64> {
     mat64
 }
 
-pub fn extract_frustum_planes(mat: &Matrix4<f64>) -> [(Vector4<f64>, Vector3<f64>, f64); 6] {
+pub fn extract_frustum_planes_reverse_z(
+    mat: &Matrix4<f64>,
+) -> [(Vector4<f64>, Vector3<f64>, f64); 5] {
     let rows = [mat.row(0), mat.row(1), mat.row(2), mat.row(3)];
 
-    let mut planes = [(Vector4::zero(), Vector3::zero(), 0.0); 6];
+    let mut planes = [(Vector4::zero(), Vector3::zero(), 0.0); 5];
 
     // Left
     planes[0].0 = rows[3] + rows[0];
@@ -93,22 +92,22 @@ pub fn extract_frustum_planes(mat: &Matrix4<f64>) -> [(Vector4<f64>, Vector3<f64
     planes[3].0 = rows[3] - rows[1];
     // Near
     planes[4].0 = rows[3] + rows[2];
-    // Far
-    planes[5].0 = rows[3] - rows[2];
 
     // Normalize planes and extract (normal, d)
     for plane in &mut planes {
         let normal = Vector3::new(plane.0.x, plane.0.y, plane.0.z);
         let len = normal.magnitude();
-        plane.1 = normal / len;
-        plane.2 = plane.0.w / len;
+        if len > 0.0 {
+            plane.1 = normal / len;
+            plane.2 = plane.0.w / len;
+        }
     }
 
     planes
 }
 
 pub fn is_bounding_volume_visible(
-    planes: &[(Vector4<f64>, Vector3<f64>, f64); 6],
+    planes: &[(Vector4<f64>, Vector3<f64>, f64); 5], // L,R,B,T,Near (no Far)
     bb: &BoundingBox,
 ) -> bool {
     for &(_, normal, d) in planes {
@@ -117,7 +116,6 @@ pub fn is_bounding_volume_visible(
             if normal.y >= 0.0 { bb.max.y } else { bb.min.y },
             if normal.z >= 0.0 { bb.max.z } else { bb.min.z },
         );
-
         let n = Vector3::new(
             if normal.x < 0.0 { bb.max.x } else { bb.min.x },
             if normal.y < 0.0 { bb.max.y } else { bb.min.y },
@@ -128,19 +126,16 @@ pub fn is_bounding_volume_visible(
         let dp_n = normal.dot(n) + d;
 
         if dp_p < 0.0 {
-            // Fully outside
-            return false;
+            return false; // fully outside this plane
         }
-
         if dp_n < 0.0 {
-            // Intersecting → run full corner test
+            // Intersecting → run corner test for certainty
             let all_outside = bb.corners.iter().all(|c| normal.dot(*c) + d < 0.0);
             if all_outside {
                 return false;
             }
         }
     }
-
     true
 }
 

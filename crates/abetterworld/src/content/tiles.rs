@@ -7,6 +7,7 @@ use crate::content::{
 // ─── Crate: content::types ─────────────────────────────────────────────────────
 use crate::content::types::{Mesh, RenderableState, Tile, TileState};
 
+use crate::decode::DracoClient;
 use crate::helpers::channel::{Receiver, Sender};
 // ─── Crate: helpers ────────────────────────────────────────────────────────────
 use crate::helpers::{AbwError, TileLoadingContext};
@@ -57,11 +58,16 @@ async fn download_content_for_tile(
     download_content_for_tile_shared(&key, load, content_type, bytes)
 }
 
-fn process_content_bytes(load: &mut Tile, bytes: Vec<u8>) -> Result<(), AbwError> {
+async fn process_content_bytes(
+    decoder: &DracoClient,
+    load: &mut Tile,
+    bytes: Vec<u8>,
+) -> Result<(), AbwError> {
     let (gltf_json, gltf_bin) =
         parse_glb(&bytes).tile_loading(&format!("Failed to parse GLB: URI: {}", load.uri,))?;
 
-    let meshes = build_meshes(&gltf_json, &gltf_bin)
+    let meshes = build_meshes(decoder, &gltf_json, &gltf_bin)
+        .await
         .tile_loading(&format!("Failed to parse GLB meshes: URI: {}", load.uri,))?;
 
     let textures = parse_textures_from_gltf(&gltf_json, &gltf_bin)
@@ -88,9 +94,10 @@ pub async fn load_content(
     client: &Client,
     tile: &mut Tile,
     render_time: &mut Sender<Tile>,
+    decoder: &DracoClient,
 ) -> Result<(), AbwError> {
     if tile.state == TileState::ToLoad {
-        if let Err(e) = content_load(&source, &client, tile).await {
+        if let Err(e) = content_load(&source, &client, tile, decoder).await {
             log::error!("load failed: {e}");
             return Err(e);
         }
@@ -108,9 +115,10 @@ pub async fn wait_and_load_content(
     client: &Client,
     rx: &mut Receiver<Tile>,
     render_time: &mut Sender<Tile>,
+    decoder: &DracoClient,
 ) -> Result<(), AbwError> {
     while let Ok(mut tile) = rx.recv().await {
-        load_content(source, client, &mut tile, render_time).await?;
+        load_content(source, client, &mut tile, render_time, decoder).await?;
     }
     Ok(())
 }
@@ -119,6 +127,7 @@ pub async fn content_load(
     source: &Source,
     client: &Client,
     tile: &mut Tile,
+    decoder: &DracoClient,
 ) -> Result<(), AbwError> {
     if tile.state != TileState::ToLoad {
         return Err(AbwError::TileLoading(format!(
@@ -128,7 +137,7 @@ pub async fn content_load(
     }
 
     let data = download_content_for_tile(source, client, &tile).await?;
-    process_content_bytes(tile, data)
+    process_content_bytes(decoder, tile, data).await
 }
 
 pub fn content_render_setup(

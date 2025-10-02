@@ -1,5 +1,62 @@
 use cgmath::{Matrix3, Point3, Rad, Vector3};
 
+const A: f64 = 6378137.0; // semi-major axis (m)
+const F: f64 = 1.0 / 298.257_223_563; // flattening
+const B: f64 = A * (1.0 - F); // semi-minor axis
+const E2: f64 = (A * A - B * B) / (A * A); // first eccentricity^2
+const EP2: f64 = (A * A - B * B) / (B * B); // second eccentricity^2
+
+/// Convert ECEF (meters) to geodetic (lat, lon in degrees, h_ellip in meters).
+/// Uses Bowring’s closed-form with one refinement; robust for all latitudes.
+pub fn ecef_to_lla_wgs84(ecef: Point3<f64>) -> (f64, f64, f64) {
+    let x = ecef.x;
+    let y = ecef.y;
+    let z = ecef.z;
+
+    let p = (x * x + y * y).sqrt();
+    let lon = y.atan2(x); // [-π, π]
+
+    // Bowring’s formula for initial latitude
+    let theta = (z * A).atan2(p * B);
+    let sin_theta = theta.sin();
+    let cos_theta = theta.cos();
+
+    // Geodetic latitude
+    let lat = (z + EP2 * B * sin_theta.powi(3)).atan2(p - E2 * A * cos_theta.powi(3));
+
+    // Prime vertical radius of curvature
+    let sin_lat = lat.sin();
+    let n = A / (1.0 - E2 * sin_lat * sin_lat).sqrt();
+
+    // Ellipsoidal height (above WGS-84)
+    let h = p / lat.cos() - n;
+
+    (lat.to_degrees(), normalize_lon_deg(lon.to_degrees()), h)
+}
+
+fn normalize_lon_deg(mut lon: f64) -> f64 {
+    // Map to (-180, 180]
+    lon = ((lon + 180.0) % 360.0 + 360.0) % 360.0 - 180.0;
+    lon
+}
+
+/// Orthometric (MSL) height = ellipsoidal height − geoid undulation.
+/// If you have a geoid model (e.g., EGM2008), pass a function that returns N(lat, lon) in meters.
+/// If not, this returns `None` and you can fall back to ellipsoidal height.
+pub fn ellipsoidal_to_msl(
+    lat_deg: f64,
+    lon_deg: f64,
+    h_ellip_m: f64,
+    geoid_undulation_m: Option<fn(f64, f64) -> f64>,
+) -> Option<f64> {
+    if let Some(geoid_fn) = geoid_undulation_m {
+        let n = geoid_fn(lat_deg, lon_deg);
+        Some(h_ellip_m - n)
+    } else {
+        None // without a geoid model, you can’t reliably estimate MSL
+    }
+}
+
 /// Converts geodetic coordinates (latitude, longitude, elevation) to Y-up ECEF.
 /// Assumes WGS84 ellipsoid.
 pub fn geodetic_to_ecef_y_up(lat_deg: f64, lon_deg: f64, elevation_m: f64) -> (f64, f64, f64) {

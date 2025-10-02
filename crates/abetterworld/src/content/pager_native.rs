@@ -7,12 +7,12 @@ use crate::{
     },
     dynamics::Camera,
     helpers::{
-        channel::{channel, Receiver, Sender},
+        channel::{channel, Sender},
         AbwError, PlatformAwait,
     },
     set_thread_name, Source,
 };
-use std::{sync::Arc, thread, time::Duration};
+use std::{sync::Arc, thread};
 
 pub fn start_pager(
     source: Source,
@@ -22,7 +22,7 @@ pub fn start_pager(
 ) -> Result<(), AbwError> {
     const LOADER_THREADS: usize = 12;
     // unbounded: pager -> prioritizer
-    let (pager_tx, mut pager_rx) = channel::<Tile>(1000);
+    let (pager_tx, mut pager_rx) = channel::<Tile>(5000);
     // bounded:   prioritizer -> workers  (back-pressure)
     let (mut loader_tx, loader_rx) = channel::<Tile>(LOADER_THREADS * 2);
     let client = build_client(LOADER_THREADS)?;
@@ -79,6 +79,6 @@ pub fn start_pager(
     Ok(())
 }
 
-fn build_client(threads: usize) -> Result<Client, AbwError> {
+pub fn build_client(threads: usize) -> Result<Client, AbwError> {
     Client::new(threads)
 }

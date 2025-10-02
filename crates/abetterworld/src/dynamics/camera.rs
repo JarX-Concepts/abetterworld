@@ -1,8 +1,9 @@
 use cgmath::{
-    Deg, EuclideanSpace, InnerSpace, Matrix4, Point3, SquareMatrix, Vector3, Vector4, Zero,
+    num_traits::Float, Deg, EuclideanSpace, InnerSpace, Matrix, Matrix4, Point3, SquareMatrix,
+    Vector3, Vector4, Zero,
 };
 
-pub type FrustumPlanes = [(Vector4<f64>, Vector3<f64>, f64); 6];
+pub type FrustumPlanes = [(Vector4<f64>, Vector3<f64>, f64); 5];
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
     Arc, RwLock,
@@ -11,10 +12,9 @@ use std::sync::{
 use crate::{
     dynamics::{proj_reverse_z_infinite_f64, proj_reverse_z_infinite_inv_f64},
     helpers::{
-        decompose_matrix64_to_uniform, extract_frustum_planes, geodetic_to_ecef_z_up,
-        remove_translation, Uniforms,
+        decompose_matrix64_to_uniform, ecef_to_lla_wgs84, extract_frustum_planes_reverse_z,
+        geodetic_to_ecef_z_up, remove_translation, Uniforms,
     },
-    render::DepthMode,
     Config,
 };
 
@@ -25,14 +25,14 @@ const NEAR_MAX: f64 = 10_000.0; // Upper limit for near to avoid blowing out nea
 
 #[derive(Debug, Clone)]
 pub struct CameraRefinementData {
-    pub position: Vector3<f64>,
+    pub position: Point3<f64>,
     pub far: f64,
     pub fovy: Deg<f64>,
 }
 impl CameraRefinementData {
     fn default() -> CameraRefinementData {
         CameraRefinementData {
-            position: Vector3::zero(),
+            position: Point3::new(0.0, 0.0, 0.0),
             far: 0.0,
             fovy: Deg(45.0),
         }
@@ -53,7 +53,7 @@ pub struct CameraDerivedMatrices {
 impl CameraDerivedMatrices {
     fn default() -> CameraDerivedMatrices {
         CameraDerivedMatrices {
-            planes: [(Vector4::zero(), Vector3::zero(), 0.0); 6],
+            planes: [(Vector4::zero(), Vector3::zero(), 0.0); 5],
             proj_view: Matrix4::identity(),
             proj_view_inv: Matrix4::identity(),
             uniform: Uniforms::default(),
@@ -67,6 +67,8 @@ impl CameraDerivedMatrices {
 #[derive(Debug, Clone)]
 pub struct CameraDynamicsData {
     pub proj: Matrix4<f64>,
+    pub proj_inv: Matrix4<f64>,
+    pub view_inv: Matrix4<f64>,
     pub proj_view_inv: Matrix4<f64>,
     pub proj_view: Matrix4<f64>,
     pub eye: Point3<f64>,
@@ -78,6 +80,8 @@ impl CameraDynamicsData {
     fn default() -> CameraDynamicsData {
         CameraDynamicsData {
             proj: Matrix4::identity(),
+            proj_inv: Matrix4::identity(),
+            view_inv: Matrix4::identity(),
             proj_view: Matrix4::identity(),
             proj_view_inv: Matrix4::identity(),
             eye: Point3::new(0.0, 0.0, 0.0),
@@ -167,12 +171,8 @@ impl Camera {
         self.generation.load(Ordering::Relaxed)
     }
 
-    pub fn update(
-        &self,
-        distance_to_geom: Option<f64>,
-        depth_mode: DepthMode,
-    ) -> (Point3<f64>, Uniforms, bool) {
-        // Fast path: read-only, with minimal lock time.
+    pub fn update(&self) -> (Point3<f64>, Uniforms, bool) {
+        // Fast path
         if !self.dirty.load(Ordering::Acquire) {
             let eye = {
                 let us = self.user_state.read().unwrap();
@@ -185,103 +185,123 @@ impl Camera {
             return (eye, uniform, false);
         }
 
-        // ---- 1) Snapshot user_state under a short read lock, then drop it. ----
-        let (position, near_override, far_override, fovy, aspect, viewport_wh) = {
+        // ---- 1) Snapshot user_state ----
+        let (position, near_override, _far_override, fovy, aspect, viewport_wh) = {
             let us = self.user_state.read().unwrap();
             (
                 us.position,
-                us.near,   // Option<f64>
-                us.far,    // Option<f64> (ignored for reverse-Z)
-                us.fovy,   // Deg<f64>
-                us.aspect, // f64
+                us.near,
+                us.far, // ignored for reverse-Z
+                us.fovy,
+                us.aspect,
                 us.viewport_wh,
             )
         };
         let eye = position.eye;
         let target = position.target;
         let up = position.up;
+        let (vw, vh) = viewport_wh;
 
-        // ---- 2) Do all heavy math lock-free. ----
-        let cam_world = eye.to_vec();
-        let d = cam_world.magnitude();
-
-        let altitude = (d - EARTH_RADIUS_M).max(1.0);
-        let max_distance = distance_to_geom.unwrap_or(altitude);
-
-        // Near choice (retain your behavior; consider swapping for the adaptive recipe later)
-        let near_scale = if altitude > 50_000.0 { 0.5 } else { 0.05 };
-        let near = near_override.unwrap_or((max_distance * near_scale).clamp(NEAR_MIN, NEAR_MAX));
-
-        log::info!("near: {}", near);
-
-        // Far only matters on the forward-Z path; keep your previous default
-        let far_fwd = far_override.unwrap_or(d);
-
-        // Projection (f64 for precision), chosen by depth mode
-        let proj64 = match depth_mode {
-            DepthMode::Normal => cgmath::perspective(fovy, aspect, near, far_fwd),
-            DepthMode::ReverseZ => proj_reverse_z_infinite_f64(fovy.into(), aspect, near),
+        // ---- 2) Heavy math lock-free ----
+        let (_lat, _lon, altitude) = ecef_to_lla_wgs84(eye);
+        let near_scale = match altitude {
+            a if a < 10_000.0 => 0.01,
+            a if a < 100_000.0 => 10.0,
+            _ => 100.0,
         };
+        let near = near_override.unwrap_or(near_scale).max(1e-4);
 
-        // Full view
+        // Projection (reverse-Z, infinite far)
+        let proj64 = proj_reverse_z_infinite_f64(fovy.into(), aspect, near);
+
         let view64 = Matrix4::look_at_rh(eye, target, up);
 
-        // CPU culling / world->clip
+        // Quick orthonormality/handedness check on view rotation (R^T·R ≈ I)
+        fn rot_orthonorm_residual(m: &Matrix4<f64>) -> f64 {
+            use cgmath::{InnerSpace, Matrix3, SquareMatrix};
+            // Extract rotation (upper-left 3x3 of view⁻¹ or equivalently remove translation from view)
+            let r = Matrix3::new(
+                m.x.x, m.x.y, m.x.z, m.y.x, m.y.y, m.y.z, m.z.x, m.z.y, m.z.z,
+            );
+            let i = Matrix3::<f64>::identity();
+            let rt_r = r.transpose() * r;
+            let d = rt_r - i;
+            [
+                d.x.x.abs(),
+                d.x.y.abs(),
+                d.x.z.abs(),
+                d.y.x.abs(),
+                d.y.y.abs(),
+                d.y.z.abs(),
+                d.z.x.abs(),
+                d.z.y.abs(),
+                d.z.z.abs(),
+            ]
+            .iter()
+            .copied()
+            .fold(0.0f64, f64::max)
+        }
+        let rot_res = rot_orthonorm_residual(&view64);
+
+        // World->clip
         let proj_view_full = proj64 * view64;
-        let (planes, proj_view_inv) = match depth_mode {
-            DepthMode::Normal => {
-                let inv = proj_view_full.invert().unwrap_or_else(|| {
-                    // avoid identity fallback poisoning; use a conservative alternative
-                    let vi = view64.invert().unwrap_or(Matrix4::identity());
-                    let pi = cgmath::perspective(fovy, aspect, near, far_fwd)
-                        .invert()
-                        .unwrap_or(Matrix4::identity());
-                    vi * pi
-                });
-                (extract_frustum_planes(&proj_view_full), inv)
-            }
-            DepthMode::ReverseZ => {
-                // Robust inverse for reverse-Z infinite
-                let p_inv = proj_reverse_z_infinite_inv_f64(fovy.into(), aspect, near);
-                let v_inv = view64.invert().unwrap_or(Matrix4::identity());
-                let pv_inv = v_inv * p_inv;
+        let planes = extract_frustum_planes_reverse_z(&proj_view_full);
 
-                // this needs to be fixed for reverse z buffer...
-                (extract_frustum_planes(&proj_view_full), pv_inv)
-            }
-        };
+        // Inverses
+        let p_inv = proj_reverse_z_infinite_inv_f64(fovy.into(), aspect, near);
+        let v_inv = view64.invert().unwrap_or(Matrix4::identity());
+        let proj_view_inv = v_inv * p_inv;
 
-        // GPU camera uniform (translation removed; CPU pre-translates models by -eye)
+        // Tiny helper: max ∞-norm of (A·B − I)
+        fn inv_check(a: &Matrix4<f64>, b: &Matrix4<f64>) -> f64 {
+            let ab = *a * *b;
+            let i = Matrix4::<f64>::identity();
+            let d = ab - i;
+            let mut maxv = 0.0;
+            for c in 0..4 {
+                for r in 0..4 {
+                    maxv = maxv.max(d[c][r].abs());
+                }
+            }
+            maxv
+        }
+        let proj_inv_res = inv_check(&proj64, &p_inv);
+        let view_inv_res = inv_check(&view64, &v_inv);
+        let pv_inv_res = inv_check(&proj_view_full, &proj_view_inv);
+
+        // GPU uniform (P * R^T)
         let view_no_translation64 = remove_translation(view64); // ~R^T
-        let proj_view_rot64 = proj64 * view_no_translation64; // P * R^T
+        let proj_view_rot64 = proj64 * view_no_translation64;
         let uniform = decompose_matrix64_to_uniform(&proj_view_rot64);
 
-        // ---- 3) Commit derived_state in one short write. ----
+        // Consistency: proj_view_full vs (P * [R^T|0;0 1] * T) — we can’t compare directly,
+        // but we can check that removing translation yields close to proj_view_rot64.
+        let view_rot_only = remove_translation(view64);
+        let pv_no_trans = proj64 * view_rot_only;
+        let mut pv_rot_res = 0.0;
+        for c in 0..4 {
+            for r in 0..4 {
+                pv_rot_res = pv_rot_res.max((pv_no_trans[c][r] - proj_view_rot64[c][r]).abs());
+            }
+        }
+
+        // ---- 3) Commit derived_state ----
         {
             let mut ds = self.derived_state.write().unwrap();
             ds.near = near;
-            ds.far = match depth_mode {
-                DepthMode::Normal => far_fwd,
-                DepthMode::ReverseZ => f64::INFINITY, // document: GPU uses infinite far
-            };
+            ds.far = f64::INFINITY;
             ds.planes = planes;
             ds.uniform = uniform;
         }
 
-        // Bump generation (relaxed is fine for a monotonic counter)
         self.generation.fetch_add(1, Ordering::Relaxed);
-
-        // Mark clean with Release so readers see the writes that happened-before.
         self.dirty.store(false, Ordering::Release);
 
-        // ---- 4) Update aux states in separate short writes. ----
+        // ---- 4) Update aux states ----
         if let Ok(mut state) = self.paging_state.write() {
             *state = CameraRefinementData {
-                position: cam_world,
-                far: match depth_mode {
-                    DepthMode::Normal => far_fwd,
-                    DepthMode::ReverseZ => f64::INFINITY,
-                },
+                position: eye,
+                far: f64::INFINITY,
                 fovy,
             };
         }
@@ -291,6 +311,8 @@ impl Camera {
                 eye,
                 fov_y: fovy,
                 proj: proj64,
+                proj_inv: p_inv,
+                view_inv: v_inv,
                 proj_view: proj_view_full,
                 proj_view_inv,
                 viewport_wh,

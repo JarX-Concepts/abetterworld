@@ -5,15 +5,30 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "Debug tests: abetterworld (filter: dynamics)",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": {
+        "args": ["test", "--manifest-path", "crates/abetterworld/Cargo.toml"],
+        "filter": { "kind": "test", "name": "abetterworld" }
+      },
+      "program": "${cargo:program}",
+      "args": ["--nocapture", "--exact", "dynamics"],
+      "cwd": "${workspaceFolder}",
+      "env": { "RUST_BACKTRACE": "1" },
+      "sourceLanguages": ["rust"]
+    },
+    {
       "type": "lldb",
       "request": "launch",
       "name": "Debug unit tests in library 'abetterworld'",
       "cargo": {
-        "args": ["test", "--no-run", "--lib", "--package=abetterworld"],
-        "filter": {
-          "name": "abetterworld",
-          "kind": "lib"
-        }
+        "args": [
+          "test",
+          "--manifest-path",
+          "crates/abetterworld/Cargo.toml",
+          "dynamics"
+        ]
       },
       "args": [],
       "cwd": "${workspaceFolder}"

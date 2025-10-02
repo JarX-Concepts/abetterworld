@@ -1,10 +1,9 @@
 use cgmath::{Point3, Vector3};
-use tracing::instrument;
+//use tracing::instrument;
 
 use crate::{
     cache::init_tileset_cache,
     content::{import_renderables, start_pager, Tile, TileManager},
-    decode::init,
     dynamics::{self, camera_config, Camera, Dynamics, InputState, PositionState},
     helpers::{
         channel::{channel, Receiver},
@@ -88,6 +87,7 @@ pub enum Key {
     Escape,
     Meta,
     // Add more as needed
+    Count,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -204,7 +204,6 @@ impl World {
 
         let (loader_tx, render_rx) = channel::<Tile>(MAX_NEW_TILES_PER_FRAME * 2);
 
-        let _ = init();
         let _ = start_pager(
             abw_config.source.clone(),
             Arc::clone(debug_camera_option.as_ref().unwrap_or(&camera)),
@@ -263,7 +262,7 @@ impl World {
         // 3) (If using MSAA) also recreate the MSAA color target here
     }
 
-    #[instrument(skip(self, render_pass))]
+    //#[instrument(skip(self, render_pass))]
     pub fn render(&self, render_pass: &mut wgpu::RenderPass) -> Result<(), AbwError> {
         self.render.render(
             render_pass,
@@ -273,9 +272,11 @@ impl World {
         )
     }
 
-    #[instrument(skip(self, device, queue), fields(need_update = false))]
+    //#[instrument(skip(self, device, queue), fields(need_update = false))]
     pub fn update(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> Result<bool, AbwError> {
         let tick = self.private.clock.tick();
+
+        //log::info!("Frame tick: {:?}", tick);
 
         self.private.input_state.flush(&mut self.private.dynamics);
         self.private
@@ -299,13 +300,11 @@ impl World {
             )?;
         }
 
-        let depth_mode = self.private.pipeline.depth.as_ref().unwrap().mode;
-
         // Update the debug camera if it exists
         if let Some(debug_camera) = self.private.debug_camera.as_ref() {
             let min_distance = self.render.get_min_distance(&debug_camera.position().eye);
 
-            let (_, _, dirty) = debug_camera.update(min_distance, depth_mode);
+            let (_, _, dirty) = debug_camera.update();
             if dirty {
                 needs_update = true;
             }
@@ -313,7 +312,7 @@ impl World {
         let min_distance = self
             .render
             .get_min_distance(&self.private.camera.position().eye);
-        let (eye_pos, uniform, dirty) = self.private.camera.update(min_distance, depth_mode);
+        let (eye_pos, uniform, dirty) = self.private.camera.update();
         if dirty {
             needs_update = true;
         }
@@ -340,6 +339,7 @@ impl World {
             &self.private.camera.dynamics(),
             &mut self.private.dynamics,
             event,
+            &self.private.camera,
         );
     }
 

@@ -208,14 +208,7 @@ impl<'window> State<'window> {
                     },
                     depth_slice: None,
                 })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: self.world.get_depth_view(),
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0), // far plane
-                        store: wgpu::StoreOp::Discard,
-                    }),
-                    stencil_ops: None,
-                }),
+                depth_stencil_attachment: Some(self.world.get_depth_attachment()),
 
                 timestamp_writes: None,
                 occlusion_query_set: None,

@@ -51,6 +51,7 @@ pub fn start_pager(
                 }) {
                     log::error!("update_pager error: {:?}", e);
                 }
+                log::info!("update_pager done");
             }
             // wait 2 seconds
             TimeoutFuture::new(2000).await;
@@ -74,7 +75,7 @@ fn update_pager(
         return Ok(());
     }
 
-    const LOADER_THREADS: usize = 12;
+    const LOADER_THREADS: usize = 1;
     let (pager_tx, mut pager_rx) = channel::<Tile>(1000);
     let (loader_tx, mut loader_rx) = channel::<Tile>(LOADER_THREADS * 2);
     let client = build_client(LOADER_THREADS)?;

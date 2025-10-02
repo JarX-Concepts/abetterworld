@@ -3,7 +3,7 @@ use wgpu::util::DeviceExt;
 use crate::{
     content::{DebugVertex, Vertex, MAX_RENDERABLE_NODES_US, MAX_RENDERABLE_TILES},
     helpers::Uniforms,
-    render::{recommended_format, DepthBuffer, DepthMode, InstanceBuffer},
+    render::{recommended_format, DepthBuffer, InstanceBuffer},
 };
 
 pub struct BindingData {
@@ -116,14 +116,7 @@ pub fn build_pipeline(
         source: wgpu::ShaderSource::Wgsl(include_str!("../../assets/shader.wgsl").into()),
     });
 
-    let depth = DepthBuffer::new(
-        device,
-        config.width,
-        config.height,
-        recommended_format(),
-        1,
-        DepthMode::Normal,
-    );
+    let depth = DepthBuffer::new(device, config.width, config.height, recommended_format(), 1);
 
     // Create the render pipeline.
     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
