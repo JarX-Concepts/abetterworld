@@ -20,7 +20,7 @@ _Designed to work on all major platforms._
 Clone the repository and build the project in release or debug mode:
 
 ```bash
-git clone https://github.com/your-username/abetterworld.git
+git clone https://github.com/JarX-Concepts/abetterworld
 cd abetterworld
 
 # Build library
