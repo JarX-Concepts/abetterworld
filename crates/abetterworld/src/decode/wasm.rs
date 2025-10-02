@@ -41,9 +41,9 @@ pub struct DracoClient {
 }
 
 impl DracoClient {
-    pub fn new(worker_url: &str) -> Self {
+    pub fn new() -> Self {
         Self {
-            inner: JsDracoWorkerClient::new(worker_url),
+            inner: JsDracoWorkerClient::new("./pkg/draco-wrapper.js"),
         }
     }
 

@@ -16,6 +16,7 @@ use crate::Source;
 // ─── External ──────────────────────────────────────────────────────────────────
 use bytes::Bytes;
 use std::mem;
+use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
 fn download_content_for_tile_shared(
@@ -59,7 +60,7 @@ async fn download_content_for_tile(
 }
 
 async fn process_content_bytes(
-    decoder: &DracoClient,
+    decoder: Arc<DracoClient>,
     load: &mut Tile,
     bytes: Vec<u8>,
 ) -> Result<(), AbwError> {
@@ -94,7 +95,7 @@ pub async fn load_content(
     client: &Client,
     tile: &mut Tile,
     render_time: &mut Sender<Tile>,
-    decoder: &DracoClient,
+    decoder: Arc<DracoClient>,
 ) -> Result<(), AbwError> {
     if tile.state == TileState::ToLoad {
         if let Err(e) = content_load(&source, &client, tile, decoder).await {
@@ -115,10 +116,10 @@ pub async fn wait_and_load_content(
     client: &Client,
     rx: &mut Receiver<Tile>,
     render_time: &mut Sender<Tile>,
-    decoder: &DracoClient,
 ) -> Result<(), AbwError> {
+    let decoder = Arc::new(DracoClient::new());
     while let Ok(mut tile) = rx.recv().await {
-        load_content(source, client, &mut tile, render_time, decoder).await?;
+        load_content(source, client, &mut tile, render_time, decoder.clone()).await?;
     }
     Ok(())
 }
@@ -127,7 +128,7 @@ pub async fn content_load(
     source: &Source,
     client: &Client,
     tile: &mut Tile,
-    decoder: &DracoClient,
+    decoder: Arc<DracoClient>,
 ) -> Result<(), AbwError> {
     if tile.state != TileState::ToLoad {
         return Err(AbwError::TileLoading(format!(

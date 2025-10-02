@@ -7,7 +7,10 @@ use cgmath::{Deg, Matrix4, One, Quaternion, Vector3, Vector4};
 use image::GenericImageView;
 use log::error;
 use serde_json::Value;
-use std::io::{Cursor, Read};
+use std::{
+    io::{Cursor, Read},
+    sync::Arc,
+};
 
 pub fn parse_glb(glb: &[u8]) -> Result<(Value, Vec<u8>), Box<std::io::Error>> {
     let total_len = glb.len();
@@ -110,7 +113,7 @@ pub fn parse_glb(glb: &[u8]) -> Result<(Value, Vec<u8>), Box<std::io::Error>> {
 }
 
 pub async fn build_meshes(
-    decode_client: &DracoClient,
+    decode_client: Arc<DracoClient>,
     json: &Value,
     bin: &[u8],
 ) -> Result<Vec<OwnedDecodedMesh>, std::io::Error> {

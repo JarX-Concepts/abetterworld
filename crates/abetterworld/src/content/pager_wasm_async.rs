@@ -6,6 +6,7 @@ use crate::content::tiles_priority::priortize_loop;
 use crate::content::Client;
 use crate::content::Tile;
 use crate::content::TileSetImporter;
+use crate::decode::DracoClient;
 use crate::helpers::channel::channel;
 use crate::helpers::channel::{Receiver, Sender};
 use crate::Source;
@@ -33,6 +34,7 @@ pub fn start_pager(
 
         // run update_pager every 2 seconds
         let mut last_cam_gen = 0;
+        let decoder = Arc::new(DracoClient::new());
         loop {
             let new_gen = camera_src.generation();
             if new_gen != last_cam_gen {
@@ -44,6 +46,7 @@ pub fn start_pager(
                     camera_src.clone(),
                     tile_mgr.clone(),
                     render_tx.clone(),
+                    decoder.clone(),
                 )
                 .map_err(|e| {
                     log::error!("Failed to update pager: {:?}", e);
@@ -66,6 +69,7 @@ fn update_pager(
     camera_src: Arc<Camera>,
     tile_mgr: Arc<TileManager>,
     render_tx: Sender<Tile>,
+    decoder: Arc<DracoClient>,
 ) -> Result<(), AbwError> {
     if ACTIVE_JOBS
         .compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst)
@@ -121,27 +125,23 @@ fn update_pager(
 
     spawn_local(async move {
         ACTIVE_JOBS.fetch_add(1, Ordering::SeqCst);
+        let decoder_clone = decoder.clone();
 
         while let Ok(mut tile) = loader_rx.recv().await {
             let client_clone = client.clone();
             let mut render_tx_clone = render_tx.clone();
             let source_clone = source.clone();
 
-            spawn_local(async move {
-                ACTIVE_JOBS.fetch_add(1, Ordering::SeqCst);
-
-                load_content(
-                    &source_clone,
-                    &client_clone,
-                    &mut tile,
-                    &mut render_tx_clone,
-                )
-                .await
-                .unwrap_or_else(|e| {
-                    log::error!("Failed to load content for tile {}: {:?}", tile.uri, e);
-                });
-
-                ACTIVE_JOBS.fetch_sub(1, Ordering::SeqCst);
+            load_content(
+                &source_clone,
+                &client_clone,
+                &mut tile,
+                &mut render_tx_clone,
+                decoder_clone.clone(),
+            )
+            .await
+            .unwrap_or_else(|e| {
+                log::error!("Failed to load content for tile {}: {:?}", tile.uri, e);
             });
         }
 

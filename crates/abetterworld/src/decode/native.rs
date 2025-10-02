@@ -15,9 +15,7 @@ pub struct DracoClient {}
 
 impl DracoClient {
     pub fn new() -> Self {
-        Self {
-            inner: JsDracoWorkerClient::new(worker_url),
-        }
+        Self {}
     }
 
     pub async fn decode(&self, data: &[u8]) -> Result<OwnedDecodedMesh, std::io::Error> {
