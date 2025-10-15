@@ -28,6 +28,9 @@ pub struct CameraRefinementData {
     pub position: Point3<f64>,
     pub far: f64,
     pub fovy: Deg<f64>,
+    pub planes: FrustumPlanes,
+    pub screen_height: f64,
+    pub sse_threshold: f64,
 }
 impl CameraRefinementData {
     fn default() -> CameraRefinementData {
@@ -35,6 +38,9 @@ impl CameraRefinementData {
             position: Point3::new(0.0, 0.0, 0.0),
             far: 0.0,
             fovy: Deg(45.0),
+            screen_height: 1024.0,
+            sse_threshold: 40.0,
+            planes: [(Vector4::zero(), Vector3::zero(), 0.0); 5],
         }
     }
 }
@@ -303,6 +309,9 @@ impl Camera {
                 position: eye,
                 far: f64::INFINITY,
                 fovy,
+                screen_height: vh,
+                planes,
+                sse_threshold: state.sse_threshold, // keep existing
             };
         }
 

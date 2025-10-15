@@ -11,7 +11,7 @@ pub async fn download_content(
     client: &Client,
     content_url: &str,
     key: &str,
-    session: &Option<Arc<String>>,
+    session: &Option<String>,
 ) -> Result<(String, Bytes), AbwError> {
     // Try cache first
     let cache = get_tileset_cache();
@@ -24,7 +24,7 @@ pub async fn download_content(
     let mut query_params = vec![("key", key)];
 
     if let Some(session) = session.as_deref() {
-        query_params.push(("session", session.as_str()));
+        query_params.push(("session", session));
     }
 
     let response_result = client

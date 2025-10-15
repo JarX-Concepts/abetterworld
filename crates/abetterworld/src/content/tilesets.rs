@@ -1,50 +1,78 @@
-use crate::content::types::{Tile, TileState};
-use crate::content::{download_content, BoundingVolume, Client, TileManager};
+use crate::content::tiles_priority::{priortize, Pri};
+use crate::content::types::Tile;
+use crate::content::{download_content, BoundingVolume, Client};
 use crate::dynamics::{Camera, CameraRefinementData};
 use crate::helpers::channel::Sender;
 use crate::helpers::{hash_uri, AbwError, TileLoadingContext};
 use crate::Source;
-use bytes::Bytes;
 use cgmath::{InnerSpace, Point3};
 use serde::Deserialize;
-use std::collections::HashSet;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::Duration;
-//use tracing::{event, span, Level};
 use url::Url;
+use wasm_bindgen_futures::spawn_local;
 
-#[cfg(target_arch = "wasm32")]
-use gloo_timers::future::TimeoutFuture;
+#[derive(Debug, Deserialize, Default, Clone)]
+struct TileSourceRoot {
+    pub root: Option<TileSource>,
+}
 
-#[derive(Debug, Deserialize)]
-struct GltfTileset {
-    root: GltfTile,
+#[derive(Debug, Default, Clone)]
+struct TileSourceRootShared {
+    pub root: Option<TileSource>,
+    pub done: bool,
+}
+
+#[derive(Debug, Clone)]
+pub enum TileSourceContentState {
+    ToLoadVisual,
+    LoadedTileSet {
+        shared: Arc<RwLock<TileSourceRootShared>>,
+        permanent: Option<Box<TileSourceRoot>>,
+    },
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct TileSourceContent {
+    pub uri: String,
+
+    #[serde(skip, default)]
+    pub key: Option<String>,
+
+    #[serde(skip, default)]
+    pub session: Option<String>,
+
+    #[serde(skip, default)]
+    pub loaded: Option<TileSourceContentState>,
+
+    #[serde(skip, default)]
+    pub id: u64,
 }
 
 #[derive(Debug, Deserialize, Clone)]
-pub struct GltfTileContent {
-    uri: String,
-}
-
-#[derive(Debug, Deserialize, Clone)]
-pub struct GltfTile {
+pub struct TileSource {
     #[serde(rename = "boundingVolume")]
-    bounding_volume: BoundingVolume,
+    pub bounding_volume: BoundingVolume,
     #[serde(rename = "geometricError")]
-    geometric_error: f64,
-    refine: Option<String>,
-    content: Option<GltfTileContent>,
-    children: Option<Vec<GltfTile>>,
+    pub geometric_error: f64,
+    pub refine: Option<String>,
+    pub content: Option<TileSourceContent>,
+    pub children: Option<Vec<TileSource>>,
+
+    #[serde(skip, default)]
+    // None  -> do not render;
+    // true  -> render, but we might have better stuff;
+    // false -> render, no better stuff
+    pub needs_refinement_flag: Option<bool>,
 }
 
-#[derive(Debug)]
-pub struct TileSetImporter {
-    client: Client,
-    sender: Sender<Tile>,
-    tile_manager: Arc<TileManager>,
-    current_pass_tiles: HashSet<u64>,
+// Has the pager sent this tile into the system?
+enum TilePipelineMessage {
+    Load(Tile),
+    Unload(u64),
 }
+pub type TilePipelineState = Vec<u64>;
 
 // This is not optimal (make a custom implementation that doesn't allocate extra strings)
 fn resolve_url(base: &str, relative: &str) -> Result<String, AbwError> {
@@ -75,7 +103,7 @@ fn is_nested_tileset(uri: &str) -> bool {
     is_nested_ext(uri, ".json")
 }
 
-fn is_glb(uri: &str) -> bool {
+fn is_visual(uri: &str) -> bool {
     is_nested_ext(uri, ".glb")
 }
 
@@ -83,7 +111,7 @@ fn extract_session(url: &str) -> Option<&str> {
     url.split_once("session=").map(|(_, session)| session)
 }
 
-fn add_key_and_session(url: &str, key: &str, session: &Option<Arc<String>>) -> String {
+fn add_key_and_session(url: &str, key: &str, session: &Option<String>) -> String {
     let mut url = Url::parse(url).unwrap();
     url.query_pairs_mut().append_pair("key", key);
     if let Some(session) = session {
@@ -115,7 +143,7 @@ fn compute_sse(
 }
 
 /// Drop-in `needs_refinement` using the 12-number box.
-pub fn needs_refinement(
+fn needs_refinement(
     camera: &CameraRefinementData,
     bv: &BoundingVolume, // <- your Google 12-number box
     geometric_error: f64,
@@ -142,30 +170,298 @@ pub fn needs_refinement(
     sse > sse_threshold
 }
 
-pub async fn parser_iteration(
-    source: &Source,
-    camera_data: &CameraRefinementData,
-    pager: &mut TileSetImporter,
-) -> Result<(), AbwError> {
-    match source {
-        Source::Google { key, url } => pager.go(&camera_data, url, key).await,
-        // Add more source types here as needed
-        _ => {
-            log::error!("Unsupported source type: {:?}", source);
-            Err(AbwError::TileLoading("Unsupported source type".into()))
+fn load_tile(client: &Client, key: &String, tile: &mut TileSourceContent) -> Result<(), AbwError> {
+    tile.id = hash_uri(&tile.uri);
+
+    if is_nested_tileset(&tile.uri) {
+        let tile_dst = Arc::new(RwLock::new(TileSourceRootShared::default()));
+        tile.loaded = Some(TileSourceContentState::LoadedTileSet {
+            shared: tile_dst.clone(),
+            permanent: None,
+        });
+
+        let client = client.clone();
+        let key = key.clone();
+        let uri = tile.uri.clone();
+        let session = tile.session.clone();
+
+        spawn_local({
+            let tile_dst = tile_dst.clone();
+            async move {
+                match download_content(&client, &uri, &key, &session).await {
+                    Ok((content_type, bytes)) => {
+                        if content_type.starts_with("application/json") {
+                            match serde_json::from_slice::<TileSourceRoot>(&bytes) {
+                                Ok(ts) => {
+                                    *tile_dst.write().unwrap() = TileSourceRootShared {
+                                        root: ts.root,
+                                        done: true,
+                                    }; // <- store it
+                                }
+                                Err(e) => {
+                                    // TODO: log
+                                }
+                            }
+                        } else {
+                            // TODO: log unsupported content type
+                        }
+                    }
+                    Err(e) => {
+                        // TODO: log
+                    }
+                }
+            }
+        });
+
+        return Ok(());
+    } else if is_visual(&tile.uri) {
+        // Just a visual tile (glb)
+        tile.loaded = Some(TileSourceContentState::ToLoadVisual);
+
+        return Ok(());
+    }
+
+    return Err(AbwError::TileLoading(
+        format!("Unsupported file extension: {} ({})", tile.uri, key).into(),
+    ));
+}
+
+fn build_child_tile_content(parent: &Option<&TileSourceContent>, tile: &mut TileSourceContent) {
+    if let Some(parent) = parent {
+        if let Ok(resolved) = resolve_url(&parent.uri, &tile.uri) {
+            tile.uri = resolved;
+        }
+        if tile.key.is_none() {
+            tile.key = parent.key.clone();
+        }
+
+        let new_session = extract_session(&tile.uri);
+        if let Some(session) = new_session {
+            tile.session = Some(session.to_string());
+        } else if tile.session.is_none() {
+            tile.session = parent.session.clone();
         }
     }
 }
 
-pub async fn parser_thread(
+fn process_tile_content(
+    source: &Source,
+    client: &Client,
+    camera: &CameraRefinementData,
+    parent: &Option<&TileSourceContent>,
+    tile: &mut TileSourceContent,
+) -> Result<(), AbwError> {
+    if tile.loaded.is_none() {
+        build_child_tile_content(parent, tile);
+
+        load_tile(
+            client,
+            match source {
+                Source::Google { key, .. } => key,
+                _ => return Err(AbwError::TileLoading("Unsupported source type".into())),
+            },
+            tile,
+        )?;
+    } else {
+        match tile.loaded.as_mut() {
+            Some(TileSourceContentState::ToLoadVisual) => {}
+            Some(TileSourceContentState::LoadedTileSet { shared, permanent }) => {
+                if let Some(permanent_root) = permanent.as_mut() {
+                    if let Some(root) = &mut permanent_root.root {
+                        process_tile(source, client, camera, parent, root)?;
+                    }
+                } else {
+                    let read_guard = shared.read().unwrap();
+                    if read_guard.done {
+                        // move a copy into permanent now that loading is done
+                        *permanent = Some(Box::new(TileSourceRoot {
+                            root: read_guard.root.clone(),
+                        }));
+                    }
+                }
+            }
+            None => {}
+        }
+    }
+
+    Ok(())
+}
+
+pub fn force_refinement(tile: &mut TileSource, flag: Option<bool>, skip_parent: bool) {
+    if !skip_parent {
+        tile.needs_refinement_flag = flag;
+    }
+
+    if let Some(content) = &mut tile.content {
+        match content.loaded.as_mut() {
+            Some(TileSourceContentState::LoadedTileSet { permanent, .. }) => {
+                if let Some(permanent_root) = permanent.as_mut() {
+                    if let Some(root) = &mut permanent_root.root {
+                        force_refinement(root, flag, false);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if let Some(children) = tile.children.as_mut() {
+        for child in children {
+            force_refinement(child, flag, false);
+        }
+    }
+}
+
+pub fn process_tile(
+    source: &Source,
+    client: &Client,
+    camera: &CameraRefinementData,
+    parent: &Option<&TileSourceContent>,
+    tile: &mut TileSource,
+) -> Result<(), AbwError> {
+    let needs_refinement = needs_refinement(
+        camera,
+        &tile.bounding_volume,
+        tile.geometric_error,
+        camera.screen_height,
+        camera.sse_threshold,
+    );
+
+    tile.needs_refinement_flag = Some(needs_refinement);
+
+    if needs_refinement {
+        match &mut tile.content {
+            Some(content) => process_tile_content(source, client, camera, parent, content)?,
+            None => {}
+        }
+        if let Some(children) = tile.children.as_mut() {
+            for child in children {
+                process_tile(source, client, camera, parent, child)?;
+            }
+        }
+    } else {
+        force_refinement(tile, None, true);
+    }
+
+    Ok(())
+}
+
+pub fn go(
+    source: &Source,
+    client: &Client,
+    camera: &CameraRefinementData,
+    root: &mut Option<TileSourceContent>,
+) -> Result<(), AbwError> {
+    if root.is_none() {
+        match source {
+            Source::Google { key, url } => {
+                *root = Some(TileSourceContent {
+                    uri: url.clone(),
+                    key: Some(key.clone()),
+                    session: None,
+                    loaded: None,
+                    id: hash_uri(url),
+                });
+            }
+            _ => {
+                return Err(AbwError::TileLoading("Unsupported source type".into()));
+            }
+        }
+    }
+
+    let mut tile = root.as_mut().unwrap();
+    process_tile_content(source, client, camera, &None, &mut tile)
+}
+
+pub fn send_load_tile(
+    tile_src: &TileSource,
+    tile_content: &TileSourceContent,
+    pager_tx: &mut Sender<TilePipelineMessage>,
+) -> Result<(), AbwError> {
+    let tile = Tile {
+        id: tile_content.id,
+        uri: tile_content.uri.clone(),
+        state: crate::content::types::TileState::ToLoad,
+        num_children: todo!(),
+        parent: todo!(),
+        volume: tile_src.bounding_volume,
+    };
+    pager_tx.try_send(TilePipelineMessage::Load(tile))
+}
+
+pub fn send_unload_tile(
+    id: u64,
+    pager_tx: &mut Sender<TilePipelineMessage>,
+) -> Result<(), AbwError> {
+    pager_tx.try_send(TilePipelineMessage::Unload(id))
+}
+
+pub fn parser_iteration(
+    source: &Source,
+    client: &Client,
+    camera_data: &CameraRefinementData,
+    root: &mut Option<TileSourceContent>,
+    pipeline_state: &mut TilePipelineState,
+    pager_tx: &mut Sender<TilePipelineMessage>,
+) -> Result<(), AbwError> {
+    go(source, client, camera_data, root)?;
+
+    if let Some(tile) = root {
+        if let Some(TileSourceContentState::LoadedTileSet { permanent, .. }) = &tile.loaded {
+            if let Some(permanent_root) = permanent.as_ref() {
+                if let Some(root) = &permanent_root.root {
+                    // gather priority tiles
+                    let mut priority_list: Vec<Pri> = Vec::new();
+
+                    priortize(camera_data, root, &mut priority_list)?;
+
+                    // send as many as we can into the pipeline
+                    for pri in priority_list.iter() {
+                        if !pipeline_state.contains(&pri.tile_content.id) {
+                            if let Err(_err) = send_load_tile(pri.tile, pri.tile_content, pager_tx)
+                            {
+                                // the channel is full, we will try again next time
+                                break;
+                            }
+
+                            pipeline_state.push(pri.tile_content.id);
+                        }
+                    }
+
+                    // need a list of tiles currently in the pipeline state, but not in the priority list
+                    // these can be removed
+                    let mut to_remove: Vec<u64> = Vec::new();
+                    for tile_id in pipeline_state.iter() {
+                        if !priority_list
+                            .iter()
+                            .any(|pri| pri.tile_content.id == *tile_id)
+                        {
+                            if let Err(_err) = send_unload_tile(*tile_id, pager_tx) {
+                                // the channel is full, we will try again next time
+                                break;
+                            }
+
+                            to_remove.push(*tile_id);
+                        }
+                    }
+                    // remove the tiles from the pipeline state
+                    pipeline_state.retain(|id| !to_remove.contains(id));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+pub fn parser_thread(
     source: &Source,
     cam: Arc<Camera>,
-    tile_mgr: Arc<TileManager>,
-    pager_tx: Sender<Tile>,
+    pager_tx: &mut Sender<TilePipelineMessage>,
     client: Client,
     enable_sleep: bool,
 ) -> Result<(), AbwError> {
-    let mut pager = TileSetImporter::new(client, pager_tx.clone(), tile_mgr);
+    let mut root = None;
+    let mut pipeline_state = TilePipelineState::new();
 
     let mut last_cam_gen = 0;
     loop {
@@ -175,7 +471,14 @@ pub async fn parser_thread(
         let new_gen = cam.generation();
         if new_gen != last_cam_gen {
             let camera_data = cam.refinement_data();
-            parser_iteration(source, &camera_data, &mut pager).await?;
+            parser_iteration(
+                source,
+                &client,
+                &camera_data,
+                &mut root,
+                &mut pipeline_state,
+                pager_tx,
+            )?;
 
             last_cam_gen = new_gen;
         } else {
@@ -192,197 +495,4 @@ pub async fn parser_thread(
     }
 
     Ok(())
-}
-
-impl TileSetImporter {
-    pub fn new(client: Client, sender: Sender<Tile>, tile_manager: Arc<TileManager>) -> Self {
-        Self {
-            client,
-            sender,
-            tile_manager: tile_manager,
-            current_pass_tiles: HashSet::new(),
-        }
-    }
-
-    pub async fn go(
-        &mut self,
-        camera: &CameraRefinementData,
-        url: &str,
-        key: &str,
-    ) -> Result<(), AbwError> {
-        let ret = self.import_tileset(camera, url, key).await;
-
-        self.tile_manager.keep_these_tiles(&self.current_pass_tiles);
-
-        // Prepare for next pass
-        self.current_pass_tiles.clear();
-
-        ret
-    }
-
-    async fn import_tileset(
-        &mut self,
-        camera: &CameraRefinementData,
-        url: &str,
-        key: &str,
-    ) -> Result<(), AbwError> {
-        let (content_type, bytes) = self.download_content(url, key, &None).await?;
-
-        // save the raw tileset for debugging
-        if false {
-            use std::fs;
-            use std::path::Path;
-            let filename = format!("data_debug/{}.json", hash_uri(url));
-            if !Path::new(&filename).exists() {
-                if let Err(e) = fs::create_dir_all("tilesets") {
-                    eprintln!("Failed to create tilesets dir: {}", e);
-                }
-            }
-            if let Err(e) = fs::write(&filename, &bytes) {
-                eprintln!("Failed to write tileset debug file {}: {}", filename, e);
-            } else {
-                log::info!("Wrote tileset debug file: {}", filename);
-            }
-        }
-
-        match content_type.as_str() {
-            "application/json" | "application/json; charset=UTF-8" => {
-                let tileset: GltfTileset =
-                    serde_json::from_slice(&bytes).tile_loading(&format!(
-                        "Failed to parse tileset JSON: {}",
-                        String::from_utf8_lossy(&bytes)
-                    ))?;
-
-                self.process_tileset(camera, tileset.root, url, key, None)
-                    .await
-            }
-            _ => Err(AbwError::TileLoading(
-                format!(
-                    "Unsupported content type: {} for {} ({})",
-                    content_type, url, key
-                )
-                .into(),
-            )),
-        }
-    }
-
-    async fn process_tileset(
-        &mut self,
-        camera: &CameraRefinementData,
-        root_tile: GltfTile,
-        tileset_url: &str,
-        key: &str,
-        session: Option<Arc<String>>,
-    ) -> Result<(), AbwError> {
-        use std::collections::VecDeque;
-
-        let mut stack = VecDeque::new();
-        stack.push_back((root_tile, tileset_url.to_string(), session, None));
-
-        while let Some((tile, base_url, session, parent_id)) = stack.pop_front() {
-            let mut added_geom = false;
-
-            let needs_refinement = needs_refinement(
-                camera,
-                &tile.bounding_volume,
-                tile.geometric_error,
-                1024.0,
-                20.0,
-            );
-
-            let mut new_parent_id = None;
-
-            if let Some(content) = &tile.content {
-                let tile_url = resolve_url(&base_url, &content.uri)?;
-                let refine_mode = tile.refine.as_deref().unwrap_or("REPLACE");
-                let new_session = extract_session(&tile_url);
-                let current_session = match new_session {
-                    Some(s) => match session.as_ref() {
-                        Some(existing) if existing.as_str() == s => session.clone(),
-                        _ => Some(Arc::new(s.to_string())),
-                    },
-                    None => session.clone(), // nothing new — reuse or continue None
-                };
-
-                if is_nested_tileset(&tile_url) {
-                    let (content_type, bytes) = self
-                        .download_content(&tile_url, key, &current_session)
-                        .await?;
-
-                    if content_type.starts_with("application/json") {
-                        let tileset: GltfTileset =
-                            serde_json::from_slice(&bytes).tile_loading(&format!(
-                                "Failed to parse tileset JSON: {}",
-                                String::from_utf8_lossy(&bytes)
-                            ))?;
-                        stack.push_back((
-                            tileset.root,
-                            tile_url.clone(),
-                            current_session.clone(),
-                            parent_id,
-                        ));
-                    }
-                }
-
-                if is_glb(&tile_url) {
-                    added_geom = true;
-
-                    let tile_url = add_key_and_session(&tile_url, key, &current_session);
-                    let tile_id = hash_uri(&tile_url);
-                    new_parent_id = Some(tile_id);
-
-                    if !self.current_pass_tiles.contains(&tile_id) {
-                        self.current_pass_tiles.insert(tile_id);
-
-                        if !self.tile_manager.has_tile(tile_id) {
-                            let new_tile = Tile {
-                                counter: self.current_pass_tiles.len() as u64,
-                                num_children: tile.children.as_ref().map_or(0, |c| c.len()),
-                                parent: parent_id,
-                                id: tile_id,
-                                uri: tile_url,
-                                volume: tile.bounding_volume.clone(),
-                                state: TileState::ToLoad,
-                            };
-
-                            self.tile_manager.add_tile(&new_tile);
-
-                            //log::info!("Added new tile: {:?}", new_tile);
-
-                            self.sender.send(new_tile).await.map_err(|_| {
-                                AbwError::TileLoading("Failed to send new tile".into())
-                            })?;
-                        }
-                        // give up CPU time to other tasks
-                        #[cfg(target_arch = "wasm32")]
-                        TimeoutFuture::new(1).await;
-                    }
-                }
-            }
-
-            if needs_refinement || !added_geom {
-                if let Some(children) = &tile.children {
-                    for child in children.iter().cloned() {
-                        stack.push_back((
-                            child,
-                            base_url.clone(),
-                            session.clone(),
-                            new_parent_id.clone(),
-                        ));
-                    }
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    async fn download_content(
-        &self,
-        content_url: &str,
-        key: &str,
-        session: &Option<Arc<String>>,
-    ) -> Result<(String, Bytes), AbwError> {
-        download_content(&self.client, content_url, key, session).await
-    }
 }
