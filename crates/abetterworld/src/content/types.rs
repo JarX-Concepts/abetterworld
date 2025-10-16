@@ -11,6 +11,18 @@ pub const MAX_RENDERABLE_TILES_US: usize = MAX_RENDERABLE_TILES as usize;
 pub const MAX_RENDERABLE_NODES_US: usize = MAX_RENDERABLE_NODES as usize;
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum TilePipelineMessage {
+    Load(Tile),
+    Unload(u64),
+}
+
+impl TilePipelineMessage {
+    pub fn default() -> Self {
+        TilePipelineMessage::Unload(0)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct Tile {
     pub num_children: usize,
     pub parent: Option<u64>,

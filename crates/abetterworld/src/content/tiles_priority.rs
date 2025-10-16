@@ -20,7 +20,7 @@ pub fn gather_priority_tiles<'a>(
     if let Some(needs_refinement) = tile.needs_refinement_flag {
         if let Some(content) = &tile.content {
             match &content.loaded {
-                Some(TileSourceContentState::ToLoadVisual) => {
+                Some(TileSourceContentState::ToLoadVisual { .. }) => {
                     let distance = camera_data
                         .position
                         .distance2(tile.bounding_volume.center());

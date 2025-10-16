@@ -1,7 +1,7 @@
 // ─── Crate: content ────────────────────────────────────────────────────────────
 use crate::content::{
     build_materials, build_meshes, build_nodes, download_content, parse_glb,
-    parse_textures_from_gltf, upload_textures_to_gpu, Client,
+    parse_textures_from_gltf, upload_textures_to_gpu, Client, TilePipelineMessage,
 };
 
 // ─── Crate: content::types ─────────────────────────────────────────────────────
@@ -20,16 +20,14 @@ use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
 fn download_content_for_tile_shared(
-    key: &str,
     load: &Tile,
     content_type: String,
     bytes: Bytes,
 ) -> Result<Vec<u8>, AbwError> {
     if content_type != "model/gltf-binary" {
         log::error!(
-            "Unsupported content type: URI: {}, Key: {}, Content-Type: {}, Bytes: {:?}",
+            "Unsupported content type: URI: {}, Content-Type: {}, Bytes: {:?}",
             load.uri,
-            key,
             content_type,
             bytes
         );
@@ -42,21 +40,9 @@ fn download_content_for_tile_shared(
     Ok(bytes.to_vec())
 }
 
-async fn download_content_for_tile(
-    source: &Source,
-    client: &Client,
-    load: &Tile,
-) -> Result<Vec<u8>, AbwError> {
-    let key = match source {
-        Source::Google { key, .. } => Ok((key.clone())),
-        _ => {
-            log::error!("Unsupported source type: {:?}", source);
-            Err(AbwError::TileLoading("Unsupported source type".into()))
-        }
-    }?;
-
-    let (content_type, bytes) = download_content(&client, &load.uri, &key, &None).await?;
-    download_content_for_tile_shared(&key, load, content_type, bytes)
+async fn download_content_for_tile(client: &Client, load: &Tile) -> Result<Vec<u8>, AbwError> {
+    let (content_type, bytes) = download_content(&client, &load.uri).await?;
+    download_content_for_tile_shared(load, content_type, bytes)
 }
 
 async fn process_content_bytes(
@@ -91,41 +77,44 @@ async fn process_content_bytes(
 }
 
 pub async fn load_content(
-    source: &Source,
     client: &Client,
-    tile: &mut Tile,
-    render_time: &mut Sender<Tile>,
+    mut tile: Tile,
+    render_time: &mut Sender<TilePipelineMessage>,
     decoder: Arc<DracoClient>,
 ) -> Result<(), AbwError> {
     if tile.state == TileState::ToLoad {
-        if let Err(e) = content_load(&source, &client, tile, decoder).await {
+        if let Err(e) = content_load(&client, &mut tile, decoder).await {
             log::error!("load failed: {e}");
             return Err(e);
         }
 
-        if matches!(tile.state, TileState::Decoded { .. }) {
-            // that's a bit hacky, but we want to avoid cloning the tile
-            let _ = render_time.send(mem::replace(tile, Tile::default())).await;
-        }
+        // that's a bit hacky, but we want to avoid cloning the tile
+        let _ = render_time.send(TilePipelineMessage::Load(tile)).await;
     }
     Ok(())
 }
 
 pub async fn wait_and_load_content(
-    source: &Source,
     client: &Client,
-    rx: &mut Receiver<Tile>,
-    render_time: &mut Sender<Tile>,
+    rx: &mut Receiver<TilePipelineMessage>,
+    render_time: &mut Sender<TilePipelineMessage>,
 ) -> Result<(), AbwError> {
     let decoder = Arc::new(DracoClient::new());
-    while let Ok(mut tile) = rx.recv().await {
-        load_content(source, client, &mut tile, render_time, decoder.clone()).await?;
+    while let Ok(tile) = rx.recv().await {
+        match tile {
+            TilePipelineMessage::Unload(id) => {
+                let _ = render_time.send(TilePipelineMessage::Unload(id)).await;
+                continue;
+            }
+            TilePipelineMessage::Load(t) => {
+                load_content(client, t, render_time, decoder.clone()).await?;
+            }
+        }
     }
     Ok(())
 }
 
 pub async fn content_load(
-    source: &Source,
     client: &Client,
     tile: &mut Tile,
     decoder: Arc<DracoClient>,
@@ -137,7 +126,7 @@ pub async fn content_load(
         )));
     }
 
-    let data = download_content_for_tile(source, client, &tile).await?;
+    let data = download_content_for_tile(client, &tile).await?;
     process_content_bytes(decoder, tile, data).await
 }
 

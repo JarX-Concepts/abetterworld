@@ -50,6 +50,7 @@ cfg-if = "1.0.3"
 directories = "6.0.0"
 rayon = "1.11.0"
 web-time = "1.1"
+tokio = { version = "1", features = ["full"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 gloo-timers = { version = "0.3", features = ["futures"] }
@@ -83,5 +84,5 @@ tracy-client     = { version = "=0.18.0", optional = false, default-features = f
   "enable", "ondemand", "only-localhost"
 ]}
 tracing-tracy    = { version = "=0.11.4", optional = false }
-tracing = "0.1"
+tracing = { workspace = true }
 tracing-subscriber = "0.3"

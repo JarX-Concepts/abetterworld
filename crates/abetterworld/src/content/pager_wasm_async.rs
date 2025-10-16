@@ -1,10 +1,12 @@
 use crate::cache::init_wasm_indexdb_on_every_thread;
 use crate::content::parser_iteration;
+use crate::content::parser_thread;
 use crate::content::tiles;
 use crate::content::tiles::load_content;
 use crate::content::tiles_priority::priortize_loop;
 use crate::content::Client;
 use crate::content::Tile;
+use crate::content::TilePipelineMessage;
 use crate::content::TileSetImporter;
 use crate::decode::DracoClient;
 use crate::helpers::channel::channel;
@@ -31,6 +33,13 @@ pub fn start_pager(
             Ok(_) => log::info!("Initialized IndexedDB"),
             Err(e) => log::error!("Failed to initialize IndexedDB: {:?}", e),
         }
+
+        parser_thread(
+            source.clone(),
+            camera_src.clone(),
+            tile_mgr.clone(),
+            render_tx.clone(),
+        );
 
         // run update_pager every 2 seconds
         let mut last_cam_gen = 0;
@@ -80,8 +89,8 @@ fn update_pager(
     }
 
     const LOADER_THREADS: usize = 1;
-    let (pager_tx, mut pager_rx) = channel::<Tile>(1000);
-    let (loader_tx, mut loader_rx) = channel::<Tile>(LOADER_THREADS * 2);
+    let (pager_tx, mut pager_rx) = channel::<TilePipelineMessage>(1000);
+    let (loader_tx, mut loader_rx) = channel::<TilePipelineMessage>(LOADER_THREADS * 2);
     let client = build_client(LOADER_THREADS)?;
 
     let client_clone = client.clone();
@@ -95,33 +104,17 @@ fn update_pager(
 
         log::info!("Starting pager");
 
-        let mut pager = TileSetImporter::new(client_clone, pager_tx_clone, tile_mgr);
-
         // this should compare the current camera state generation to avoid redundant work
         let camera_data = pager_cam.refinement_data();
-        if let Err(e) = parser_iteration(&source_clone, &camera_data, &mut pager).await {
+        if let Err(e) =
+            parser_iteration(&source_clone, &client_clone, &camera_data, &mut pager).await
+        {
             log::error!("Pager thread failed: {:?}", e);
         }
 
         ACTIVE_JOBS.fetch_sub(1, Ordering::SeqCst);
     });
     drop(pager_tx);
-
-    let cam = Arc::clone(&camera_src);
-    let mut loader_tx_clone = loader_tx.clone();
-    spawn_local(async move {
-        ACTIVE_JOBS.fetch_add(1, Ordering::SeqCst);
-
-        log::info!("Starting prioritized loop");
-
-        // this will run until the pager channel is closed
-        if let Err(e) = priortize_loop(&cam, &mut pager_rx, &mut loader_tx_clone).await {
-            log::info!("Prioritized loop thread ended: {:?}", e);
-        }
-
-        ACTIVE_JOBS.fetch_sub(1, Ordering::SeqCst);
-    });
-    drop(loader_tx);
 
     spawn_local(async move {
         ACTIVE_JOBS.fetch_add(1, Ordering::SeqCst);

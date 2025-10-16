@@ -1,32 +1,37 @@
 use crate::content::tiles_priority::{priortize, Pri};
 use crate::content::types::Tile;
-use crate::content::{download_content, BoundingVolume, Client};
+use crate::content::{download_content, BoundingVolume, Client, TilePipelineMessage};
 use crate::dynamics::{Camera, CameraRefinementData};
 use crate::helpers::channel::Sender;
-use crate::helpers::{hash_uri, AbwError, TileLoadingContext};
+use crate::helpers::{hash_uri, spawn_detached, AbwError, TileLoadingContext};
 use crate::Source;
 use cgmath::{InnerSpace, Point3};
+use core::num;
 use serde::Deserialize;
+use std::f32::consts::E;
 use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::Duration;
+use tracing::{event, Level};
 use url::Url;
-use wasm_bindgen_futures::spawn_local;
 
 #[derive(Debug, Deserialize, Default, Clone)]
-struct TileSourceRoot {
+pub struct TileSourceRoot {
     pub root: Option<TileSource>,
 }
 
-#[derive(Debug, Default, Clone)]
-struct TileSourceRootShared {
+#[derive(Debug, Clone)]
+pub struct TileSourceRootShared {
     pub root: Option<TileSource>,
     pub done: bool,
 }
 
 #[derive(Debug, Clone)]
 pub enum TileSourceContentState {
-    ToLoadVisual,
+    ToLoadVisual {
+        parent_id: Option<u64>,
+        number_of_children: usize,
+    },
     LoadedTileSet {
         shared: Arc<RwLock<TileSourceRootShared>>,
         permanent: Option<Box<TileSourceRoot>>,
@@ -67,11 +72,6 @@ pub struct TileSource {
     pub needs_refinement_flag: Option<bool>,
 }
 
-// Has the pager sent this tile into the system?
-enum TilePipelineMessage {
-    Load(Tile),
-    Unload(u64),
-}
 pub type TilePipelineState = Vec<u64>;
 
 // This is not optimal (make a custom implementation that doesn't allocate extra strings)
@@ -111,9 +111,13 @@ fn extract_session(url: &str) -> Option<&str> {
     url.split_once("session=").map(|(_, session)| session)
 }
 
-fn add_key_and_session(url: &str, key: &str, session: &Option<String>) -> String {
+fn add_key_and_session(url: &str, key: &Option<String>, session: &Option<String>) -> String {
     let mut url = Url::parse(url).unwrap();
-    url.query_pairs_mut().append_pair("key", key);
+
+    if let Some(key) = key {
+        url.query_pairs_mut().append_pair("key", key.as_str());
+    }
+
     if let Some(session) = session {
         url.query_pairs_mut()
             .append_pair("session", session.as_str());
@@ -170,11 +174,19 @@ fn needs_refinement(
     sse > sse_threshold
 }
 
-fn load_tile(client: &Client, key: &String, tile: &mut TileSourceContent) -> Result<(), AbwError> {
+fn load_tile(
+    client: &Client,
+    key: &String,
+    parent_visual_id: &Option<u64>,
+    tile: &mut TileSourceContent,
+) -> Result<(Option<u64>, usize), AbwError> {
     tile.id = hash_uri(&tile.uri);
 
     if is_nested_tileset(&tile.uri) {
-        let tile_dst = Arc::new(RwLock::new(TileSourceRootShared::default()));
+        let tile_dst = Arc::new(RwLock::new(TileSourceRootShared {
+            root: None,
+            done: false,
+        }));
         tile.loaded = Some(TileSourceContentState::LoadedTileSet {
             shared: tile_dst.clone(),
             permanent: None,
@@ -185,40 +197,45 @@ fn load_tile(client: &Client, key: &String, tile: &mut TileSourceContent) -> Res
         let uri = tile.uri.clone();
         let session = tile.session.clone();
 
-        spawn_local({
+        spawn_detached({
             let tile_dst = tile_dst.clone();
             async move {
-                match download_content(&client, &uri, &key, &session).await {
+                match download_content(&client, &uri).await {
                     Ok((content_type, bytes)) => {
                         if content_type.starts_with("application/json") {
                             match serde_json::from_slice::<TileSourceRoot>(&bytes) {
                                 Ok(ts) => {
+                                    event!(Level::INFO, "Loaded tileset: {}", uri);
+                                    log::info!("{:?}", ts);
                                     *tile_dst.write().unwrap() = TileSourceRootShared {
                                         root: ts.root,
                                         done: true,
                                     }; // <- store it
                                 }
                                 Err(e) => {
-                                    // TODO: log
+                                    event!(Level::ERROR, "Failed to parse tileset JSON: {}", e);
                                 }
                             }
                         } else {
-                            // TODO: log unsupported content type
+                            event!(Level::ERROR, "Unsupported content type: {}", content_type);
                         }
                     }
                     Err(e) => {
-                        // TODO: log
+                        event!(Level::ERROR, "Failed to download tile content: {}", e);
                     }
                 }
             }
         });
 
-        return Ok(());
+        return Ok((None, 0));
     } else if is_visual(&tile.uri) {
         // Just a visual tile (glb)
-        tile.loaded = Some(TileSourceContentState::ToLoadVisual);
+        tile.loaded = Some(TileSourceContentState::ToLoadVisual {
+            parent_id: *parent_visual_id,
+            number_of_children: 0,
+        });
 
-        return Ok(());
+        return Ok((Some(tile.id), 1));
     }
 
     return Err(AbwError::TileLoading(
@@ -241,6 +258,8 @@ fn build_child_tile_content(parent: &Option<&TileSourceContent>, tile: &mut Tile
         } else if tile.session.is_none() {
             tile.session = parent.session.clone();
         }
+
+        tile.uri = add_key_and_session(&tile.uri, &tile.key, &tile.session);
     }
 }
 
@@ -248,43 +267,61 @@ fn process_tile_content(
     source: &Source,
     client: &Client,
     camera: &CameraRefinementData,
-    parent: &Option<&TileSourceContent>,
-    tile: &mut TileSourceContent,
-) -> Result<(), AbwError> {
-    if tile.loaded.is_none() {
-        build_child_tile_content(parent, tile);
+    tileset: &Option<&TileSourceContent>,
+    parent_visual: &Option<u64>,
+    tile_content: &mut TileSourceContent,
+) -> Result<(Option<u64>, usize), AbwError> {
+    if tile_content.loaded.is_none() {
+        build_child_tile_content(tileset, tile_content);
 
-        load_tile(
+        return load_tile(
             client,
             match source {
                 Source::Google { key, .. } => key,
                 _ => return Err(AbwError::TileLoading("Unsupported source type".into())),
             },
-            tile,
-        )?;
-    } else {
-        match tile.loaded.as_mut() {
-            Some(TileSourceContentState::ToLoadVisual) => {}
-            Some(TileSourceContentState::LoadedTileSet { shared, permanent }) => {
-                if let Some(permanent_root) = permanent.as_mut() {
-                    if let Some(root) = &mut permanent_root.root {
-                        process_tile(source, client, camera, parent, root)?;
-                    }
-                } else {
-                    let read_guard = shared.read().unwrap();
-                    if read_guard.done {
-                        // move a copy into permanent now that loading is done
-                        *permanent = Some(Box::new(TileSourceRoot {
-                            root: read_guard.root.clone(),
-                        }));
-                    }
-                }
-            }
-            None => {}
-        }
+            parent_visual,
+            tile_content,
+        );
     }
 
-    Ok(())
+    // Move `loaded` out to avoid overlapping borrows of `tile_content`
+    let mut loaded = tile_content.loaded.take();
+
+    let out = match &mut loaded {
+        Some(TileSourceContentState::ToLoadVisual { .. }) => Ok((Some(tile_content.id), 1)),
+
+        Some(TileSourceContentState::LoadedTileSet { shared, permanent }) => {
+            // If we already have a permanent root, process it immediately
+            if let Some(root) = permanent.as_mut().and_then(|p| p.root.as_mut()) {
+                let count = process_tile(
+                    source,
+                    client,
+                    camera,
+                    &Some(tile_content),
+                    parent_visual,
+                    root,
+                )?;
+                Ok((None, count))
+            } else {
+                // Otherwise, check the shared state; if complete, promote to permanent
+                let guard = shared.read().expect("tileset shared lock poisoned");
+                if guard.done {
+                    *permanent = Some(Box::new(TileSourceRoot {
+                        root: guard.root.clone(),
+                    }));
+                }
+                Ok((None, 0))
+            }
+        }
+
+        None => Ok((None, 0)),
+    };
+
+    // Put `loaded` back
+    tile_content.loaded = loaded;
+
+    out
 }
 
 pub fn force_refinement(tile: &mut TileSource, flag: Option<bool>, skip_parent: bool) {
@@ -316,9 +353,10 @@ pub fn process_tile(
     source: &Source,
     client: &Client,
     camera: &CameraRefinementData,
-    parent: &Option<&TileSourceContent>,
+    tileset: &Option<&TileSourceContent>,
+    parent_visual: &Option<u64>,
     tile: &mut TileSource,
-) -> Result<(), AbwError> {
+) -> Result<usize, AbwError> {
     let needs_refinement = needs_refinement(
         camera,
         &tile.bounding_volume,
@@ -329,21 +367,43 @@ pub fn process_tile(
 
     tile.needs_refinement_flag = Some(needs_refinement);
 
+    let mut ret_visual_id = None;
+    let mut my_direct_child_count: usize = 0;
+
     if needs_refinement {
-        match &mut tile.content {
-            Some(content) => process_tile_content(source, client, camera, parent, content)?,
-            None => {}
-        }
+        (ret_visual_id, my_direct_child_count) = match &mut tile.content {
+            Some(content) => {
+                process_tile_content(source, client, camera, tileset, parent_visual, content)?
+            }
+            None => (None, 0),
+        };
+
         if let Some(children) = tile.children.as_mut() {
             for child in children {
-                process_tile(source, client, camera, parent, child)?;
+                my_direct_child_count +=
+                    process_tile(source, client, camera, tileset, &ret_visual_id, child)?;
+            }
+        }
+
+        if ret_visual_id.is_some() {
+            if let Some(tile_content) = &mut tile.content {
+                if let Some(TileSourceContentState::ToLoadVisual {
+                    number_of_children, ..
+                }) = &mut tile_content.loaded
+                {
+                    *number_of_children = my_direct_child_count;
+                }
             }
         }
     } else {
         force_refinement(tile, None, true);
     }
 
-    Ok(())
+    Ok(if ret_visual_id.is_some() {
+        1
+    } else {
+        my_direct_child_count
+    })
 }
 
 pub fn go(
@@ -370,7 +430,8 @@ pub fn go(
     }
 
     let mut tile = root.as_mut().unwrap();
-    process_tile_content(source, client, camera, &None, &mut tile)
+    let _ret_visual_id = process_tile_content(source, client, camera, &None, &None, &mut tile)?;
+    Ok(())
 }
 
 pub fn send_load_tile(
@@ -378,12 +439,20 @@ pub fn send_load_tile(
     tile_content: &TileSourceContent,
     pager_tx: &mut Sender<TilePipelineMessage>,
 ) -> Result<(), AbwError> {
+    let (parent_id, num_children) = match tile_content.loaded.as_ref() {
+        Some(TileSourceContentState::ToLoadVisual {
+            parent_id,
+            number_of_children,
+        }) => (*parent_id, *number_of_children),
+        _ => (None, 0),
+    };
+
     let tile = Tile {
         id: tile_content.id,
         uri: tile_content.uri.clone(),
         state: crate::content::types::TileState::ToLoad,
-        num_children: todo!(),
-        parent: todo!(),
+        parent: parent_id,
+        num_children,
         volume: tile_src.bounding_volume,
     };
     pager_tx.try_send(TilePipelineMessage::Load(tile))
@@ -480,7 +549,7 @@ pub fn parser_thread(
                 pager_tx,
             )?;
 
-            last_cam_gen = new_gen;
+            //last_cam_gen = new_gen;
         } else {
             // No camera movement, sleep briefly to avoid busy-waiting
             if enable_sleep {

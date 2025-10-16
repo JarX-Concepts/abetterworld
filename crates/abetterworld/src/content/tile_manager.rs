@@ -52,22 +52,8 @@ impl TileManager {
         }
     }
 
-    pub fn keep_these_tiles(&self, tiles: &HashSet<u64>) {
-        if tiles.is_empty() {
-            return;
-        }
-        let mut tileset = self.tileset.write().unwrap();
-        tileset.retain(|tile_id, _| tiles.contains(tile_id));
-    }
-
-    pub fn unload_tiles(&self) -> bool {
-        let tileset = self.tileset.read().unwrap();
+    pub fn remove_renderable(&self, id: u64) {
         let mut renderable = self.renderable.write().unwrap();
-
-        let initial_count = renderable.len();
-        renderable.retain(|tile_id, _| tileset.contains_key(tile_id));
-        let final_count = renderable.len();
-
-        final_count < initial_count
+        renderable.remove(&id);
     }
 }

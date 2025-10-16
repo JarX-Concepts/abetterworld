@@ -22,6 +22,12 @@ pub mod channel {
         pub async fn send(&self, item: T) -> Result<(), ()> {
             self.inner.send(item).map_err(|_| ())
         }
+
+        pub fn try_send(&mut self, item: T) -> Result<(), AbwError> {
+            self.inner
+                .try_send(item)
+                .map_err(|_| AbwError::Paging("Failed to send item".to_string()))
+        }
     }
 
     impl<T> Receiver<T> {

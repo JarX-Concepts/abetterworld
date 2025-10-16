@@ -36,16 +36,21 @@
     {
       "type": "lldb",
       "request": "launch",
-      "name": "Debug executable 'desktop'",
+      "name": "Debug executable 'abw_example_desktop'",
       "cargo": {
-        "args": ["build", "--bin=desktop", "--package=desktop"],
-        "filter": {
-          "name": "desktop",
-          "kind": "bin"
-        }
+        "args": [
+          "build",
+          "--package",
+          "abw_example_desktop",
+          "--bin",
+          "abw_example_desktop"
+        ],
+        "filter": { "name": "abw_example_desktop", "kind": "bin" }
       },
+      "program": "${cargo:program}",
       "args": [],
-      "cwd": "${workspaceFolder}"
+      "cwd": "${workspaceFolder}",
+      "stopOnEntry": false
     },
     {
       "type": "lldb",

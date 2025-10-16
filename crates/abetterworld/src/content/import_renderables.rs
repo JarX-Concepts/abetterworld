@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use web_time::{Duration, Instant};
 
 use crate::{
-    content::{tiles, Tile, TileManager},
+    content::{tiles, Tile, TileManager, TilePipelineMessage},
     helpers::{channel::Receiver, AbwError},
 };
 
@@ -14,7 +14,7 @@ pub fn import_renderables(
     queue: &wgpu::Queue,
     layout: &wgpu::BindGroupLayout,
     content: &Arc<TileManager>,
-    receiver: &mut Receiver<Tile>,
+    receiver: &mut Receiver<TilePipelineMessage>,
     budget: Duration,
 ) -> Result<bool, AbwError> {
     if budget.is_zero() {
@@ -32,11 +32,20 @@ pub fn import_renderables(
         }
 
         match receiver.try_recv() {
-            Ok(mut tile) => {
+            Ok(tile_message) => {
                 // If setup itself can be costly, double-check budget again.
                 if start.elapsed() >= budget {
                     break;
                 }
+
+                let mut tile = match tile_message {
+                    TilePipelineMessage::Load(t) => t,
+                    TilePipelineMessage::Unload(id) => {
+                        content.remove_renderable(id);
+                        needs_update = true;
+                        continue;
+                    }
+                };
 
                 let new_tile = tiles::content_render_setup(device, queue, layout, &mut tile)?;
                 content.add_renderable(new_tile);

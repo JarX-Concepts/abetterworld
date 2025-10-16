@@ -28,3 +28,6 @@ pub use channel_wasm_async::channel;
 mod channel_native;
 #[cfg(not(target_arch = "wasm32"))]
 pub use channel_native::channel;
+
+pub mod async_helper;
+pub use async_helper::*;

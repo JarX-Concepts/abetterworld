@@ -3,7 +3,7 @@ use cgmath::{Point3, Vector3};
 
 use crate::{
     cache::init_tileset_cache,
-    content::{import_renderables, start_pager, Tile, TileManager},
+    content::{import_renderables, start_pager, Tile, TileManager, TilePipelineMessage},
     dynamics::{self, camera_config, Camera, Dynamics, InputState, PositionState},
     helpers::{
         channel::{channel, Receiver},
@@ -26,7 +26,7 @@ pub struct WorldPrivate {
     pub frustum_render: FrustumRender,
 
     pub content: Arc<TileManager>,
-    pub receiver: Receiver<Tile>,
+    pub receiver: Receiver<TilePipelineMessage>,
 
     pub input_state: InputState,
     pub dynamics: Dynamics,
@@ -202,7 +202,7 @@ impl World {
 
         camera.set_viewport(config.width as f64, config.height as f64);
 
-        let (loader_tx, render_rx) = channel::<Tile>(MAX_NEW_TILES_PER_FRAME * 2);
+        let (loader_tx, render_rx) = channel::<TilePipelineMessage>(MAX_NEW_TILES_PER_FRAME * 2);
 
         let _ = start_pager(
             abw_config.source.clone(),
@@ -286,11 +286,8 @@ impl World {
         const BUDGET: Duration = Duration::from_millis(16);
 
         let mut needs_update = false;
-
         if let Some(layout) = self.private.pipeline.texture_bind_group_layout.as_ref() {
-            needs_update = self.private.content.unload_tiles();
-
-            needs_update |= import_renderables(
+            needs_update = import_renderables(
                 device,
                 queue,
                 layout,

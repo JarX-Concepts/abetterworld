@@ -16,7 +16,7 @@ pub use world::{
 pub fn get_debug_config() -> Config {
     Config {
         source: Source::Google {
-            key: "Google Key".to_string(),
+            key: "AIzaSyDux0_7bZZuqW731ZNrCTIk-r9NQk2InB0".to_string(),
             url: "https://tile.googleapis.com/v1/3dtiles/root.json".to_string(),
         },
         geodetic_position: (34.4208, -119.6982, 6_378_137.0 * 2.0), // Santa Barbara
