@@ -398,8 +398,9 @@ pub fn init_camera(geodetic_pos: Point3<f64>) -> Camera {
         position: PositionState { eye, target, up },
         near: None,
         far: None,
-        viewport_wh: (0.0, 0.0),
+        viewport_wh: (1024.0, 768.0),
     });
+    camera.update();
 
     camera
 }

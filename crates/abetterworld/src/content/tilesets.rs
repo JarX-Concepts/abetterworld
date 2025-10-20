@@ -193,9 +193,7 @@ fn load_tile(
         });
 
         let client = client.clone();
-        let key = key.clone();
         let uri = tile.uri.clone();
-        let session = tile.session.clone();
 
         spawn_detached({
             let tile_dst = tile_dst.clone();
@@ -206,7 +204,7 @@ fn load_tile(
                             match serde_json::from_slice::<TileSourceRoot>(&bytes) {
                                 Ok(ts) => {
                                     event!(Level::INFO, "Loaded tileset: {}", uri);
-                                    log::info!("{:?}", ts);
+
                                     *tile_dst.write().unwrap() = TileSourceRootShared {
                                         root: ts.root,
                                         done: true,
@@ -258,9 +256,8 @@ fn build_child_tile_content(parent: &Option<&TileSourceContent>, tile: &mut Tile
         } else if tile.session.is_none() {
             tile.session = parent.session.clone();
         }
-
-        tile.uri = add_key_and_session(&tile.uri, &tile.key, &tile.session);
     }
+    tile.uri = add_key_and_session(&tile.uri, &tile.key, &tile.session);
 }
 
 fn process_tile_content(
@@ -370,14 +367,14 @@ pub fn process_tile(
     let mut ret_visual_id = None;
     let mut my_direct_child_count: usize = 0;
 
-    if needs_refinement {
-        (ret_visual_id, my_direct_child_count) = match &mut tile.content {
-            Some(content) => {
-                process_tile_content(source, client, camera, tileset, parent_visual, content)?
-            }
-            None => (None, 0),
-        };
+    (ret_visual_id, my_direct_child_count) = match &mut tile.content {
+        Some(content) => {
+            process_tile_content(source, client, camera, tileset, parent_visual, content)?
+        }
+        None => (None, 0),
+    };
 
+    if needs_refinement {
         if let Some(children) = tile.children.as_mut() {
             for child in children {
                 my_direct_child_count +=
@@ -430,6 +427,7 @@ pub fn go(
     }
 
     let mut tile = root.as_mut().unwrap();
+    build_child_tile_content(&None, tile);
     let _ret_visual_id = process_tile_content(source, client, camera, &None, &None, &mut tile)?;
     Ok(())
 }

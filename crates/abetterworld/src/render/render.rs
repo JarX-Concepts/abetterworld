@@ -61,21 +61,21 @@ fn build_frame(
     for r in latest_render.values() {
         // 1) Frustum culling
         if tile_culling && !is_bounding_volume_visible(&planes, &r.culling_volume) {
-            continue;
+            //continue;
         }
 
         // 2) If THIS tile has all its children present, skip it
         if r.tile.num_children > 0 {
             let obs = observed_children.get(&r.tile.id).copied().unwrap_or(0);
             if obs == r.tile.num_children {
-                continue;
+                // continue;
             }
         }
 
         // 3) If it has a parent, only render when parent is refined
         if let Some(pid) = r.tile.parent {
             if !refined_parents.contains(&pid) {
-                continue;
+                // continue;
             }
         }
 
