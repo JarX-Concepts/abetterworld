@@ -2,7 +2,7 @@ use tracing::{event, span, Level};
 
 use crate::{
     content::{
-        parser_thread, tiles::wait_and_load_content, Client, Tile, TileManager, TilePipelineMessage,
+        parser_thread, tiles::wait_and_load_content, Client, TileManager, TilePipelineMessage,
     },
     dynamics::Camera,
     helpers::{
@@ -16,7 +16,6 @@ use std::{sync::Arc, thread};
 pub fn start_pager(
     source: Source,
     camera_src: Arc<Camera>,
-    tile_mgr: Arc<TileManager>,
     render_tx: Sender<TilePipelineMessage>,
 ) -> Result<(), AbwError> {
     const LOADER_THREADS: usize = 12;

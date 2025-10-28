@@ -1,4 +1,10 @@
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::RwLock;
+
+#[cfg(not(target_arch = "wasm32"))]
 use crate::render::RenderFrame;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::render::RenderableMap;
 use cgmath::Matrix4;
 use cgmath::Point3;
 
@@ -69,21 +75,33 @@ impl InstanceBuffer {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub fn build_instances(frame: &RenderFrame, eye_pos: &Point3<f64>) -> Vec<Instance3x4> {
+pub fn build_instances(
+    frame: &RenderFrame,
+    eye_pos: &Point3<f64>,
+    renderables: &RenderableMap,
+) -> Vec<Instance3x4> {
     use rayon::iter::IntoParallelRefIterator;
     use rayon::iter::ParallelIterator;
 
-    // Parallel over tiles; within each tile, iterate batches and map to instances.
     frame
         .tiles
         .par_iter()
-        .flat_map_iter(|tile| {
-            tile.nodes.iter().map(move |b| {
-                // Let the tile/state build the instance for this node.
-                Instance3x4::build(b.transform, eye_pos)
+        .map(|tile_id| {
+            use crate::render::with_renderable_state;
+
+            // Build a Vec for this tile; if tile/state missing, return empty Vec.
+            with_renderable_state(renderables, *tile_id, |tile| {
+                tile.nodes
+                    .iter()
+                    .map(|n| Instance3x4::build(n.transform, eye_pos))
+                    .collect::<Vec<_>>()
             })
+            .unwrap_or_default()
         })
-        .collect()
+        .reduce(Vec::new, |mut a, mut b| {
+            a.append(&mut b);
+            a
+        })
 }
 
 #[cfg(target_arch = "wasm32")]

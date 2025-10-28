@@ -8,6 +8,16 @@ pub struct BoundingBox {
     pub corners: [Vector3<f64>; 8],
 }
 
+impl BoundingBox {
+    pub fn default() -> Self {
+        BoundingBox {
+            min: Vector3::zero(),
+            max: Vector3::zero(),
+            corners: [Vector3::zero(); 8],
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct OrientedBoundingBox {
     pub center: Vector3<f64>,

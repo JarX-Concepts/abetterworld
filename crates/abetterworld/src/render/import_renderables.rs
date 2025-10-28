@@ -1,19 +1,20 @@
-use std::sync::Arc;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::{Duration, Instant};
+use std::{ops::DerefMut, sync::Arc};
 #[cfg(target_arch = "wasm32")]
 use web_time::{Duration, Instant};
 
 use crate::{
-    content::{tiles, Tile, TileManager, TilePipelineMessage},
+    content::{tiles, TilePipelineMessage},
     helpers::{channel::Receiver, AbwError},
+    render::SceneGraph,
 };
 
 pub fn import_renderables(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     layout: &wgpu::BindGroupLayout,
-    content: &Arc<TileManager>,
+    content: &mut SceneGraph,
     receiver: &mut Receiver<TilePipelineMessage>,
     budget: Duration,
 ) -> Result<bool, AbwError> {
@@ -38,17 +39,20 @@ pub fn import_renderables(
                     break;
                 }
 
-                let mut tile = match tile_message {
-                    TilePipelineMessage::Load(t) => t,
-                    TilePipelineMessage::Unload(id) => {
-                        content.remove_renderable(id);
-                        needs_update = true;
-                        continue;
+                match tile_message {
+                    TilePipelineMessage::Load(message) => {
+                        let new_tile =
+                            tiles::content_render_setup(device, queue, layout, message.1)?;
+                        content.add_renderable(message.0.key, new_tile);
+                    }
+                    TilePipelineMessage::Unload(message) => {
+                        content.remove(message);
+                    }
+                    TilePipelineMessage::Update(message) => {
+                        content.add_info(message);
                     }
                 };
 
-                let new_tile = tiles::content_render_setup(device, queue, layout, &mut tile)?;
-                content.add_renderable(new_tile);
                 needs_update = true;
             }
             Err(_) => break, // channel empty

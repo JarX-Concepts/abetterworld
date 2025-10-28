@@ -1,89 +1,43 @@
 use cgmath::{EuclideanSpace, InnerSpace, Point3};
 
 use crate::{
-    content::{DebugVertex, Ray, RenderableMap, RenderableState, MAX_RENDERABLE_TILES_US},
+    content::{Ray, TileKey, MAX_RENDERABLE_TILES_US},
     dynamics::FrustumPlanes,
     helpers::{is_bounding_volume_visible, AbwError, Uniforms},
-    render::{build_instances, rebuild_tile_bg, upload_instances, SIZE_OF_VOLUME},
+    render::{
+        build_instances, get_renderable_tile, rebuild_tile_bg, upload_instances,
+        with_renderable_state, DebugVertex, RenderableMap, SIZE_OF_VOLUME,
+    },
     world::WorldPrivate,
-};
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
 };
 
 pub struct RenderAndUpdate {
     frame: RenderFrame,
 }
 
-struct RenderingBatch {
-    mesh_index: usize,
-    node_index: usize,
-    global_node_index: usize,
-    material_index: Option<usize>,
-}
-
-struct RenderingTile {
-    tile: Arc<RenderableState>,
-    batches: Vec<RenderingBatch>,
-}
-
 pub struct RenderFrame {
-    pub tiles: Vec<Arc<RenderableState>>,
+    pub tiles: Vec<TileKey>,
 }
 
 fn build_frame(
-    latest_render: &RenderableMap,
+    renderables: &RenderableMap,
     tile_culling: bool,
     planes: FrustumPlanes,
 ) -> RenderFrame {
-    // --- Phase 1: count observed children per parent ---
-    let mut observed_children: HashMap<u64, usize> = HashMap::new();
-    for t in latest_render.values() {
-        if let Some(pid) = t.tile.parent {
-            *observed_children.entry(pid).or_default() += 1;
-        }
-    }
-
-    // Parents considered "refined" iff parent is present and observed == expected
-    let mut refined_parents: HashSet<u64> = HashSet::new();
-    for (&pid, &obs) in &observed_children {
-        if let Some(parent) = latest_render.get(&pid) {
-            if obs == parent.tile.num_children {
-                refined_parents.insert(pid);
-            }
-        }
-    }
-
-    // --- Phase 2: select drawables ---
+    // --- Phase 2: frontier traversal from roots ---
     let mut frame = RenderFrame { tiles: Vec::new() };
 
-    for r in latest_render.values() {
-        // 1) Frustum culling
-        if tile_culling && !is_bounding_volume_visible(&planes, &r.culling_volume) {
-            //continue;
-        }
+    for (_hash_key, renderable_tile) in renderables.iter() {
+        let tile_guard = renderable_tile.read().unwrap();
 
-        // 2) If THIS tile has all its children present, skip it
-        if r.tile.num_children > 0 {
-            let obs = observed_children.get(&r.tile.id).copied().unwrap_or(0);
-            if obs == r.tile.num_children {
-                // continue;
-            }
+        if let Some(_renderable) = &tile_guard.renderable_state {
+            frame.tiles.push(tile_guard.key);
         }
-
-        // 3) If it has a parent, only render when parent is refined
-        if let Some(pid) = r.tile.parent {
-            if !refined_parents.contains(&pid) {
-                // continue;
-            }
-        }
-
-        frame.tiles.push(r.clone());
     }
 
     frame
 }
+
 impl RenderAndUpdate {
     pub fn new() -> Self {
         Self {
@@ -102,30 +56,35 @@ impl RenderAndUpdate {
         render_pass.set_bind_group(0, &world.pipeline.bindings.tile_bg, &[]);
 
         let mut node_counter: u32 = 0;
-        for render_tile in self.frame.tiles.iter() {
-            for _node in render_tile.nodes.iter() {
-                for mesh in render_tile.meshes.iter() {
-                    render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                    render_pass
-                        .set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+        let renderables = &world.content.renderable;
+        for render_tile_id in self.frame.tiles.iter() {
+            with_renderable_state(renderables, *render_tile_id, |render_tile| {
+                for _node in render_tile.nodes.iter() {
+                    for mesh in render_tile.meshes.iter() {
+                        render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                        render_pass.set_index_buffer(
+                            mesh.index_buffer.slice(..),
+                            wgpu::IndexFormat::Uint32,
+                        );
 
-                    if let Some(material_index) = mesh.material_index {
-                        let material = &render_tile.materials[material_index];
-                        if let Some(texture_index) = material.base_color_texture_index {
-                            let texture_resource = &render_tile.textures[texture_index];
-                            render_pass.set_bind_group(1, &texture_resource.bind_group, &[]);
+                        if let Some(material_index) = mesh.material_index {
+                            let material = &render_tile.materials[material_index];
+                            if let Some(texture_index) = material.base_color_texture_index {
+                                let texture_resource = &render_tile.textures[texture_index];
+                                render_pass.set_bind_group(1, &texture_resource.bind_group, &[]);
+                            }
                         }
-                    }
 
-                    // Draw call for this mesh
-                    render_pass.draw_indexed(
-                        0..mesh.num_indices,
-                        0,
-                        node_counter..node_counter + 1,
-                    );
+                        // Draw call for this mesh
+                        render_pass.draw_indexed(
+                            0..mesh.num_indices,
+                            0,
+                            node_counter..node_counter + 1,
+                        );
+                    }
+                    node_counter += 1;
                 }
-                node_counter += 1;
-            }
+            })?;
         }
 
         if draw_tile_volumes {
@@ -161,7 +120,7 @@ impl RenderAndUpdate {
     pub fn get_min_distance(&self, eye_pos: &Point3<f64>) -> Option<f64> {
         let mut min_distance: Option<f64> = None;
 
-        {
+        /*         {
             let eye_pos_vec = eye_pos.to_vec();
             let neg_eye_dir = -eye_pos_vec.normalize();
             for renderable in self.frame.tiles.iter() {
@@ -176,7 +135,7 @@ impl RenderAndUpdate {
                     }
                 }
             }
-        }
+        } */
 
         min_distance
     }
@@ -235,9 +194,12 @@ impl RenderAndUpdate {
                 world.camera.planes()
             };
 
-            let renderable_tiles = world.content.renderable.read().unwrap();
-            self.frame = build_frame(&renderable_tiles, tile_culling, planes);
-            let renderable_instances = build_instances(&self.frame, eye_pos);
+            let renderable_tiles = &world.content.renderable;
+            self.frame = build_frame(renderable_tiles, tile_culling, planes);
+        }
+        {
+            let renderable_instances =
+                build_instances(&self.frame, eye_pos, &world.content.renderable);
 
             // Short-lived borrow to check/ensure capacity and capture new capacity
             let (resized, new_capacity) = {
@@ -267,8 +229,11 @@ impl RenderAndUpdate {
             }
         }
 
-        if draw_tile_volumes {
-            for (index, renderable) in self.frame.tiles.iter().enumerate() {
+        /*         if draw_tile_volumes {
+            let renderables = &world.content.renderable;
+            for (index, renderable_tile_id) in self.frame.tiles.iter().enumerate() {
+                let renderable = get_renderable_tile(renderables, *renderable_tile_id)?;
+
                 if index + 1 >= MAX_RENDERABLE_TILES_US {
                     //log::warn!("Hit maximum number of volumes (Update)");
                     break;
@@ -293,7 +258,7 @@ impl RenderAndUpdate {
                     bytemuck::cast_slice(&new_frustum_vertices),
                 );
             }
-        }
+        } */
 
         // main camera
         {

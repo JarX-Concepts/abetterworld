@@ -9,7 +9,7 @@ mod tests {
 
     use crate::{
         cache::{get_tileset_cache, init_tileset_cache},
-        content::{pager_native::build_client, parser_iteration, Tile, TileManager},
+        content::{pager_native::build_client, parser_iteration, TileManager},
         dynamics::init_camera,
         helpers::{channel::channel, PlatformAwait},
     };

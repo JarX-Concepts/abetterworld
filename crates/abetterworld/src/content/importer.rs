@@ -1,6 +1,7 @@
 use crate::{
-    content::types::{Material, Node, Texture, TextureResource},
+    content::types::{Material, Node, Texture},
     decode::{self, DracoClient, OwnedDecodedMesh},
+    render::TextureResource,
 };
 use byteorder::{LittleEndian, ReadBytesExt};
 use cgmath::{Deg, Matrix4, One, Quaternion, Vector3, Vector4};

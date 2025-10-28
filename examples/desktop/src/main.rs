@@ -11,7 +11,7 @@ use winit::{
     window::{Window, WindowAttributes},
 };
 
-const DEBUG_PATH: bool = true;
+const DEBUG_PATH: bool = false;
 const DEBUG_CAMERA: bool = true;
 const DEBUG_VOLUMES: bool = false;
 

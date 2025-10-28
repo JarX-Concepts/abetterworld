@@ -23,8 +23,7 @@ pub use types::*;
 pub mod volumes;
 pub use volumes::*;
 
-pub mod import_renderables;
-pub use import_renderables::*;
+pub mod pager_state;
 
 #[cfg(target_arch = "wasm32")]
 pub mod pager_wasm_async;

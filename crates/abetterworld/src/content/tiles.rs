@@ -1,26 +1,26 @@
 // ─── Crate: content ────────────────────────────────────────────────────────────
 use crate::content::{
     build_materials, build_meshes, build_nodes, download_content, parse_glb,
-    parse_textures_from_gltf, upload_textures_to_gpu, Client, TilePipelineMessage,
+    parse_textures_from_gltf, upload_textures_to_gpu, Client, TileContent, TileMessage,
+    TilePipelineMessage,
 };
 
 // ─── Crate: content::types ─────────────────────────────────────────────────────
-use crate::content::types::{Mesh, RenderableState, Tile, TileState};
+use crate::content::types::TileState;
 
 use crate::decode::DracoClient;
 use crate::helpers::channel::{Receiver, Sender};
 // ─── Crate: helpers ────────────────────────────────────────────────────────────
 use crate::helpers::{AbwError, TileLoadingContext};
-use crate::Source;
+use crate::render::{Mesh, RenderableState};
 
 // ─── External ──────────────────────────────────────────────────────────────────
 use bytes::Bytes;
-use std::mem;
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
 fn download_content_for_tile_shared(
-    load: &Tile,
+    load: &TileContent,
     content_type: String,
     bytes: Bytes,
 ) -> Result<Vec<u8>, AbwError> {
@@ -40,14 +40,17 @@ fn download_content_for_tile_shared(
     Ok(bytes.to_vec())
 }
 
-async fn download_content_for_tile(client: &Client, load: &Tile) -> Result<Vec<u8>, AbwError> {
+async fn download_content_for_tile(
+    client: &Client,
+    load: &TileContent,
+) -> Result<Vec<u8>, AbwError> {
     let (content_type, bytes) = download_content(&client, &load.uri).await?;
     download_content_for_tile_shared(load, content_type, bytes)
 }
 
 async fn process_content_bytes(
     decoder: Arc<DracoClient>,
-    load: &mut Tile,
+    load: &mut TileContent,
     bytes: Vec<u8>,
 ) -> Result<(), AbwError> {
     let (gltf_json, gltf_bin) =
@@ -78,7 +81,8 @@ async fn process_content_bytes(
 
 pub async fn load_content(
     client: &Client,
-    mut tile: Tile,
+    header: TileMessage,
+    mut tile: TileContent,
     render_time: &mut Sender<TilePipelineMessage>,
     decoder: Arc<DracoClient>,
 ) -> Result<(), AbwError> {
@@ -89,7 +93,9 @@ pub async fn load_content(
         }
 
         // that's a bit hacky, but we want to avoid cloning the tile
-        let _ = render_time.send(TilePipelineMessage::Load(tile)).await;
+        let _ = render_time
+            .send(TilePipelineMessage::Load((header, tile)))
+            .await;
     }
     Ok(())
 }
@@ -106,8 +112,12 @@ pub async fn wait_and_load_content(
                 let _ = render_time.send(TilePipelineMessage::Unload(id)).await;
                 continue;
             }
-            TilePipelineMessage::Load(t) => {
-                load_content(client, t, render_time, decoder.clone()).await?;
+            TilePipelineMessage::Load((h, t)) => {
+                load_content(client, h, t, render_time, decoder.clone()).await?;
+            }
+            TilePipelineMessage::Update(message) => {
+                let _ = render_time.send(TilePipelineMessage::Update(message)).await;
+                continue;
             }
         }
     }
@@ -116,7 +126,7 @@ pub async fn wait_and_load_content(
 
 pub async fn content_load(
     client: &Client,
-    tile: &mut Tile,
+    tile: &mut TileContent,
     decoder: Arc<DracoClient>,
 ) -> Result<(), AbwError> {
     if tile.state != TileState::ToLoad {
@@ -134,26 +144,20 @@ pub fn content_render_setup(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     texture_bind_group_layout: &wgpu::BindGroupLayout,
-    tile: &mut Tile,
+    tile: TileContent, // you own this
 ) -> Result<RenderableState, AbwError> {
-    // hacky way to get ownership of decoded tile state
-    let decoded = match mem::replace(&mut tile.state, TileState::Renderable) {
-        TileState::Decoded {
-            nodes,
-            meshes,
-            textures,
-            materials,
-        } => (nodes, meshes, textures, materials),
-        other => {
-            tile.state = other; // restore original state
-            return Err(AbwError::TileLoading(
-                "Tile is not in Decoded state".to_owned(),
-            ));
-        }
+    // Consume tile.state and move its contents out
+    let TileState::Decoded {
+        nodes,
+        meshes,
+        textures,
+        materials,
+    } = tile.state
+    else {
+        return Err(AbwError::TileLoading("Tile is not in Decoded state".into()));
     };
 
-    let (nodes, meshes, textures, materials) = decoded;
-
+    // You still have the moved-out values by ownership now
     let textures = upload_textures_to_gpu(device, queue, &textures, texture_bind_group_layout);
 
     let return_meshes = meshes
@@ -181,12 +185,9 @@ pub fn content_render_setup(
         .collect();
 
     Ok(RenderableState {
-        nodes,
+        nodes, // moved, not cloned
         meshes: return_meshes,
         textures: textures.into_iter().map(|t| t.into()).collect(),
-        materials,
-        unload: false,
-        culling_volume: tile.volume.to_aabb(),
-        tile: tile.to_owned(),
+        materials, // moved, not cloned
     })
 }

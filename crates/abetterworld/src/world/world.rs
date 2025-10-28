@@ -3,16 +3,16 @@ use cgmath::{Point3, Vector3};
 
 use crate::{
     cache::init_tileset_cache,
-    content::{import_renderables, start_pager, Tile, TileManager, TilePipelineMessage},
-    dynamics::{self, camera_config, Camera, Dynamics, InputState, PositionState},
+    content::{start_pager, TileManager, TilePipelineMessage},
+    dynamics::{camera_config, Camera, Dynamics, InputState, PositionState},
     helpers::{
         channel::{channel, Receiver},
         geodetic_to_ecef_z_up, hpr_to_forward_up, init_profiling, target_from_distance, AbwError,
         FrameClock,
     },
     render::{
-        build_debug_pipeline, build_frustum_render, build_pipeline, DepthBuffer, FrustumRender,
-        RenderAndUpdate, RenderPipeline,
+        build_debug_pipeline, build_frustum_render, build_pipeline, import_renderables,
+        FrustumRender, RenderAndUpdate, RenderPipeline, SceneGraph,
     },
 };
 use std::{sync::Arc, time::Duration};
@@ -25,7 +25,7 @@ pub struct WorldPrivate {
     pub debug_pipeline: RenderPipeline,
     pub frustum_render: FrustumRender,
 
-    pub content: Arc<TileManager>,
+    pub content: SceneGraph,
     pub receiver: Receiver<TilePipelineMessage>,
 
     pub input_state: InputState,
@@ -198,7 +198,7 @@ impl World {
             build_debug_pipeline(device, config, &pipeline.depth.as_ref().unwrap());
         let frustum_render = build_frustum_render(device);
 
-        let tile_content = Arc::new(TileManager::new());
+        let tile_content = SceneGraph::new();
 
         camera.set_viewport(config.width as f64, config.height as f64);
 
@@ -207,7 +207,6 @@ impl World {
         let _ = start_pager(
             abw_config.source.clone(),
             Arc::clone(debug_camera_option.as_ref().unwrap_or(&camera)),
-            tile_content.clone(),
             loader_tx,
         );
 
@@ -291,7 +290,7 @@ impl World {
                 device,
                 queue,
                 layout,
-                &self.private.content,
+                &mut self.private.content,
                 &mut self.private.receiver,
                 BUDGET,
             )?;

@@ -1,9 +1,9 @@
 use wgpu::util::DeviceExt;
 
 use crate::{
-    content::{DebugVertex, Vertex, MAX_RENDERABLE_NODES_US, MAX_RENDERABLE_TILES},
+    content::{MAX_RENDERABLE_NODES_US, MAX_RENDERABLE_TILES},
     helpers::Uniforms,
-    render::{recommended_format, DepthBuffer, InstanceBuffer},
+    render::{recommended_format, DebugVertex, DepthBuffer, InstanceBuffer, Vertex},
 };
 
 pub struct BindingData {
@@ -144,7 +144,7 @@ pub fn build_pipeline(
             strip_index_format: None,
             front_face: wgpu::FrontFace::Ccw,
             cull_mode: Some(wgpu::Face::Back),
-            polygon_mode: wgpu::PolygonMode::Line,
+            polygon_mode: wgpu::PolygonMode::Fill,
             unclipped_depth: false,
             conservative: false,
         },
