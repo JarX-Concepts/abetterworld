@@ -14,6 +14,7 @@ use crate::{
         build_debug_pipeline, build_frustum_render, build_pipeline, import_renderables,
         FrustumRender, RenderAndUpdate, RenderPipeline, SceneGraph,
     },
+    Config,
 };
 use std::{sync::Arc, time::Duration};
 
@@ -38,35 +39,6 @@ pub struct World {
     private: WorldPrivate,
     render: RenderAndUpdate,
     config: Config,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum Source {
-    Google {
-        key: String,
-        url: String,
-    },
-    CesiumIon {
-        key: String,
-        url: String,
-    },
-    SelfHosted {
-        headers: Vec<(String, String)>,
-        url: String,
-    },
-}
-
-#[derive(Debug, Clone)]
-pub struct Config {
-    pub source: Source,
-    // long, lat, elevation
-    pub geodetic_position: (f64, f64, f64),
-    pub cache_dir: String,
-    pub use_debug_camera: bool,
-    pub debug_camera_geodetic_position: (f64, f64, f64),
-    pub debug_camera_render_frustum: bool,
-    pub debug_render_volumes: bool,
-    pub tile_culling: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

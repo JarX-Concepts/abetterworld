@@ -407,16 +407,16 @@ pub fn init_camera(geodetic_pos: Point3<f64>) -> Camera {
 
 pub fn camera_config(abw_config: &Config) -> (Arc<Camera>, Option<Arc<Camera>>) {
     let camera = Arc::new(init_camera(Point3::new(
-        abw_config.geodetic_position.0,
-        abw_config.geodetic_position.1,
-        abw_config.geodetic_position.2,
+        abw_config.geodetic_position.lat,
+        abw_config.geodetic_position.lon,
+        abw_config.geodetic_position.alt_m,
     )));
 
     let debug_camera_option = if abw_config.use_debug_camera {
         Some(Arc::new(init_camera(Point3::new(
-            abw_config.debug_camera_geodetic_position.0,
-            abw_config.debug_camera_geodetic_position.1,
-            abw_config.debug_camera_geodetic_position.2,
+            abw_config.debug_camera_geodetic_position.lat,
+            abw_config.debug_camera_geodetic_position.lon,
+            abw_config.debug_camera_geodetic_position.alt_m,
         ))))
     } else {
         None

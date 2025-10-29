@@ -58,10 +58,6 @@ impl SceneGraph {
         })
     }
 
-    pub fn get_renderable(&self, key: TileKey) -> Option<LockedRenderTilePtr> {
-        self.renderable.get(&key).cloned()
-    }
-
     pub fn add_info(&mut self, (msg, info): (TileMessage, TileInfo)) {
         let ptr = self.ensure_entry(msg.key).clone();
         let mut rt = ptr.write().expect("RenderTile RwLock poisoned");

@@ -29,3 +29,5 @@ target/
 **/draco/**/cmake_install.cmake
 
 **/node_modules/**
+
+.env

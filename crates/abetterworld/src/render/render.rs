@@ -5,8 +5,8 @@ use crate::{
     dynamics::FrustumPlanes,
     helpers::{is_bounding_volume_visible, AbwError, Uniforms},
     render::{
-        build_instances, get_renderable_tile, rebuild_tile_bg, upload_instances,
-        with_renderable_state, DebugVertex, RenderableMap, SIZE_OF_VOLUME,
+        self, build_instances, get_renderable_tile, rebuild_tile_bg, upload_instances,
+        with_renderable_state, DebugVertex, RenderableMap, SceneGraph, SIZE_OF_VOLUME,
     },
     world::WorldPrivate,
 };
@@ -19,18 +19,18 @@ pub struct RenderFrame {
     pub tiles: Vec<TileKey>,
 }
 
-fn build_frame(
-    renderables: &RenderableMap,
-    tile_culling: bool,
-    planes: FrustumPlanes,
-) -> RenderFrame {
+fn build_frame(scene: &SceneGraph, tile_culling: bool, planes: FrustumPlanes) -> RenderFrame {
     // --- Phase 2: frontier traversal from roots ---
     let mut frame = RenderFrame { tiles: Vec::new() };
+
+    let renderables = &scene.renderable;
 
     for (_hash_key, renderable_tile) in renderables.iter() {
         let tile_guard = renderable_tile.read().unwrap();
 
         if let Some(_renderable) = &tile_guard.renderable_state {
+            // do we
+
             frame.tiles.push(tile_guard.key);
         }
     }
@@ -194,8 +194,7 @@ impl RenderAndUpdate {
                 world.camera.planes()
             };
 
-            let renderable_tiles = &world.content.renderable;
-            self.frame = build_frame(renderable_tiles, tile_culling, planes);
+            self.frame = build_frame(&world.content, tile_culling, planes);
         }
         {
             let renderable_instances =
