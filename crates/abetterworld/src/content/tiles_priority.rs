@@ -1,3 +1,5 @@
+use std::any;
+
 use crate::{
     content::{
         ChildrenKeys, RefineMode, TileInfo, TileManager, TileSource, TileSourceContent,
@@ -16,12 +18,17 @@ pub struct Pri<'a> {
     pub priority: f64,
 }
 
+pub struct PriorityTiles<'a> {
+    pub inview: Vec<Pri<'a>>,
+    pub outofview: Vec<Pri<'a>>,
+    pub still_loading: Vec<Pri<'a>>,
+}
+
 pub fn gather_priority_tiles<'a>(
     tile_manager: &TileManager,
     camera_data: &CameraRefinementData,
     tile: &'a TileSource,
-    out_inview: &mut Vec<Pri<'a>>,
-    out_outofview: &mut Vec<Pri<'a>>,
+    out: &mut PriorityTiles<'a>,
     parent_visual_id: Option<u64>,
 ) -> Result<(), AbwError> {
     let mut current_parent_visual_id = parent_visual_id;
@@ -45,6 +52,15 @@ pub fn gather_priority_tiles<'a>(
                     current_parent_visual_id = Some(content.key);
                     found_visual_tile = Some(priority_tile);
                 }
+                Some(TileSourceContentState::LoadingTileSet { .. }) => {
+                    out.still_loading.push(Pri {
+                        tile,
+                        tile_content: content,
+                        tile_info: None,
+                        parent_visual_id: current_parent_visual_id,
+                        priority: f64::MAX, // lowest priority
+                    });
+                }
                 Some(TileSourceContentState::LoadedTileSet { permanent }) => {
                     if let Some(permanent_root) = permanent {
                         if let Some(root) = &permanent_root.root {
@@ -52,8 +68,7 @@ pub fn gather_priority_tiles<'a>(
                                 tile_manager,
                                 camera_data,
                                 root,
-                                out_inview,
-                                out_outofview,
+                                out,
                                 current_parent_visual_id,
                             )?;
                         }
@@ -70,8 +85,7 @@ pub fn gather_priority_tiles<'a>(
                         tile_manager,
                         camera_data,
                         child,
-                        out_inview,
-                        out_outofview,
+                        out,
                         current_parent_visual_id,
                     )?;
                 }
@@ -80,16 +94,33 @@ pub fn gather_priority_tiles<'a>(
 
         if let Some(found_visual_tile) = &mut found_visual_tile {
             let parent_key = found_visual_tile.tile_content.key;
-            let children: ChildrenKeys = out_inview
+
+            let any_children_loading = out
+                .still_loading
                 .iter()
-                .chain(out_outofview.iter())
-                .filter_map(|p| {
-                    (p.parent_visual_id == Some(parent_key)).then_some(p.tile_content.key)
-                })
-                .collect();
+                .any(|p| p.parent_visual_id == Some(parent_key));
+
+            let children_opt = if !any_children_loading {
+                let children: ChildrenKeys = out
+                    .inview
+                    .iter()
+                    .chain(out.outofview.iter())
+                    .filter_map(|p| {
+                        (p.parent_visual_id == Some(parent_key)).then_some(p.tile_content.key)
+                    })
+                    .collect();
+
+                if children.is_empty() {
+                    None
+                } else {
+                    Some(children)
+                }
+            } else {
+                None
+            };
 
             found_visual_tile.tile_info = Some(TileInfo {
-                children: Some(children),
+                children: children_opt,
                 parent: found_visual_tile.parent_visual_id,
                 volume: tile.bounding_volume.clone(),
                 refine: RefineMode::Replace, //tile.refine,
@@ -100,9 +131,9 @@ pub fn gather_priority_tiles<'a>(
         // borrow ends here; now take ownership
         if let Some(found_visual_tile) = found_visual_tile.take() {
             if is_bounding_volume_visible(&camera_data.planes, &tile.bounding_volume.to_aabb()) {
-                out_inview.push(found_visual_tile);
+                out.inview.push(found_visual_tile);
             } else {
-                out_outofview.push(found_visual_tile);
+                out.outofview.push(found_visual_tile);
             }
         }
     }
@@ -114,25 +145,22 @@ pub fn priortize<'a>(
     tile_manager: &TileManager,
     camera_data: &CameraRefinementData,
     tile: &'a TileSource,
-    out: &mut Vec<Pri<'a>>,
+    out_tiles: &mut Vec<Pri<'a>>,
 ) -> Result<(), AbwError> {
-    let mut inview: Vec<Pri> = Vec::new();
-    let mut outofview: Vec<Pri> = Vec::new();
-    gather_priority_tiles(
-        tile_manager,
-        camera_data,
-        tile,
-        &mut inview,
-        &mut outofview,
-        None,
-    )?;
+    let mut out: PriorityTiles<'a> = PriorityTiles {
+        inview: Vec::new(),
+        outofview: Vec::new(),
+        still_loading: Vec::new(),
+    };
+    gather_priority_tiles(tile_manager, camera_data, tile, &mut out, None)?;
 
     // sort by priority (distance)
-    inview.sort_unstable_by(|a, b| a.priority.partial_cmp(&b.priority).unwrap());
-    outofview.sort_unstable_by(|a, b| a.priority.partial_cmp(&b.priority).unwrap());
-
-    out.extend(inview);
-    out.extend(outofview);
+    out.inview
+        .sort_unstable_by(|a, b| a.priority.partial_cmp(&b.priority).unwrap());
+    out.outofview
+        .sort_unstable_by(|a, b| a.priority.partial_cmp(&b.priority).unwrap());
+    out_tiles.extend(out.inview);
+    out_tiles.extend(out.outofview);
 
     Ok(())
 }

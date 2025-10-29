@@ -45,7 +45,7 @@ fn build_up(
 
                     for child_key in children_keys.iter() {
                         if !scene.good_to_go(*child_key) {
-                            //missing_any_children = true;
+                            missing_any_children = true;
                             break;
                         }
                     }
