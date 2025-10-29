@@ -1,12 +1,12 @@
-use cgmath::{EuclideanSpace, InnerSpace, Point3};
+use cgmath::Point3;
 
 use crate::{
-    content::{Ray, TileKey, MAX_RENDERABLE_TILES_US},
+    content::{TileKey, MAX_RENDERABLE_TILES_US},
     dynamics::FrustumPlanes,
-    helpers::{is_bounding_volume_visible, AbwError, Uniforms},
+    helpers::{AbwError, Uniforms},
     render::{
-        self, build_instances, get_renderable_tile, rebuild_tile_bg, upload_instances,
-        with_renderable_state, DebugVertex, RenderableMap, SceneGraph, SIZE_OF_VOLUME,
+        build_instances, get_renderable_tile, rebuild_tile_bg, upload_instances,
+        with_renderable_state, DebugVertex, SceneGraph,
     },
     world::WorldPrivate,
 };
@@ -19,19 +19,67 @@ pub struct RenderFrame {
     pub tiles: Vec<TileKey>,
 }
 
+fn build_up(
+    scene: &SceneGraph,
+    root: TileKey,
+    tile_culling: bool,
+    planes: FrustumPlanes,
+    frame: &mut RenderFrame,
+) -> bool {
+    let renderables = &scene.renderable;
+
+    if !scene.good_to_go(root) {
+        return false;
+    }
+
+    get_renderable_tile(renderables, root)
+        .ok()
+        .and_then(|renderable_tile| {
+            let tile_guard = renderable_tile.read().unwrap();
+
+            let mut add_this_tile = true;
+
+            if let Some(tile_info) = &tile_guard.tile_info {
+                if let Some(children_keys) = &tile_info.children {
+                    let mut missing_any_children = false;
+
+                    for child_key in children_keys.iter() {
+                        if !scene.good_to_go(*child_key) {
+                            //missing_any_children = true;
+                            break;
+                        }
+                    }
+
+                    if !missing_any_children && children_keys.len() > 0 {
+                        add_this_tile = false;
+
+                        for child_key in children_keys.iter() {
+                            build_up(scene, *child_key, tile_culling, planes, frame);
+                        }
+                    }
+                }
+            }
+
+            if add_this_tile {
+                frame.tiles.push(tile_guard.key);
+            }
+
+            Some(true)
+        });
+
+    true
+}
+
 fn build_frame(scene: &SceneGraph, tile_culling: bool, planes: FrustumPlanes) -> RenderFrame {
     // --- Phase 2: frontier traversal from roots ---
     let mut frame = RenderFrame { tiles: Vec::new() };
 
     let renderables = &scene.renderable;
 
-    for (_hash_key, renderable_tile) in renderables.iter() {
-        let tile_guard = renderable_tile.read().unwrap();
-
-        if let Some(_renderable) = &tile_guard.renderable_state {
-            // do we
-
-            frame.tiles.push(tile_guard.key);
+    for (key, _renderable_tile) in renderables.iter() {
+        //frame.tiles.push(*key);
+        if scene.is_root_and_ready(*key) {
+            let _ = build_up(scene, *key, tile_culling, planes, &mut frame);
         }
     }
 

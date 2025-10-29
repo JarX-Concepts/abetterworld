@@ -58,6 +58,24 @@ impl SceneGraph {
         })
     }
 
+    pub fn good_to_go(&self, key: TileKey) -> bool {
+        if let Some(ptr) = self.renderable.get(&key) {
+            let rt = ptr.read().expect("RenderTile RwLock poisoned");
+            return rt.tile_info.is_some() && rt.renderable_state.is_some();
+        }
+        false
+    }
+
+    pub fn is_root_and_ready(&self, root_key: TileKey) -> bool {
+        if let Some(ptr) = self.renderable.get(&root_key) {
+            let rt = ptr.read().expect("RenderTile RwLock poisoned");
+            if let Some(tile_info) = &rt.tile_info {
+                return tile_info.parent.is_none() && rt.renderable_state.is_some();
+            }
+        }
+        false
+    }
+
     pub fn add_info(&mut self, (msg, info): (TileMessage, TileInfo)) {
         let ptr = self.ensure_entry(msg.key).clone();
         let mut rt = ptr.write().expect("RenderTile RwLock poisoned");

@@ -10,7 +10,7 @@ pub const MAX_RENDERABLE_NODES_US: usize = MAX_RENDERABLE_NODES as usize;
 
 pub type TileKey = u64;
 pub type Gen = u32;
-pub type ChildrenKeys = SmallVec<[TileKey; 4]>;
+pub type ChildrenKeys = SmallVec<[TileKey; 8]>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TilePipelineMessage {

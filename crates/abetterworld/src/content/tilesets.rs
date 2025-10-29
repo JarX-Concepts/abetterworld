@@ -469,7 +469,7 @@ pub fn parser_iteration(
                             }
 
                             pipeline_state.mark_tile_loaded(pri.tile_content.key);
-                        } else if !pipeline_state.has_tile_with_children(pri.tile_content.key) {
+                        } else {
                             if let Some(tile_info) = &pri.tile_info {
                                 if !pipeline_state
                                     .compare_tile_info(pri.tile_content.key, tile_info)
@@ -524,11 +524,11 @@ pub fn parser_thread(
     let pipeline_state = TileManager::new();
 
     let mut last_cam_gen = 0;
+    let mut gen = 1;
     loop {
         //let span = span!(Level::TRACE, "pager pass");
         //let _enter = span.enter();
 
-        let mut gen = 0;
         let new_gen = cam.generation();
         if new_gen != last_cam_gen {
             let camera_data = cam.refinement_data();

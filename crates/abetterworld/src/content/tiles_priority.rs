@@ -45,7 +45,7 @@ pub fn gather_priority_tiles<'a>(
                     current_parent_visual_id = Some(content.key);
                     found_visual_tile = Some(priority_tile);
                 }
-                Some(TileSourceContentState::LoadedTileSet { permanent, .. }) => {
+                Some(TileSourceContentState::LoadedTileSet { permanent }) => {
                     if let Some(permanent_root) = permanent {
                         if let Some(root) = &permanent_root.root {
                             gather_priority_tiles(
@@ -79,24 +79,22 @@ pub fn gather_priority_tiles<'a>(
         }
 
         if let Some(found_visual_tile) = &mut found_visual_tile {
-            if !tile_manager.has_tile_with_children(found_visual_tile.tile_content.key) {
-                let parent_key = found_visual_tile.tile_content.key;
-                let children: ChildrenKeys = out_inview
-                    .iter()
-                    .chain(out_outofview.iter())
-                    .filter_map(|p| {
-                        (p.parent_visual_id == Some(parent_key)).then_some(p.tile_content.key)
-                    })
-                    .collect();
+            let parent_key = found_visual_tile.tile_content.key;
+            let children: ChildrenKeys = out_inview
+                .iter()
+                .chain(out_outofview.iter())
+                .filter_map(|p| {
+                    (p.parent_visual_id == Some(parent_key)).then_some(p.tile_content.key)
+                })
+                .collect();
 
-                found_visual_tile.tile_info = Some(TileInfo {
-                    children: Some(children),
-                    parent: current_parent_visual_id,
-                    volume: tile.bounding_volume.clone(),
-                    refine: RefineMode::Replace, //tile.refine,
-                    geometric_error: tile.geometric_error,
-                });
-            }
+            found_visual_tile.tile_info = Some(TileInfo {
+                children: Some(children),
+                parent: found_visual_tile.parent_visual_id,
+                volume: tile.bounding_volume.clone(),
+                refine: RefineMode::Replace, //tile.refine,
+                geometric_error: tile.geometric_error,
+            });
         }
 
         // borrow ends here; now take ownership
