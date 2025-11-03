@@ -1,17 +1,13 @@
-use tracing::{event, span, Level};
-
 use crate::{
-    content::{
-        parser_thread, tiles::wait_and_load_content, Client, TileManager, TilePipelineMessage,
-    },
+    content::{parser_thread, tiles::wait_and_load_content, Client, TilePipelineMessage},
     dynamics::Camera,
     helpers::{
         channel::{channel, Sender},
         enter_runtime, AbwError, PlatformAwait,
     },
-    set_thread_name, Source,
+    set_thread_name, spawn_detached_thread, Source,
 };
-use std::{sync::Arc, thread};
+use std::sync::Arc;
 
 pub fn start_pager(
     source: Source,
@@ -28,7 +24,7 @@ pub fn start_pager(
         let client_clone = client.clone();
         let pager_cam = Arc::clone(&camera_src);
         let source_clone = source.clone();
-        thread::spawn(move || {
+        spawn_detached_thread!({
             set_thread_name!("Pager");
 
             parser_thread(&source_clone, pager_cam, &mut loader_tx, client_clone, true)
@@ -43,11 +39,13 @@ pub fn start_pager(
             let mut render_time = render_tx.clone();
             let mut rx = loader_rx.clone();
 
-            thread::spawn(move || {
+            spawn_detached_thread!({
                 set_thread_name!("Download/Decode Worker");
+
                 let _enter = enter_runtime();
                 wait_and_load_content(&client_clone, &mut rx, &mut render_time)
                     .platform_await()
+                    .await
                     .expect("Failed to load content in worker thread");
             });
         }

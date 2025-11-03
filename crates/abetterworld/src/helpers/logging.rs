@@ -1,4 +1,4 @@
-#[cfg(feature = "profile-tracy")]
+#[cfg(all(feature = "profile-tracy", not(target_arch = "wasm32")))]
 pub fn init_profiling() {
     use tracing_subscriber::{layer::SubscriberExt, Registry};
     let tracy_layer = tracing_tracy::TracyLayer::default();
@@ -11,16 +11,15 @@ pub fn init_profiling() {
     tracy_client::frame_mark();
 }
 
-#[cfg(not(feature = "profile-tracy"))]
+#[cfg(target_arch = "wasm32")]
 pub fn init_profiling() {}
 
 #[macro_export]
 macro_rules! set_thread_name {
     ($name:expr) => {
-        #[cfg(feature = "profile-tracy")]
+        #[cfg(all(feature = "profile-tracy", not(target_arch = "wasm32")))]
         {
             tracy_client::set_thread_name!($name);
-
             tracy_client::frame_mark();
         }
     };

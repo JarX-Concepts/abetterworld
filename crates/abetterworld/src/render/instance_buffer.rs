@@ -1,12 +1,9 @@
-#[cfg(not(target_arch = "wasm32"))]
-use std::sync::RwLock;
-
-#[cfg(not(target_arch = "wasm32"))]
+use crate::render::with_renderable_state;
 use crate::render::RenderFrame;
-#[cfg(not(target_arch = "wasm32"))]
 use crate::render::RenderableMap;
 use cgmath::Matrix4;
 use cgmath::Point3;
+use std::sync::RwLock;
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Debug)]
@@ -87,9 +84,6 @@ pub fn build_instances(
         .tiles
         .par_iter()
         .map(|tile_id| {
-            use crate::render::with_renderable_state;
-
-            // Build a Vec for this tile; if tile/state missing, return empty Vec.
             with_renderable_state(renderables, *tile_id, |tile| {
                 tile.nodes
                     .iter()
@@ -105,17 +99,25 @@ pub fn build_instances(
 }
 
 #[cfg(target_arch = "wasm32")]
-pub fn build_instances(frame: &RenderFrame, eye_pos: &Point3<f64>) -> Vec<Instance3x4> {
-    frame
-        .tiles
-        .iter()
-        .flat_map(|tile| {
-            tile.nodes.iter().map(move |b| {
-                // Let the tile/state build the instance for this node.
-                Instance3x4::build(b.transform, eye_pos)
-            })
-        })
-        .collect()
+pub fn build_instances(
+    frame: &RenderFrame,
+    eye_pos: &Point3<f64>,
+    renderables: &RenderableMap,
+) -> Vec<Instance3x4> {
+    let mut out: Vec<Instance3x4> = Vec::new();
+
+    for tile_id in &frame.tiles {
+        // If tile/state missing, skip silently.
+        let _ = with_renderable_state(renderables, *tile_id, |tile| {
+            // Reserve to reduce reallocations.
+            out.reserve(tile.nodes.len());
+            for n in &tile.nodes {
+                out.push(Instance3x4::build(n.transform, eye_pos));
+            }
+        });
+    }
+
+    out
 }
 
 pub fn upload_instances(queue: &wgpu::Queue, ibuf: &InstanceBuffer, instances: &[Instance3x4]) {

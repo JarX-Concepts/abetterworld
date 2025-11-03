@@ -54,3 +54,6 @@ where
 pub fn enter_runtime() -> tokio::runtime::EnterGuard<'static> {
     native::HANDLE.enter()
 }
+
+#[cfg(target_arch = "wasm32")]
+pub fn enter_runtime() {}

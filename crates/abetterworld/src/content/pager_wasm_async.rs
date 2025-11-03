@@ -22,11 +22,17 @@ use wasm_bindgen_futures::spawn_local;
 
 static ACTIVE_JOBS: Lazy<AtomicI32> = Lazy::new(|| AtomicI32::new(0));
 
-pub fn start_pager(
+/* pub fn start_pager(
     source: Source,
     camera_src: Arc<Camera>,
     tile_mgr: Arc<TileManager>,
     render_tx: Sender<Tile>,
+) -> Result<(), AbwError> { */
+
+pub fn start_pager(
+    source: Source,
+    camera_src: Arc<Camera>,
+    render_tx: Sender<TilePipelineMessage>,
 ) -> Result<(), AbwError> {
     spawn_local(async move {
         match init_wasm_indexdb_on_every_thread().await {
@@ -40,34 +46,6 @@ pub fn start_pager(
             tile_mgr.clone(),
             render_tx.clone(),
         );
-
-        // run update_pager every 2 seconds
-        let mut last_cam_gen = 0;
-        let decoder = Arc::new(DracoClient::new());
-        loop {
-            let new_gen = camera_src.generation();
-            if new_gen != last_cam_gen {
-                log::info!("Camera state has changed; updating pager");
-                last_cam_gen = new_gen;
-
-                if let Err(e) = update_pager(
-                    source.clone(),
-                    camera_src.clone(),
-                    tile_mgr.clone(),
-                    render_tx.clone(),
-                    decoder.clone(),
-                )
-                .map_err(|e| {
-                    log::error!("Failed to update pager: {:?}", e);
-                    e
-                }) {
-                    log::error!("update_pager error: {:?}", e);
-                }
-                log::info!("update_pager done");
-            }
-            // wait 2 seconds
-            TimeoutFuture::new(2000).await;
-        }
     });
 
     Ok(())

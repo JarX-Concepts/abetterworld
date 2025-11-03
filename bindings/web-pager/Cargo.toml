@@ -1,0 +1,43 @@
+[package]
+name = "abw_web_pager"
+version = "0.1.0"
+edition = "2021"
+resolver = "2"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+winit = { workspace = true }
+wgpu = { workspace = true }
+web-sys = { version = "0.3", features = [
+    "default",
+    "Document",
+    "Navigator",
+    "Node",
+    "NodeList",
+    "HtmlCanvasElement",
+    "HtmlElement",
+    "OffscreenCanvas",
+    "ImageBitmap",
+    "ImageBitmapRenderingContext",
+    "Window",
+    "WorkerGlobalScope",
+    "WorkerNavigator",
+    "CssStyleDeclaration",
+    # Needed by webgpu_sys
+    "Event",
+    "EventTarget",
+    "console"
+] }
+pollster = "0.4"
+wasm-bindgen = { workspace = true }
+wasm-bindgen-futures = { workspace = true }
+wasm-bindgen-test = { workspace = true }
+console_error_panic_hook = "0.1"
+abetterworld = { path = "../../crates/abetterworld", default-features = false }
+log = "0.4"
+console_log = { workspace = true }
+
+[build]
+target = "wasm32-unknown-unknown"

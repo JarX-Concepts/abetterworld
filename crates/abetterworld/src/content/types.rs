@@ -8,8 +8,9 @@ pub const MAX_RENDERABLE_NODES: u64 = 1024;
 pub const MAX_RENDERABLE_TILES_US: usize = MAX_RENDERABLE_TILES as usize;
 pub const MAX_RENDERABLE_NODES_US: usize = MAX_RENDERABLE_NODES as usize;
 
-pub type TileKey = u64;
 pub type Gen = u32;
+
+pub type TileKey = u64;
 pub type ChildrenKeys = SmallVec<[TileKey; 8]>;
 
 #[derive(Debug, Clone, PartialEq)]

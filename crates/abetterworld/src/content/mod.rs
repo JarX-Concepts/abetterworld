@@ -25,12 +25,5 @@ pub use volumes::*;
 
 pub mod pager_state;
 
-#[cfg(target_arch = "wasm32")]
-pub mod pager_wasm_async;
-#[cfg(target_arch = "wasm32")]
-pub use pager_wasm_async::start_pager;
-
-#[cfg(not(target_arch = "wasm32"))]
 pub mod pager_native;
-#[cfg(not(target_arch = "wasm32"))]
 pub use pager_native::start_pager;
