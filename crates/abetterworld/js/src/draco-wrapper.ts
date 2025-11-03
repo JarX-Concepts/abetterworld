@@ -1,28 +1,33 @@
 /// <reference lib="webworker" />
 import { DracoRequest, DracoResponse, DracoControl } from "./types";
+const inFlight = new Set<number>(); // jobIds for coarse cancellation
 
 const DRACO_JS =
   "https://www.gstatic.com/draco/versioned/decoders/1.5.7/draco_decoder.js";
 const DRACO_WASM =
   "https://www.gstatic.com/draco/versioned/decoders/1.5.7/draco_decoder.wasm";
 
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore - Emscripten injects global factory
-let DracoDecoderModuleFactory: (opts: any) => Promise<any>;
-
 let draco: any | null = null;
-const inFlight = new Set<number>(); // jobIds for coarse cancellation
+let dracoReady: Promise<any> | null = null;
 
 async function ensureDraco(): Promise<any> {
   if (draco) return draco;
+  if (!dracoReady) {
+    dracoReady = (async () => {
+      // 1) load the script into this classic worker’s global scope
+      (self as any).importScripts(DRACO_JS);
 
-  draco = await (self as any).DracoDecoderModule({
-    wasmBinaryFile: DRACO_WASM,
+      // 2) create the module; tell it where to find the .wasm
+      const mod = await (self as any).DracoDecoderModule({
+        locateFile: (path: string) =>
+          path.endsWith(".wasm") ? DRACO_WASM : path,
+        onModuleLoaded: () => console.log("[Draco] Decoder ready"),
+      });
 
-    onModuleLoaded: () => {
-      console.log("[Draco] Decoder module loaded.");
-    },
-  });
+      return mod;
+    })();
+  }
+  draco = await dracoReady;
   return draco;
 }
 

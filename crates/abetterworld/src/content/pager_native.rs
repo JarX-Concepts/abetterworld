@@ -1,3 +1,4 @@
+use crate::cache::init_wasm_indexdb_on_every_thread;
 use crate::{
     content::{parser_thread, tiles::wait_and_load_content, Client, TilePipelineMessage},
     dynamics::Camera,
@@ -27,7 +28,13 @@ pub fn start_pager(
         spawn_detached_thread!({
             set_thread_name!("Pager");
 
+            match init_wasm_indexdb_on_every_thread().await {
+                Ok(_) => log::info!("Initialized IndexedDB"),
+                Err(e) => log::error!("Failed to initialize IndexedDB: {:?}", e),
+            }
+
             parser_thread(&source_clone, pager_cam, &mut loader_tx, client_clone, true)
+                .await
                 .expect("Failed to start parser thread");
         });
     }

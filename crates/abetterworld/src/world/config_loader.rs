@@ -8,6 +8,7 @@ pub enum LoadConfigError {
     Build(#[from] config::ConfigError),
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn load_config() -> Result<Config, LoadConfigError> {
     let _ = dotenvy::dotenv();
 
@@ -35,4 +36,12 @@ pub fn load_config() -> Result<Config, LoadConfigError> {
     }
 
     Ok(cfg)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn load_config() -> Result<Config, LoadConfigError> {
+    // return error
+    Err(LoadConfigError::Build(config::ConfigError::Message(
+        "Config loading not supported on wasm32".to_string(),
+    )))
 }
