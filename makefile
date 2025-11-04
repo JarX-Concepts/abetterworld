@@ -22,7 +22,7 @@ start-web-release:
 	$(MAKE) build-web-release
 	mkdir -p examples/web/pkg
 	cp -r bindings/web/release/pkg/* examples/web/pkg
-	cp -r crates/abetterworld/js/dist/draco-wrapper.js examples/web/pkg
+	#cp -r crates/abetterworld/js/dist/draco-wrapper.js examples/web/pkg
 	cd examples/web && python3 -m http.server 8088
 
 test-web:

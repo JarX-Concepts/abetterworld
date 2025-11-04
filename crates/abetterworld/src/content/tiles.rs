@@ -53,6 +53,8 @@ async fn process_content_bytes(
     load: &mut TileContent,
     bytes: Vec<u8>,
 ) -> Result<(), AbwError> {
+    let _span = tracing::debug_span!("process_content_bytes",).entered();
+
     let (gltf_json, gltf_bin) =
         parse_glb(&bytes).tile_loading(&format!("Failed to parse GLB: URI: {}", load.uri,))?;
 

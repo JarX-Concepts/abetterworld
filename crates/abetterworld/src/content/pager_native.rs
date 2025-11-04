@@ -1,7 +1,7 @@
 use crate::cache::init_wasm_indexdb_on_every_thread;
 use crate::content::tiles_priority::{priortize, Pri};
 use crate::content::{
-    go, Gen, TileContent, TileKey, TileManager, TileMessage, TileSourceContent,
+    go, Gen, ParsingState, TileContent, TileKey, TileManager, TileMessage, TileSourceContent,
     TileSourceContentState,
 };
 use crate::dynamics::CameraRefinementData;
@@ -46,7 +46,6 @@ pub fn start_pager(
                 &mut loader_tx,
                 &mut render_time,
                 client_clone,
-                true,
             )
             .await
             .expect("Failed to start parser thread");
@@ -130,8 +129,10 @@ pub fn parser_iteration(
     decoder_tx: &mut Sender<TilePipelineMessage>,
     renderer_tx: &mut Sender<TilePipelineMessage>,
     gen: Gen,
-) -> Result<(), AbwError> {
-    go(source, client, camera_data, root)?;
+) -> Result<ParsingState, AbwError> {
+    let mut parsing_state = go(source, client, camera_data, root)?;
+
+    let _span = tracing::debug_span!("parser_iteration",).entered();
 
     if let Some(tile) = root {
         if let Some(TileSourceContentState::LoadedTileSet { permanent, .. }) = &tile.loaded {
@@ -146,6 +147,7 @@ pub fn parser_iteration(
                     for pri in priority_list.iter() {
                         if !pipeline_state.is_tile_loaded(pri.tile_content.key) {
                             if let Err(_err) = send_load_tile(pri, decoder_tx, gen) {
+                                parsing_state = ParsingState::Instable;
                                 // the channel is full, we will try again next time
                                 break;
                             }
@@ -158,6 +160,8 @@ pub fn parser_iteration(
                         if let Some(tile_info) = &pri.tile_info {
                             if !pipeline_state.compare_tile_info(pri.tile_content.key, tile_info) {
                                 if let Err(_err) = send_update_tile(pri, renderer_tx, gen) {
+                                    parsing_state = ParsingState::Instable;
+
                                     // the channel is full, we will try again next time
                                     break;
                                 }
@@ -192,7 +196,7 @@ pub fn parser_iteration(
             }
         }
     }
-    Ok(())
+    Ok(parsing_state)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -214,21 +218,21 @@ pub async fn parser_thread(
     decoder_tx: &mut Sender<TilePipelineMessage>,
     renderer_tx: &mut Sender<TilePipelineMessage>,
     client: Client,
-    enable_sleep: bool,
 ) -> Result<(), AbwError> {
     let mut root = None;
     let pipeline_state = TileManager::new();
 
     let mut last_cam_gen = 0;
-    let mut gen = 1;
+    let mut parsing_gen = 1;
+    let mut parsing_state = ParsingState::Instable;
     loop {
         //let span = span!(Level::TRACE, "pager pass");
         //let _enter = span.enter();
 
-        let new_gen = cam.generation();
-        if new_gen != last_cam_gen {
+        let new_cam_gen = cam.generation();
+        if new_cam_gen != last_cam_gen || parsing_state == ParsingState::Instable {
             let camera_data = cam.refinement_data();
-            parser_iteration(
+            parsing_state = parser_iteration(
                 source,
                 &client,
                 &camera_data,
@@ -236,20 +240,18 @@ pub async fn parser_thread(
                 &pipeline_state,
                 decoder_tx,
                 renderer_tx,
-                gen,
+                parsing_gen,
             )?;
 
-            //last_cam_gen = new_gen;
-            gen += 1;
+            last_cam_gen = new_cam_gen;
+            parsing_gen += 1;
         } else {
-            // No camera movement, sleep briefly to avoid busy-waiting
-            if enable_sleep {
-                //thread::sleep(Duration::from_millis(10));
-            }
+            sleep_ms(100).await;
         }
 
-        // on wasm sleep for a bit to yield to other tasks
         sleep_ms(100).await;
+
+        // on wasm sleep for a bit to yield to other tasks
 
         //event!(Level::DEBUG, "something happened inside my_span");
 

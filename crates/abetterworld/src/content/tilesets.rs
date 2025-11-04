@@ -8,6 +8,12 @@ use std::sync::{Arc, RwLock};
 use tracing::{event, Level};
 use url::Url;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParsingState {
+    Stable,
+    Instable,
+}
+
 #[derive(Debug, Deserialize, Default, Clone)]
 pub struct TileSourceRoot {
     pub root: Option<TileSource>,
@@ -161,7 +167,11 @@ fn needs_refinement(
     sse > sse_threshold
 }
 
-fn load_tile(client: &Client, key: &String, tile: &mut TileSourceContent) -> Result<(), AbwError> {
+fn load_tile(
+    client: &Client,
+    key: &String,
+    tile: &mut TileSourceContent,
+) -> Result<ParsingState, AbwError> {
     tile.key = hash_uri(&tile.uri);
 
     if is_nested_tileset(&tile.uri) {
@@ -206,12 +216,12 @@ fn load_tile(client: &Client, key: &String, tile: &mut TileSourceContent) -> Res
             }
         });
 
-        return Ok(());
+        return Ok(ParsingState::Instable);
     } else if is_visual(&tile.uri) {
         // Just a visual tile (glb)
         tile.loaded = Some(TileSourceContentState::Visual);
 
-        return Ok(());
+        return Ok(ParsingState::Stable);
     }
 
     return Err(AbwError::TileLoading(
@@ -244,7 +254,7 @@ fn process_tile_content(
     camera: &CameraRefinementData,
     tileset: &Option<&TileSourceContent>,
     tile_content: &mut TileSourceContent,
-) -> Result<(), AbwError> {
+) -> Result<ParsingState, AbwError> {
     if tile_content.loaded.is_none() {
         build_child_tile_content(tileset, tile_content);
 
@@ -261,7 +271,7 @@ fn process_tile_content(
     // Move `loaded` out to avoid overlapping borrows of `tile_content`
     let mut loaded = tile_content.loaded.take();
 
-    let new_loaded = match &mut loaded {
+    let (new_loaded, parsing_state) = match &mut loaded {
         Some(TileSourceContentState::LoadingTileSet { shared }) => {
             let guard = shared.read().expect("tileset shared lock poisoned");
             if guard.done {
@@ -270,10 +280,10 @@ fn process_tile_content(
                         root: guard.root.clone(),
                     })),
                 });
-                new_loaded
+                (new_loaded, ParsingState::Instable)
             } else {
                 drop(guard);
-                loaded
+                (loaded, ParsingState::Instable)
             }
         }
 
@@ -283,18 +293,18 @@ fn process_tile_content(
             if let Some(root) = permanent.as_mut().and_then(|p| p.root.as_mut()) {
                 process_tile(source, client, camera, &Some(tile_content), root)?;
             }
-            loaded
+            (loaded, ParsingState::Stable)
         }
 
-        Some(TileSourceContentState::Visual { .. }) => loaded,
+        Some(TileSourceContentState::Visual { .. }) => (loaded, ParsingState::Stable),
 
-        _ => loaded,
+        _ => (loaded, ParsingState::Stable),
     };
 
     // Put `loaded` back
     tile_content.loaded = new_loaded;
 
-    Ok(())
+    Ok(parsing_state)
 }
 
 pub fn force_refinement(tile: &mut TileSource, flag: Option<bool>, skip_parent: bool) {
@@ -328,10 +338,10 @@ pub fn process_tile(
     camera: &CameraRefinementData,
     tileset: &Option<&TileSourceContent>,
     tile: &mut TileSource,
-) -> Result<(), AbwError> {
-    match &mut tile.content {
+) -> Result<ParsingState, AbwError> {
+    let mut parsing_state = match &mut tile.content {
         Some(content) => process_tile_content(source, client, camera, tileset, content)?,
-        None => {}
+        None => ParsingState::Stable,
     };
 
     let needs_refinement = needs_refinement(
@@ -347,14 +357,18 @@ pub fn process_tile(
     if needs_refinement {
         if let Some(children) = tile.children.as_mut() {
             for child in children.iter_mut() {
-                process_tile(source, client, camera, tileset, child)?;
+                let child_parsing_state = process_tile(source, client, camera, tileset, child)?;
+
+                if parsing_state == ParsingState::Stable {
+                    parsing_state = child_parsing_state;
+                }
             }
         }
     } else {
         force_refinement(tile, Some(false), true);
     }
 
-    Ok(())
+    Ok(parsing_state)
 }
 
 pub fn go(
@@ -362,7 +376,7 @@ pub fn go(
     client: &Client,
     camera: &CameraRefinementData,
     root: &mut Option<TileSourceContent>,
-) -> Result<(), AbwError> {
+) -> Result<ParsingState, AbwError> {
     if root.is_none() {
         match source {
             Source::Google { key, url } => {
@@ -382,6 +396,6 @@ pub fn go(
 
     let mut tile = root.as_mut().unwrap();
     build_child_tile_content(&None, tile);
-    let _ = process_tile_content(source, client, camera, &None, &mut tile)?;
-    Ok(())
+    let parsing_state = process_tile_content(source, client, camera, &None, &mut tile)?;
+    Ok(parsing_state)
 }
