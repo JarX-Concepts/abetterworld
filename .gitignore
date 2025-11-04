@@ -31,3 +31,4 @@ target/
 **/node_modules/**
 
 .env
+abw_wasm_config.json

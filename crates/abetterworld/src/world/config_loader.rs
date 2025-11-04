@@ -6,6 +6,9 @@ use thiserror::Error;
 pub enum LoadConfigError {
     #[error("config build error: {0}")]
     Build(#[from] config::ConfigError),
+
+    #[error("config deserialize error: {0}")]
+    De(#[from] serde_json::Error),
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -40,8 +43,10 @@ pub fn load_config() -> Result<Config, LoadConfigError> {
 
 #[cfg(target_arch = "wasm32")]
 pub fn load_config() -> Result<Config, LoadConfigError> {
-    // return error
-    Err(LoadConfigError::Build(config::ConfigError::Message(
-        "Config loading not supported on wasm32".to_string(),
-    )))
+    const CONFIG_JSON: &str = include_str!("../../../../abw_wasm_config.json");
+
+    // Parse into your typed Config
+    let cfg: Config = serde_json::from_str(CONFIG_JSON)?;
+
+    Ok(cfg)
 }

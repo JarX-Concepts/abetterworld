@@ -1,0 +1,22 @@
+{
+  "cache_dir": "./tilesets",
+  "use_debug_camera": false,
+  "debug_camera_render_frustum": true,
+  "debug_render_volumes": false,
+  "tile_culling": false,
+  "source": {
+    "type": "google",
+    "url": "https://tile.googleapis.com/v1/3dtiles/root.json",
+    "key": "code"
+  },
+  "geodetic_position": {
+    "lat": 34.4208,
+    "lon": -119.6982,
+    "alt_m": 12756274.0
+  },
+  "debug_camera_geodetic_position": {
+    "lat": 34.4208,
+    "lon": -119.6982,
+    "alt_m": 500.0
+  }
+}
