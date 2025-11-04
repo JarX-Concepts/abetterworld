@@ -1,11 +1,13 @@
 .PHONY: build-web run-web
 
 build-web-debug:
+    cp -n ./abw_wasm_config_template.json abw_wasm_config.json
 	cd crates/abetterworld/js && npm install && npm run build && cd ../..
 	cargo build --target wasm32-unknown-unknown --manifest-path bindings/web/Cargo.toml
 	wasm-bindgen target/wasm32-unknown-unknown/debug/abw_web.wasm --out-dir bindings/web/debug/pkg --target web
 
 build-web-release:
+    cp -n ./abw_wasm_config_template.json abw_wasm_config.json
 	cd crates/abetterworld/js && npm install && npm run build && cd ../..
 	cargo build --target wasm32-unknown-unknown --manifest-path bindings/web/Cargo.toml --release
 	wasm-bindgen target/wasm32-unknown-unknown/release/abw_web.wasm --out-dir bindings/web/release/pkg --target web
