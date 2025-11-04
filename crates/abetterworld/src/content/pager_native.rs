@@ -1,6 +1,12 @@
 use crate::cache::init_wasm_indexdb_on_every_thread;
+use crate::content::tiles_priority::{priortize, Pri};
+use crate::content::{
+    go, Gen, TileContent, TileKey, TileManager, TileMessage, TileSourceContent,
+    TileSourceContentState,
+};
+use crate::dynamics::CameraRefinementData;
 use crate::{
-    content::{parser_thread, tiles::wait_and_load_content, Client, TilePipelineMessage},
+    content::{tiles::wait_and_load_content, Client, TilePipelineMessage},
     dynamics::Camera,
     helpers::{
         channel::{channel, Sender},
@@ -25,6 +31,7 @@ pub fn start_pager(
         let client_clone = client.clone();
         let pager_cam = Arc::clone(&camera_src);
         let source_clone = source.clone();
+        let mut render_time = render_tx.clone();
         spawn_detached_thread!({
             set_thread_name!("Pager");
 
@@ -33,9 +40,16 @@ pub fn start_pager(
                 Err(e) => log::error!("Failed to initialize IndexedDB: {:?}", e),
             }
 
-            parser_thread(&source_clone, pager_cam, &mut loader_tx, client_clone, true)
-                .await
-                .expect("Failed to start parser thread");
+            parser_thread(
+                &source_clone,
+                pager_cam,
+                &mut loader_tx,
+                &mut render_time,
+                client_clone,
+                true,
+            )
+            .await
+            .expect("Failed to start parser thread");
         });
     }
 
@@ -56,6 +70,191 @@ pub fn start_pager(
                     .expect("Failed to load content in worker thread");
             });
         }
+    }
+
+    Ok(())
+}
+
+pub fn send_load_tile(
+    tile_src: &Pri<'_>,
+    pager_tx: &mut Sender<TilePipelineMessage>,
+    gen: Gen,
+) -> Result<(), AbwError> {
+    let tile = TileContent {
+        uri: tile_src.tile_content.uri.clone(),
+        state: crate::content::types::TileState::ToLoad,
+    };
+    pager_tx.try_send(TilePipelineMessage::Load((
+        TileMessage {
+            key: tile_src.tile_content.key,
+            gen: gen,
+        },
+        tile,
+    )))
+}
+
+pub fn send_unload_tile(
+    id: TileKey,
+    pager_tx: &mut Sender<TilePipelineMessage>,
+    gen: Gen,
+) -> Result<(), AbwError> {
+    pager_tx.try_send(TilePipelineMessage::Unload(TileMessage {
+        key: id,
+        gen: gen,
+    }))
+}
+
+pub fn send_update_tile(
+    tile_src: &Pri<'_>,
+    pager_tx: &mut Sender<TilePipelineMessage>,
+    gen: Gen,
+) -> Result<(), AbwError> {
+    if let Some(tile_info) = &tile_src.tile_info {
+        return pager_tx.try_send(TilePipelineMessage::Update((
+            TileMessage {
+                key: tile_src.tile_content.key,
+                gen: gen,
+            },
+            tile_info.clone(),
+        )));
+    }
+    Err(AbwError::TileLoading("No tile info to update".into()))
+}
+
+pub fn parser_iteration(
+    source: &Source,
+    client: &Client,
+    camera_data: &CameraRefinementData,
+    root: &mut Option<TileSourceContent>,
+    pipeline_state: &TileManager,
+    decoder_tx: &mut Sender<TilePipelineMessage>,
+    renderer_tx: &mut Sender<TilePipelineMessage>,
+    gen: Gen,
+) -> Result<(), AbwError> {
+    go(source, client, camera_data, root)?;
+
+    if let Some(tile) = root {
+        if let Some(TileSourceContentState::LoadedTileSet { permanent, .. }) = &tile.loaded {
+            if let Some(permanent_root) = permanent.as_ref() {
+                if let Some(root) = &permanent_root.root {
+                    // gather priority tiles
+                    let mut priority_list: Vec<Pri> = Vec::new();
+
+                    priortize(pipeline_state, camera_data, root, &mut priority_list)?;
+
+                    // send as many as we can into the pipeline
+                    for pri in priority_list.iter() {
+                        if !pipeline_state.is_tile_loaded(pri.tile_content.key) {
+                            if let Err(_err) = send_load_tile(pri, decoder_tx, gen) {
+                                // the channel is full, we will try again next time
+                                break;
+                            }
+
+                            pipeline_state.mark_tile_loaded(pri.tile_content.key);
+                        }
+                    }
+
+                    for pri in priority_list.iter() {
+                        if let Some(tile_info) = &pri.tile_info {
+                            if !pipeline_state.compare_tile_info(pri.tile_content.key, tile_info) {
+                                if let Err(_err) = send_update_tile(pri, renderer_tx, gen) {
+                                    // the channel is full, we will try again next time
+                                    break;
+                                }
+
+                                pipeline_state.add_or_update_tile_info(
+                                    pri.tile_content.key,
+                                    tile_info.clone(),
+                                );
+                            }
+                        }
+                    }
+
+                    /*                     // need a list of tiles currently in the pipeline state, but not in the priority list
+                    // these can be removed
+                    let mut to_remove: Vec<u64> = Vec::new();
+                    for tile_id in pipeline_state.iter() {
+                        if !priority_list
+                            .iter()
+                            .any(|pri| pri.tile_content.id == *tile_id.0)
+                        {
+                            if let Err(_err) = send_unload_tile(*tile_id.0, pager_tx) {
+                                // the channel is full, we will try again next time
+                                break;
+                            }
+
+                            to_remove.push(*tile_id.0);
+                        }
+                    }
+                    // remove the tiles from the pipeline state
+                    pipeline_state.retain(|id, _count| !to_remove.contains(id)); */
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_arch = "wasm32")]
+pub async fn sleep_ms(ms: i32) {
+    use wasm_bindgen_futures::JsFuture;
+
+    let promise = js_sys::Promise::new(&mut |resolve, _reject| {
+        web_sys::window()
+            .unwrap()
+            .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, ms)
+            .unwrap();
+    });
+    let _ = JsFuture::from(promise).await;
+}
+
+pub async fn parser_thread(
+    source: &Source,
+    cam: Arc<Camera>,
+    decoder_tx: &mut Sender<TilePipelineMessage>,
+    renderer_tx: &mut Sender<TilePipelineMessage>,
+    client: Client,
+    enable_sleep: bool,
+) -> Result<(), AbwError> {
+    let mut root = None;
+    let pipeline_state = TileManager::new();
+
+    let mut last_cam_gen = 0;
+    let mut gen = 1;
+    loop {
+        //let span = span!(Level::TRACE, "pager pass");
+        //let _enter = span.enter();
+
+        let new_gen = cam.generation();
+        if new_gen != last_cam_gen {
+            let camera_data = cam.refinement_data();
+            parser_iteration(
+                source,
+                &client,
+                &camera_data,
+                &mut root,
+                &pipeline_state,
+                decoder_tx,
+                renderer_tx,
+                gen,
+            )?;
+
+            //last_cam_gen = new_gen;
+            gen += 1;
+        } else {
+            // No camera movement, sleep briefly to avoid busy-waiting
+            if enable_sleep {
+                //thread::sleep(Duration::from_millis(10));
+            }
+        }
+
+        // on wasm sleep for a bit to yield to other tasks
+        sleep_ms(100).await;
+
+        //event!(Level::DEBUG, "something happened inside my_span");
+
+        //drop(_enter);
+        //drop(span);
     }
 
     Ok(())

@@ -23,7 +23,5 @@ pub use types::*;
 pub mod volumes;
 pub use volumes::*;
 
-pub mod pager_state;
-
 pub mod pager_native;
 pub use pager_native::start_pager;
