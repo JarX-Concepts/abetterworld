@@ -1,3 +1,4 @@
+use abetterworld::Key;
 use abetterworld::{get_debug_config, InputEvent, MouseButton, World};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -245,6 +246,28 @@ impl Default for WebApp {
     }
 }
 
+fn map_keycode(physical_key: &PhysicalKey) -> Option<Key> {
+    match physical_key {
+        PhysicalKey::Code(KeyCode::KeyW) => Some(Key::W),
+        PhysicalKey::Code(KeyCode::KeyA) => Some(Key::A),
+        PhysicalKey::Code(KeyCode::KeyS) => Some(Key::S),
+        PhysicalKey::Code(KeyCode::KeyD) => Some(Key::D),
+
+        PhysicalKey::Code(KeyCode::Equal | KeyCode::PageDown) => Some(Key::ZoomIn),
+        PhysicalKey::Code(KeyCode::PageUp | KeyCode::Minus) => Some(Key::ZoomOut),
+
+        PhysicalKey::Code(KeyCode::ArrowUp) => Some(Key::ArrowUp),
+        PhysicalKey::Code(KeyCode::ArrowDown) => Some(Key::ArrowDown),
+        PhysicalKey::Code(KeyCode::ArrowLeft) => Some(Key::ArrowLeft),
+        PhysicalKey::Code(KeyCode::ArrowRight) => Some(Key::ArrowRight),
+        PhysicalKey::Code(KeyCode::Escape) => Some(Key::Escape),
+        PhysicalKey::Code(KeyCode::ShiftLeft | KeyCode::ShiftRight) => Some(Key::Shift),
+        PhysicalKey::Code(KeyCode::ControlLeft | KeyCode::ControlRight) => Some(Key::Ctrl),
+        PhysicalKey::Code(KeyCode::AltLeft | KeyCode::AltRight) => Some(Key::Alt),
+        _ => None,
+    }
+}
+
 impl ApplicationHandler for WebApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         // Create window
@@ -337,12 +360,19 @@ impl ApplicationHandler for WebApp {
             WindowEvent::KeyboardInput {
                 event:
                     winit::event::KeyEvent {
-                        physical_key: PhysicalKey::Code(KeyCode::Escape),
-                        state: ElementState::Pressed,
+                        physical_key,
+                        state: key_state,
                         ..
                     },
                 ..
-            } => event_loop.exit(),
+            } => {
+                if let Some(key) = map_keycode(&physical_key) {
+                    match key_state {
+                        ElementState::Pressed => state.input(InputEvent::KeyPressed(key)),
+                        ElementState::Released => state.input(InputEvent::KeyReleased(key)),
+                    }
+                }
+            }
 
             WindowEvent::MouseInput {
                 state: button_state,

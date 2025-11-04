@@ -180,7 +180,6 @@ impl<'window> State<'window> {
     }
 }
 
-// --------- key mapping helper (unchanged) ----------
 fn map_keycode(physical_key: &PhysicalKey) -> Option<Key> {
     match physical_key {
         PhysicalKey::Code(KeyCode::KeyW) => Some(Key::W),
