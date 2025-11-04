@@ -5,12 +5,13 @@ use crate::content::{
     TileSourceContentState,
 };
 use crate::dynamics::CameraRefinementData;
+use crate::helpers::{sleep_ms, yield_now};
 use crate::{
     content::{tiles::wait_and_load_content, Client, TilePipelineMessage},
     dynamics::Camera,
     helpers::{
         channel::{channel, Sender},
-        enter_runtime, AbwError, PlatformAwait,
+        enter_runtime, AbwError,
     },
     set_thread_name, spawn_detached_thread, Source,
 };
@@ -64,7 +65,6 @@ pub fn start_pager(
 
                 let _enter = enter_runtime();
                 wait_and_load_content(&client_clone, &mut rx, &mut render_time)
-                    .platform_await()
                     .await
                     .expect("Failed to load content in worker thread");
             });
@@ -199,19 +199,6 @@ pub fn parser_iteration(
     Ok(parsing_state)
 }
 
-#[cfg(target_arch = "wasm32")]
-pub async fn sleep_ms(ms: i32) {
-    use wasm_bindgen_futures::JsFuture;
-
-    let promise = js_sys::Promise::new(&mut |resolve, _reject| {
-        web_sys::window()
-            .unwrap()
-            .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, ms)
-            .unwrap();
-    });
-    let _ = JsFuture::from(promise).await;
-}
-
 pub async fn parser_thread(
     source: &Source,
     cam: Arc<Camera>,
@@ -226,11 +213,14 @@ pub async fn parser_thread(
     let mut parsing_gen = 1;
     let mut parsing_state = ParsingState::Instable;
     loop {
-        //let span = span!(Level::TRACE, "pager pass");
-        //let _enter = span.enter();
-
         let new_cam_gen = cam.generation();
         if new_cam_gen != last_cam_gen || parsing_state == ParsingState::Instable {
+            tracing::debug!(
+                "Parser iteration start {} -> {} (state: {:?})",
+                new_cam_gen,
+                last_cam_gen,
+                parsing_state
+            );
             let camera_data = cam.refinement_data();
             parsing_state = parser_iteration(
                 source,
@@ -245,18 +235,11 @@ pub async fn parser_thread(
 
             last_cam_gen = new_cam_gen;
             parsing_gen += 1;
+
+            sleep_ms(10).await;
         } else {
-            sleep_ms(100).await;
+            sleep_ms(250).await;
         }
-
-        sleep_ms(100).await;
-
-        // on wasm sleep for a bit to yield to other tasks
-
-        //event!(Level::DEBUG, "something happened inside my_span");
-
-        //drop(_enter);
-        //drop(span);
     }
 
     Ok(())

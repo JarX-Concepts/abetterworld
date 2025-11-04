@@ -26,6 +26,11 @@ pub struct TilesetCache {
     base_dir: std::path::PathBuf,
 }
 
+pub async fn init_wasm_indexdb_on_every_thread() -> Result<(), AbwError> {
+    // No-op on native
+    Ok(())
+}
+
 impl TilesetCache {
     pub fn new(cache_dir: &str) -> Self {
         let base_dir = cache_dir.into();

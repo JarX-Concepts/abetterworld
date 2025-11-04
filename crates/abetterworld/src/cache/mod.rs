@@ -19,4 +19,4 @@ mod cache_native;
 mod cache_lru_native;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use cache_native::TilesetCache;
+pub use cache_native::{init_wasm_indexdb_on_every_thread, TilesetCache};

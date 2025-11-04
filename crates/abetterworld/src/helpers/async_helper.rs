@@ -57,3 +57,18 @@ pub fn enter_runtime() -> tokio::runtime::EnterGuard<'static> {
 
 #[cfg(target_arch = "wasm32")]
 pub fn enter_runtime() {}
+
+#[cfg(target_arch = "wasm32")]
+pub async fn yield_now() {
+    use js_sys::Promise;
+    use wasm_bindgen_futures::JsFuture;
+
+    // Use a microtask or 0-ms timeout to yield to the browser event loop
+    let promise = Promise::resolve(&wasm_bindgen::JsValue::NULL);
+    let _ = JsFuture::from(promise).await;
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn yield_now() {
+    tokio::task::yield_now().await;
+}
