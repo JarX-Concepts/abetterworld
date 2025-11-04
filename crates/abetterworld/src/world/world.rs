@@ -21,6 +21,7 @@ use std::{sync::Arc, time::Duration};
 pub struct WorldPrivate {
     pub camera: Arc<Camera>,
     pub pipeline: RenderPipeline,
+    pub surface_format: wgpu::TextureFormat,
 
     pub debug_camera: Option<Arc<Camera>>,
     pub debug_pipeline: RenderPipeline,
@@ -194,6 +195,7 @@ impl World {
                 frustum_render,
                 receiver: render_rx,
                 clock: FrameClock::new(std::time::Duration::from_millis(16), 0.2),
+                surface_format: config.format,
             },
             render: RenderAndUpdate::new(),
             config: abw_config.clone(),
@@ -265,6 +267,7 @@ impl World {
                 &mut self.private.content,
                 &mut self.private.receiver,
                 BUDGET,
+                self.private.surface_format,
             )?;
         }
 

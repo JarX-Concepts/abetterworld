@@ -147,6 +147,7 @@ pub fn content_render_setup(
     queue: &wgpu::Queue,
     texture_bind_group_layout: &wgpu::BindGroupLayout,
     tile: TileContent, // you own this
+    surface_format: wgpu::TextureFormat,
 ) -> Result<RenderableState, AbwError> {
     // Consume tile.state and move its contents out
     let TileState::Decoded {
@@ -160,7 +161,13 @@ pub fn content_render_setup(
     };
 
     // You still have the moved-out values by ownership now
-    let textures = upload_textures_to_gpu(device, queue, &textures, texture_bind_group_layout);
+    let textures = upload_textures_to_gpu(
+        device,
+        queue,
+        &textures,
+        texture_bind_group_layout,
+        surface_format,
+    );
 
     let return_meshes = meshes
         .into_iter()

@@ -1,4 +1,4 @@
-use wgpu::util::DeviceExt;
+use wgpu::{util::DeviceExt, TextureFormat};
 
 use crate::{
     content::{MAX_RENDERABLE_NODES_US, MAX_RENDERABLE_TILES},

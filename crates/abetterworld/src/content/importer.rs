@@ -234,6 +234,7 @@ pub fn upload_textures_to_gpu(
     queue: &wgpu::Queue,
     texture_data: &[Texture],
     texture_bind_group_layout: &wgpu::BindGroupLayout,
+    surface_format: wgpu::TextureFormat,
 ) -> Vec<TextureResource> {
     texture_data
         .iter()
@@ -249,7 +250,7 @@ pub fn upload_textures_to_gpu(
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                format: surface_format,
                 usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                 view_formats: &[],
             });

@@ -17,6 +17,7 @@ pub fn import_renderables(
     content: &mut SceneGraph,
     receiver: &mut Receiver<TilePipelineMessage>,
     budget: Duration,
+    surface_format: wgpu::TextureFormat,
 ) -> Result<bool, AbwError> {
     if budget.is_zero() {
         return Ok(false);
@@ -41,8 +42,13 @@ pub fn import_renderables(
 
                 match tile_message {
                     TilePipelineMessage::Load(message) => {
-                        let new_tile =
-                            tiles::content_render_setup(device, queue, layout, message.1)?;
+                        let new_tile = tiles::content_render_setup(
+                            device,
+                            queue,
+                            layout,
+                            message.1,
+                            surface_format,
+                        )?;
                         content.add_renderable(message.0.key, new_tile);
                     }
                     TilePipelineMessage::Unload(message) => {

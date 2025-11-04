@@ -38,6 +38,7 @@ console_error_panic_hook = "0.1"
 abetterworld = { path = "../../crates/abetterworld" }
 log = "0.4"
 console_log = { workspace = true }
+tracing = { workspace = true }
 
 [build]
 target = "wasm32-unknown-unknown"

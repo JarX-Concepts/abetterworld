@@ -140,6 +140,7 @@ dependencies = [
  "console_log",
  "log",
  "pollster",
+ "tracing",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "wasm-bindgen-test",

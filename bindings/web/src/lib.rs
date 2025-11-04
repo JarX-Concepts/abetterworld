@@ -117,8 +117,14 @@ impl<'window> State<'window> {
             .formats
             .iter()
             .copied()
-            .find(|f| f.is_srgb())
+            .find(|f| matches!(f, wgpu::TextureFormat::Rgba8Unorm))
             .unwrap_or(surface_caps.formats[0]);
+
+        tracing::info!(
+            "Surface format selected: {:?}, available: {:?}",
+            surface_format,
+            surface_caps.formats
+        );
 
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -127,7 +133,7 @@ impl<'window> State<'window> {
             height: size.height,
             present_mode: wgpu::PresentMode::Fifo,
             alpha_mode: wgpu::CompositeAlphaMode::Auto,
-            view_formats: vec![surface_format],
+            view_formats: vec![],
             desired_maximum_frame_latency: 2,
         };
 
@@ -199,9 +205,9 @@ impl<'window> State<'window> {
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.1,
-                            g: 0.2,
-                            b: 0.3,
+                            r: 0.01,
+                            g: 0.01,
+                            b: 0.01,
                             a: 1.0,
                         }),
                         store: wgpu::StoreOp::Store,
