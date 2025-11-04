@@ -225,7 +225,7 @@ pub extern "C" fn Java_com_jarxconcepts_abetterworld_Renderer_nativeInitRenderer
         log::error!("surface.configure validation error: {err}");
     }
 
-    let abw = World::new(&device, &config, &get_debug_config());
+    let abw = World::new(&device, &config, format, &get_debug_config());
 
     state.gfx = Some(GfxState {
         _instance: instance,

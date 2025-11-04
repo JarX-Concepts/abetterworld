@@ -1,4 +1,5 @@
 mod test_control;
+use log::info;
 use test_control::AutoTour;
 
 use std::sync::Arc;
@@ -68,7 +69,12 @@ impl<'window> State<'window> {
             .unwrap();
 
         let surface_caps = surface.get_capabilities(&adapter);
-        let surface_format = surface_caps.formats[0];
+        let surface_format = surface_caps
+            .formats
+            .iter()
+            .copied()
+            .find(|f| f.is_srgb())
+            .unwrap_or(surface_caps.formats[0]);
 
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -77,7 +83,7 @@ impl<'window> State<'window> {
             height: size.height,
             present_mode: wgpu::PresentMode::Fifo,
             alpha_mode: wgpu::CompositeAlphaMode::Auto,
-            view_formats: vec![surface_format],
+            view_formats: vec![],
             desired_maximum_frame_latency: 2,
         };
 
@@ -86,7 +92,12 @@ impl<'window> State<'window> {
         let mut abw_config = get_debug_config();
         abw_config.use_debug_camera = DEBUG_CAMERA;
         abw_config.debug_render_volumes = DEBUG_VOLUMES;
-        let world = World::new(&device, &config, &abw_config);
+        let world = World::new(
+            &device,
+            &config,
+            wgpu::TextureFormat::Rgba8UnormSrgb,
+            &abw_config,
+        );
 
         Self {
             surface,

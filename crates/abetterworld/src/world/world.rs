@@ -157,6 +157,7 @@ impl World {
     pub fn new(
         device: &wgpu::Device,
         config: &wgpu::SurfaceConfiguration,
+        texture_surface_format: wgpu::TextureFormat,
         abw_config: &Config,
     ) -> Self {
         init_profiling();
@@ -195,7 +196,7 @@ impl World {
                 frustum_render,
                 receiver: render_rx,
                 clock: FrameClock::new(std::time::Duration::from_millis(16), 0.2),
-                surface_format: config.format,
+                surface_format: texture_surface_format,
             },
             render: RenderAndUpdate::new(),
             config: abw_config.clone(),

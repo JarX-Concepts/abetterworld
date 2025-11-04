@@ -160,7 +160,7 @@ pub extern "C" fn abetterworld_ios_init(
             .unwrap()
             .to_string()
     };
-    let abw = World::new(&device, &config, &debug_config);
+    let abw = World::new(&device, &config, texture_format, &debug_config);
 
     state.inner = Some(StateInner {
         device,

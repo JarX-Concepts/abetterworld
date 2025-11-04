@@ -5,7 +5,7 @@ use crate::content::{
     TileSourceContentState,
 };
 use crate::dynamics::CameraRefinementData;
-use crate::helpers::{sleep_ms, yield_now};
+use crate::helpers::{sleep_ms, yield_now, PlatformAwait};
 use crate::{
     content::{tiles::wait_and_load_content, Client, TilePipelineMessage},
     dynamics::Camera,
@@ -36,20 +36,27 @@ pub fn start_pager(
         spawn_detached_thread!({
             set_thread_name!("Pager");
 
+            #[cfg(target_arch = "wasm32")]
             match init_wasm_indexdb_on_every_thread().await {
                 Ok(_) => log::info!("Initialized IndexedDB"),
                 Err(e) => log::error!("Failed to initialize IndexedDB: {:?}", e),
             }
 
-            parser_thread(
+            let fut = parser_thread(
                 &source_clone,
                 pager_cam,
                 &mut loader_tx,
                 &mut render_time,
                 client_clone,
-            )
-            .await
-            .expect("Failed to start parser thread");
+            );
+
+            // wasm only
+            #[cfg(target_arch = "wasm32")]
+            fut.await.expect("Failed to start parser thread");
+
+            // native only
+            #[cfg(not(target_arch = "wasm32"))]
+            fut.platform_await().expect("Failed to start parser thread");
         });
     }
 
@@ -64,8 +71,16 @@ pub fn start_pager(
                 set_thread_name!("Download/Decode Worker");
 
                 let _enter = enter_runtime();
-                wait_and_load_content(&client_clone, &mut rx, &mut render_time)
-                    .await
+
+                let fut = wait_and_load_content(&client_clone, &mut rx, &mut render_time);
+
+                // wasm only
+                #[cfg(target_arch = "wasm32")]
+                fut.await.expect("Failed to load content in worker thread");
+
+                // native only
+                #[cfg(not(target_arch = "wasm32"))]
+                fut.platform_await()
                     .expect("Failed to load content in worker thread");
             });
         }

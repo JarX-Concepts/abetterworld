@@ -140,7 +140,7 @@ impl<'window> State<'window> {
 
         surface.configure(&device, &config);
 
-        let world = World::new(&device, &config, &get_debug_config());
+        let world = World::new(&device, &config, surface_format, &get_debug_config());
 
         Self {
             surface,
