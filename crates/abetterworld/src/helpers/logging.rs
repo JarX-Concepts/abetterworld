@@ -11,7 +11,7 @@ pub fn init_profiling() {
     tracy_client::frame_mark();
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(not(all(feature = "profile-tracy", not(target_arch = "wasm32"))))]
 pub fn init_profiling() {}
 
 #[macro_export]
