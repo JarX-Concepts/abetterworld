@@ -13,6 +13,11 @@ If you’re curious, the screenshots and demos can give you a glimpse of where i
 ![World view](assets/platforms.png)
 _Designed to work on all major platforms._
 
+<div align="center">
+  <img src="assets/nyc-wasm-1.png" alt="NYC WASM" width="45%"/>
+  <img src="assets/nyc-wasm-2.png" alt="NYC WASM" width="45%"/>
+</div>
+
 ---
 
 ## 🚀 Getting Started
@@ -27,14 +32,25 @@ cd abetterworld
 cargo build -p abetterworld
 cargo build -p abetterworld --release
 
+cp ./template.env .env
+# Update .env file
+
 # Run sample desktop app (mac, windows, linux)
 cargo run -p desktop
 
 # Run sample web app
+cp ./abw_wasm_config_template.json abw_wasm_config.json
+# Update abw_wasm_config.json file
 make build-web
 make run-web
 
-#ios & android TODO
+# Run sample ios app
+make build-ios-debug
+# open examples/ios/AbetterWorld.xcodeproj in Xcode
+
+# Run sample android app
+make build-android-debug
+# open examples/android in Android Studio
 
 # Run Unit Tests on Desktop
 cargo test -p abetterworld
