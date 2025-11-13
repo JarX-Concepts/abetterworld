@@ -1,5 +1,3 @@
-use cgmath::Point3;
-
 use crate::{
     content::{TileKey, MAX_RENDERABLE_TILES_US},
     dynamics::FrustumPlanes,
@@ -10,6 +8,8 @@ use crate::{
     },
     world::WorldPrivate,
 };
+use cgmath::Point3;
+use tracing::{event, Level};
 
 pub struct RenderAndUpdate {
     frame: RenderFrame,
@@ -157,7 +157,7 @@ impl RenderAndUpdate {
 
         for (index, _renderable) in self.frame.tiles.iter().enumerate() {
             if index >= MAX_RENDERABLE_TILES_US {
-                //log::warn!("Hit maximum number of volumes (Render)");
+                //event!(Level::WARN,"Hit maximum number of volumes (Render)");
                 break;
             } else {
                 render_pass.draw_indexed(0..36, (index as i32 + 1) * 8, 0..1);
@@ -263,7 +263,11 @@ impl RenderAndUpdate {
             };
 
             if resized {
-                log::info!("Resized instance buffer to {} instances", new_capacity);
+                event!(
+                    Level::INFO,
+                    "Resized instance buffer to {} instances",
+                    new_capacity
+                );
                 rebuild_tile_bg(device, &mut world.pipeline);
             }
 
@@ -282,7 +286,7 @@ impl RenderAndUpdate {
                 let renderable = get_renderable_tile(renderables, *renderable_tile_id)?;
 
                 if index + 1 >= MAX_RENDERABLE_TILES_US {
-                    //log::warn!("Hit maximum number of volumes (Update)");
+                    //event!(Level::WARN,"Hit maximum number of volumes (Update)");
                     break;
                 }
                 let new_frustum_vertices: Vec<DebugVertex> = renderable

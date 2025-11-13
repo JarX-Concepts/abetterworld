@@ -1,5 +1,6 @@
 use cgmath::{InnerSpace, Matrix3, Point3, SquareMatrix, Vector3, Zero};
 use serde::Deserialize;
+use tracing::{event, Level};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BoundingBox {
@@ -178,7 +179,7 @@ impl OrientedBoundingBox {
         let basis = Matrix3::from_cols(self.half_axes[0], self.half_axes[1], self.half_axes[2]);
 
         let Some(inv_basis) = basis.invert() else {
-            log::warn!("OBB basis matrix is not invertible");
+            event!(Level::WARN, "OBB basis matrix is not invertible");
             return self.center;
         };
 

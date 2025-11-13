@@ -1,4 +1,5 @@
 use cgmath::{Point3, Vector3};
+use tracing::instrument;
 //use tracing::instrument;
 
 use crate::{
@@ -236,7 +237,7 @@ impl World {
         // 3) (If using MSAA) also recreate the MSAA color target here
     }
 
-    //#[instrument(skip(self, render_pass))]
+    #[instrument(skip(self, render_pass))]
     pub fn render(&self, render_pass: &mut wgpu::RenderPass) -> Result<(), AbwError> {
         self.render.render(
             render_pass,
@@ -246,11 +247,9 @@ impl World {
         )
     }
 
-    //#[instrument(skip(self, device, queue), fields(need_update = false))]
+    #[instrument(skip(self, device, queue), fields(need_update = false))]
     pub fn update(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> Result<bool, AbwError> {
         let tick = self.private.clock.tick();
-
-        //log::info!("Frame tick: {:?}", tick);
 
         self.private.input_state.flush(&mut self.private.dynamics);
         self.private

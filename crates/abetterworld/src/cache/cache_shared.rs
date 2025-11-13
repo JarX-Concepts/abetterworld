@@ -1,5 +1,6 @@
 use once_cell::sync::Lazy;
 use std::sync::{Arc, Mutex};
+use tracing::{event, Level};
 
 use crate::cache::TilesetCache;
 
@@ -8,7 +9,7 @@ static TILESET_CACHE: Lazy<Mutex<Option<Arc<TilesetCache>>>> = Lazy::new(|| Mute
 pub fn init_tileset_cache(cache_dir: &str) -> Arc<TilesetCache> {
     let mut guard = TILESET_CACHE.lock().unwrap();
     if let Some(existing) = guard.as_ref() {
-        log::warn!("TilesetCache already initialized");
+        event!(Level::WARN, "TilesetCache already initialized");
         return existing.clone();
     }
     let cache = Arc::new(TilesetCache::new(cache_dir));

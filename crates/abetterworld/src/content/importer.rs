@@ -6,12 +6,12 @@ use crate::{
 use byteorder::{LittleEndian, ReadBytesExt};
 use cgmath::{Deg, Matrix4, One, Quaternion, Vector3, Vector4};
 use image::GenericImageView;
-use log::error;
 use serde_json::Value;
 use std::{
     io::{Cursor, Read},
     sync::Arc,
 };
+use tracing::{event, Level};
 
 pub fn parse_glb(glb: &[u8]) -> Result<(Value, Vec<u8>), Box<std::io::Error>> {
     let total_len = glb.len();
@@ -20,12 +20,12 @@ pub fn parse_glb(glb: &[u8]) -> Result<(Value, Vec<u8>), Box<std::io::Error>> {
     // --- GLB Header ---
     let mut magic = [0; 4];
     if let Err(e) = cursor.read_exact(&mut magic) {
-        error!("Failed to read magic header: {}", e);
+        event!(Level::ERROR, "Failed to read magic header: {}", e);
         return Err(e.into());
     }
 
     if &magic != b"glTF" {
-        error!("Invalid GLB magic header: {:?}", magic);
+        event!(Level::ERROR, "Invalid GLB magic header: {:?}", magic);
         return Err(
             std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid magic header").into(),
         );
@@ -33,7 +33,7 @@ pub fn parse_glb(glb: &[u8]) -> Result<(Value, Vec<u8>), Box<std::io::Error>> {
 
     let version = cursor.read_u32::<LittleEndian>()?;
     if version != 2 {
-        error!("Unsupported GLB version: {}", version);
+        event!(Level::ERROR, "Unsupported GLB version: {}", version);
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             "Only GLB v2 is supported",
@@ -48,7 +48,7 @@ pub fn parse_glb(glb: &[u8]) -> Result<(Value, Vec<u8>), Box<std::io::Error>> {
     let json_type = cursor.read_u32::<LittleEndian>()?;
 
     if json_type != 0x4E4F534A {
-        error!("Expected JSON chunk, got: 0x{:X}", json_type);
+        event!(Level::ERROR, "Expected JSON chunk, got: 0x{:X}", json_type);
         return Err(
             std::io::Error::new(std::io::ErrorKind::InvalidData, "Expected JSON chunk").into(),
         );
@@ -56,9 +56,11 @@ pub fn parse_glb(glb: &[u8]) -> Result<(Value, Vec<u8>), Box<std::io::Error>> {
 
     let required_len = 12 + 8 + json_len as usize + 8; // base header + json chunk + BIN chunk header
     if total_len < required_len {
-        error!(
+        event!(
+            Level::ERROR,
             "GLB buffer too small before JSON read: expected at least {}, got {}",
-            required_len, total_len
+            required_len,
+            total_len
         );
         return Err(std::io::Error::new(
             std::io::ErrorKind::UnexpectedEof,
@@ -69,14 +71,14 @@ pub fn parse_glb(glb: &[u8]) -> Result<(Value, Vec<u8>), Box<std::io::Error>> {
 
     let mut json_buf = vec![0u8; json_len as usize];
     if let Err(e) = cursor.read_exact(&mut json_buf) {
-        error!("Failed to read JSON chunk: {}", e);
+        event!(Level::ERROR, "Failed to read JSON chunk: {}", e);
         return Err(e.into());
     }
 
     let json: Value = match serde_json::from_slice(&json_buf) {
         Ok(v) => v,
         Err(e) => {
-            error!("Failed to parse JSON chunk: {}", e);
+            event!(Level::ERROR, "Failed to parse JSON chunk: {}", e);
             return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, e).into());
         }
     };
@@ -85,7 +87,7 @@ pub fn parse_glb(glb: &[u8]) -> Result<(Value, Vec<u8>), Box<std::io::Error>> {
     let bin_len = cursor.read_u32::<LittleEndian>()?;
     let bin_type = cursor.read_u32::<LittleEndian>()?;
     if bin_type != 0x004E4942 {
-        error!("Expected BIN chunk, got: 0x{:X}", bin_type);
+        event!(Level::ERROR, "Expected BIN chunk, got: 0x{:X}", bin_type);
         return Err(
             std::io::Error::new(std::io::ErrorKind::InvalidData, "Expected BIN chunk").into(),
         );
@@ -93,9 +95,11 @@ pub fn parse_glb(glb: &[u8]) -> Result<(Value, Vec<u8>), Box<std::io::Error>> {
 
     let remaining_bytes = total_len.saturating_sub(cursor.position() as usize);
     if remaining_bytes < bin_len as usize {
-        error!(
+        event!(
+            Level::ERROR,
             "GLB buffer too small for BIN chunk: need {}, have {}",
-            bin_len, remaining_bytes
+            bin_len,
+            remaining_bytes
         );
         return Err(std::io::Error::new(
             std::io::ErrorKind::UnexpectedEof,
@@ -106,7 +110,7 @@ pub fn parse_glb(glb: &[u8]) -> Result<(Value, Vec<u8>), Box<std::io::Error>> {
 
     let mut bin_buf = vec![0u8; bin_len as usize];
     if let Err(e) = cursor.read_exact(&mut bin_buf) {
-        error!("Failed to read BIN chunk: {}", e);
+        event!(Level::ERROR, "Failed to read BIN chunk: {}", e);
         return Err(e.into());
     }
 

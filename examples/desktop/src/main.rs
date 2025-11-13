@@ -1,6 +1,7 @@
 mod test_control;
-use log::info;
 use test_control::AutoTour;
+use tracing::{event, Level};
+use wgpu_profiler::{GpuProfiler, GpuProfilerSettings};
 
 use std::sync::Arc;
 use winit::event::ElementState;
@@ -28,6 +29,7 @@ struct State<'window> {
     config: wgpu::SurfaceConfiguration,
     size: winit::dpi::PhysicalSize<u32>,
     world: World,
+    profiler: wgpu_profiler::GpuProfiler,
 
     debug_auto_zoom: Option<AutoTour>,
 }
@@ -57,9 +59,16 @@ impl<'window> State<'window> {
             .await
             .unwrap();
 
+        let needed_features = GpuProfiler::ALL_WGPU_TIMER_FEATURES;
+
+        let adapter_features = adapter.features();
+
+        // Only request features the adapter actually supports
+        let required_features = needed_features & adapter_features;
+
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
-                required_features: wgpu::Features::POLYGON_MODE_LINE,
+                required_features,
                 required_limits: wgpu::Limits::default(),
                 memory_hints: Default::default(),
                 label: None,
@@ -67,6 +76,14 @@ impl<'window> State<'window> {
             })
             .await
             .unwrap();
+
+        let profiler = wgpu_profiler::GpuProfiler::new_with_tracy_client(
+            GpuProfilerSettings::default(),
+            adapter.get_info().backend,
+            &device,
+            &queue,
+        )
+        .unwrap();
 
         let surface_caps = surface.get_capabilities(&adapter);
         let surface_format = surface_caps
@@ -106,6 +123,7 @@ impl<'window> State<'window> {
             config,
             size,
             world,
+            profiler,
 
             debug_auto_zoom: if DEBUG_PATH {
                 Some(AutoTour::new())
@@ -185,8 +203,11 @@ impl<'window> State<'window> {
             let _ = self.world.render(&mut rp);
         }
 
+        self.profiler.resolve_queries(&mut encoder);
+
         self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
+
         Ok(())
     }
 }
@@ -347,6 +368,8 @@ impl ApplicationHandler for App {
             Err(e) => eprintln!("{e:?}"),
         }
         window.request_redraw();
+
+        state.profiler.end_frame().unwrap();
     }
 }
 
@@ -355,7 +378,7 @@ impl ApplicationHandler for App {
 pub fn main() {
     dotenv::dotenv().ok();
     env_logger::init();
-    log::info!("Starting A Better World application...");
+    event!(Level::INFO, "Starting A Better World application...");
 
     let event_loop = EventLoop::new().expect("Failed to create event loop");
     let mut app = App::default();

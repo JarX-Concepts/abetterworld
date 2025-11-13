@@ -2,8 +2,7 @@
 mod wasm_tests {
     use bytes::Bytes;
     use js_sys::Math;
-    use log::info;
-    use std::{thread, time::Duration};
+    use tracing::{event, Level};
     use wasm_bindgen_test::*;
 
     use crate::cache::{get_tileset_cache, init_tileset_cache, init_wasm_indexdb_on_every_thread};
@@ -27,7 +26,7 @@ mod wasm_tests {
     #[wasm_bindgen_test]
     async fn test_indexeddb_stress_lifecycle() {
         console_log::init_with_level(log::Level::Info).ok();
-        info!("Starting IndexedDB stress test...");
+        event!(Level::INFO, "Starting IndexedDB stress test...");
 
         init_tileset_cache("");
 
@@ -35,9 +34,9 @@ mod wasm_tests {
             .await
             .expect("Should init IndexedDB");
 
-        info!("Loaded db...");
+        event!(Level::INFO, "Loaded db...");
 
-        info!("Initialized tileset cache...");
+        event!(Level::INFO, "Initialized tileset cache...");
 
         let cache = get_tileset_cache();
 
@@ -45,7 +44,7 @@ mod wasm_tests {
         let base_value = Bytes::from_static(b"stress-test-payload");
 
         // Insert a bunch of entries
-        info!("Inserting 1001 entries...");
+        event!(Level::INFO, "Inserting 1001 entries...");
         for i in 0..1001 {
             let key = random_key("stress", i);
             let val = Bytes::from(vec![(i % 255) as u8; 64]);
@@ -73,7 +72,10 @@ mod wasm_tests {
         }
 
         // Restore control key
-        info!("Fetching control key from IndexedDB after memory clear...");
+        event!(
+            Level::INFO,
+            "Fetching control key from IndexedDB after memory clear..."
+        );
         let result = cache
             .get(control_key)
             .await
@@ -85,7 +87,7 @@ mod wasm_tests {
         assert_eq!(val, control_value);
 
         // Insert edge case entries
-        info!("Inserting edge-case entries...");
+        event!(Level::INFO, "Inserting edge-case entries...");
         let empty_key = "empty-key";
         let utf_key = "unicode-ключ🗝️";
         let empty_payload = Bytes::new();
@@ -130,7 +132,7 @@ mod wasm_tests {
         assert_eq!(val_utf, base_value);
 
         // Overwrite an existing key
-        info!("Overwriting existing key...");
+        event!(Level::INFO, "Overwriting existing key...");
         let new_val = Bytes::from_static(b"new-overwritten-value");
         cache
             .insert(
@@ -150,16 +152,16 @@ mod wasm_tests {
         assert_eq!(val_overwritten, new_val);
 
         // Cleanup and verify
-        info!("Cleaning up IndexedDB...");
+        event!(Level::INFO, "Cleaning up IndexedDB...");
         cache.clear().await.expect("Failed to clear IndexedDB");
 
-        info!("Verifying post-cleanup...");
+        event!(Level::INFO, "Verifying post-cleanup...");
         let post_cleanup = cache
             .get(control_key)
             .await
             .expect("Failed to get post-cleanup key from IndexedDB");
         assert!(post_cleanup.is_none(), "Control key should be deleted");
 
-        info!("✅ Intense IndexedDB + LRU cache test passed");
+        event!(Level::INFO, "✅ Intense IndexedDB + LRU cache test passed");
     }
 }

@@ -22,7 +22,6 @@ profile-tracy = ["tracy-client"]
 
 [dependencies]
 wgpu = { workspace = true }
-wgpu-profiler = { version = "0.24", optional = true, features = ["tracy"] }
 bytemuck = { version = "1.23", features = ["derive"] }
 cgmath = "0.18"
 reqwest = { version = "0.12", default-features = false, features = ["json", "gzip", "blocking", "http2", "rustls-tls-webpki-roots"] }
@@ -88,3 +87,4 @@ tracing-tracy    = { version = "=0.11.4", optional = false }
 tracing-subscriber = "0.3"
 rayon = "1.11.0"
 tokio = { version = "1", features = ["full"] }
+wgpu-profiler = { workspace = true }

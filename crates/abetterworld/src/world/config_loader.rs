@@ -13,6 +13,8 @@ pub enum LoadConfigError {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn load_config() -> Result<Config, LoadConfigError> {
+    use tracing::{event, Level};
+
     let _ = dotenvy::dotenv();
 
     let builder = config::Config::builder()
@@ -26,7 +28,7 @@ pub fn load_config() -> Result<Config, LoadConfigError> {
         );
 
     let cfg = builder.build()?;
-    log::info!("Config loaded successfully {:?}", cfg);
+    event!(Level::INFO, "Config loaded successfully {:?}", cfg);
 
     let mut cfg: Config = cfg.try_deserialize()?;
 

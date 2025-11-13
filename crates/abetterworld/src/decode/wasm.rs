@@ -1,5 +1,6 @@
 // src/draco_client.rs
 use js_sys::{ArrayBuffer, Float32Array, Object, Promise, Reflect, Uint32Array, Uint8Array};
+use tracing::{event, Level};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 
@@ -144,7 +145,7 @@ impl DracoClient {
     }
 
     pub async fn decode(&self, data: &[u8]) -> Result<OwnedDecodedMesh, std::io::Error> {
-        log::info!("WASM decode of {} bytes", data.len());
+        event!(Level::INFO, "WASM decode of {} bytes", data.len());
         // Borrow the client briefly from the thread-local storage to start the decode.
         // The returned future does not hold a long-lived borrow of the client, so this
         // short borrow is safe.
@@ -152,7 +153,8 @@ impl DracoClient {
 
         match fut.await {
             Ok(mesh) => {
-                log::info!(
+                event!(
+                    Level::INFO,
                     "WASM decode complete: {} vertices, {} indices",
                     mesh.vertex_count,
                     mesh.index_count

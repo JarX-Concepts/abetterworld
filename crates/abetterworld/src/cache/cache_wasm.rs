@@ -4,6 +4,7 @@ use crate::{cache::cache_lru_wasm::WasmCache, helpers::AbwError};
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, RwLock};
+use tracing::{event, Level};
 
 use {
     idb::{Database, DatabaseEvent, Factory, KeyPath, ObjectStoreParams, TransactionMode},
@@ -107,7 +108,7 @@ impl TilesetCache {
         let db_arc = match db_arc_result {
             Some(db) => db,
             None => {
-                log::warn!("IndexedDB not initialized");
+                event!(Level::WARN, "IndexedDB not initialized");
                 return Ok(None);
             }
         };
@@ -144,14 +145,19 @@ impl TilesetCache {
         let db_arc = match db_arc_result {
             Some(db) => db,
             None => {
-                log::warn!("IndexedDB not initialized");
+                event!(Level::WARN, "IndexedDB not initialized");
                 return Ok(());
             }
         };
 
         let insert_result = Self::insert_idb_data(&db_arc, entry).await;
         if let Err(err) = insert_result {
-            log::error!("IndexedDB insert failed for {:?}: {:?}", key, err);
+            event!(
+                Level::ERROR,
+                "IndexedDB insert failed for {:?}: {:?}",
+                key,
+                err
+            );
         }
 
         Ok(())
@@ -163,7 +169,7 @@ impl TilesetCache {
         let db_arc = match db_arc_result {
             Some(db) => db,
             None => {
-                log::warn!("IndexedDB not initialized");
+                event!(Level::WARN, "IndexedDB not initialized");
                 return Ok(());
             }
         };
@@ -185,7 +191,7 @@ thread_local! {
 }
 
 pub async fn init_wasm_indexdb_on_every_thread() -> Result<(), AbwError> {
-    log::info!("Loading IndexedDB...");
+    event!(Level::INFO, "Loading IndexedDB...");
 
     let factory =
         Factory::new().map_err(|_| AbwError::Internal("Failed to create factory".into()))?;
@@ -203,7 +209,7 @@ pub async fn init_wasm_indexdb_on_every_thread() -> Result<(), AbwError> {
                 db.create_object_store("abetterworld", params);
             }
         } else {
-            log::error!("Upgrade needed but could not access DB");
+            event!(Level::ERROR, "Upgrade needed but could not access DB");
         }
     });
 
@@ -215,6 +221,6 @@ pub async fn init_wasm_indexdb_on_every_thread() -> Result<(), AbwError> {
         *cell.borrow_mut() = Some(Arc::new(db));
     });
 
-    log::info!("Done Loading IndexedDB...");
+    event!(Level::INFO, "Done Loading IndexedDB...");
     Ok(())
 }

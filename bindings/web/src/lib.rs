@@ -2,6 +2,7 @@ use abetterworld::Key;
 use abetterworld::{get_debug_config, InputEvent, MouseButton, World};
 use std::rc::Rc;
 use std::sync::Arc;
+use tracing::{event, Level};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use winit::event::ElementState;
@@ -23,7 +24,7 @@ fn setup_console_log() {
         // Also show panic messages in console
         console_error_panic_hook::set_once();
 
-        log::info!("Console logging initialized");
+        event!(Level::INFO, "Console logging initialized");
     });
 }
 

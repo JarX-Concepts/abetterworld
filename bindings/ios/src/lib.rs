@@ -4,6 +4,7 @@ use abetterworld::{get_debug_config, InputEvent, World};
 use core_graphics::geometry::CGSize;
 use metal::{self, MTLRegion};
 use objc::{self, msg_send, runtime::Object, sel, sel_impl};
+use tracing::{event, Level};
 use wgpu::{self};
 
 use crate::logging::init_logger;
@@ -67,7 +68,8 @@ pub extern "C" fn abetterworld_ios_init(
     let metal_device = metal_device_raw as *mut Object;
     let metal_layer = metal_layer_raw as *mut Object;
 
-    log::info!(
+    event!(
+        Level::INFO,
         "Initializing iOS renderer with Metal device: {:?}, layer: {:?}, size: {}x{}",
         metal_device,
         metal_layer,
@@ -88,7 +90,8 @@ pub extern "C" fn abetterworld_ios_init(
         drawable_size.1 = height as u32;
     }
 
-    log::info!(
+    event!(
+        Level::INFO,
         "Initializing iOS renderer with drawable size: {}x{}",
         drawable_size.0,
         drawable_size.1
@@ -184,7 +187,8 @@ pub extern "C" fn abetterworld_ios_resize(ptr: *mut ABetterWorldiOS, width: f64,
         (size.width as u32, size.height as u32)
     };
 
-    log::info!(
+    event!(
+        Level::INFO,
         "Resizing iOS renderer to drawable size: {}x{}",
         drawable_size.0,
         drawable_size.1
@@ -232,7 +236,7 @@ pub extern "C" fn abetterworld_ios_render(ptr: *mut ABetterWorldiOS) {
     let drawable = unsafe {
         let drawable: *mut Object = msg_send![state.metal_layer, nextDrawable];
         if drawable.is_null() {
-            log::error!("Failed to get next drawable");
+            event!(Level::ERROR, "Failed to get next drawable");
             return;
         }
         drawable
@@ -242,7 +246,7 @@ pub extern "C" fn abetterworld_ios_render(ptr: *mut ABetterWorldiOS) {
     let (metal_texture, texture_width, texture_height) = unsafe {
         let texture: *mut Object = msg_send![drawable, texture];
         if texture.is_null() {
-            log::error!("Failed to get texture from drawable");
+            event!(Level::ERROR, "Failed to get texture from drawable");
             return;
         }
         let width: u64 = msg_send![texture, width];
@@ -254,7 +258,10 @@ pub extern "C" fn abetterworld_ios_render(ptr: *mut ABetterWorldiOS) {
     if state.texture.size().width != texture_width as u32
         || state.texture.size().height != texture_height as u32
     {
-        log::info!("Texture size mismatch, recreating WGPU texture");
+        event!(
+            Level::INFO,
+            "Texture size mismatch, recreating WGPU texture"
+        );
         state.texture = state.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Render Texture"),
             size: wgpu::Extent3d {

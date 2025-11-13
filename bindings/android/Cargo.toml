@@ -12,6 +12,7 @@ crate-type = [ "cdylib"]
 wgpu = {version = "26.0.1", features = ["webgpu"]}
 winit = { workspace = true }
 abetterworld = { path = "../../crates/abetterworld" }
+tracing = { workspace = true }
 log = "0.4"
 jni = "0.21"
 futures = "0.3"

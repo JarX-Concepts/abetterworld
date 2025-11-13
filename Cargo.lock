@@ -92,6 +92,7 @@ dependencies = [
  "ndk",
  "pollster",
  "raw-window-handle",
+ "tracing",
  "wgpu",
  "winit",
 ]
@@ -106,7 +107,9 @@ dependencies = [
  "env_logger",
  "log",
  "pollster",
+ "tracing",
  "wgpu",
+ "wgpu-profiler",
  "winit",
 ]
 
@@ -127,6 +130,7 @@ dependencies = [
  "objc",
  "pollster",
  "raw-window-handle",
+ "tracing",
  "wgpu",
  "winit",
 ]

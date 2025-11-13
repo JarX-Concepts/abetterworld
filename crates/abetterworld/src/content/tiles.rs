@@ -14,6 +14,8 @@ use crate::helpers::channel::{Receiver, Sender};
 use crate::helpers::{AbwError, TileLoadingContext};
 use crate::render::{Mesh, RenderableState};
 
+use tracing::{event, Level};
+
 // ─── External ──────────────────────────────────────────────────────────────────
 use bytes::Bytes;
 use std::sync::Arc;
@@ -25,7 +27,8 @@ fn download_content_for_tile_shared(
     bytes: Bytes,
 ) -> Result<Vec<u8>, AbwError> {
     if content_type != "model/gltf-binary" {
-        log::error!(
+        event!(
+            Level::ERROR,
             "Unsupported content type: URI: {}, Content-Type: {}, Bytes: {:?}",
             load.uri,
             content_type,
@@ -53,8 +56,6 @@ async fn process_content_bytes(
     load: &mut TileContent,
     bytes: Vec<u8>,
 ) -> Result<(), AbwError> {
-    let _span = tracing::debug_span!("process_content_bytes",).entered();
-
     let (gltf_json, gltf_bin) =
         parse_glb(&bytes).tile_loading(&format!("Failed to parse GLB: URI: {}", load.uri,))?;
 
@@ -88,9 +89,11 @@ pub async fn load_content(
     render_time: &mut Sender<TilePipelineMessage>,
     decoder: Arc<DracoClient>,
 ) -> Result<(), AbwError> {
+    let _span = tracing::debug_span!("load_content").entered();
+
     if tile.state == TileState::ToLoad {
         if let Err(e) = content_load(&client, &mut tile, decoder).await {
-            log::error!("load failed: {e}");
+            event!(Level::ERROR, "load failed: {e}");
             return Err(e);
         }
 

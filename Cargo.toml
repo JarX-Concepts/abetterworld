@@ -14,7 +14,7 @@ members = [
 [workspace.dependencies]
 winit = { version = "0.30", features = ["android-native-activity"] }
 wgpu = {version = "26.0.1", features = ["webgpu", "vulkan", "gles"]}
-
+wgpu-profiler = { version = "0.24", features = ["tracy"] }
 console_log = "1.0"
 js-sys = "0.3.77"
 wasm-bindgen = "0.2.105"

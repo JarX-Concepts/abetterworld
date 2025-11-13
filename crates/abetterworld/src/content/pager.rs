@@ -16,6 +16,7 @@ use crate::{
     set_thread_name, spawn_detached_thread, Source,
 };
 use std::sync::Arc;
+use tracing::{event, Level};
 
 pub fn start_pager(
     source: Source,
@@ -38,8 +39,8 @@ pub fn start_pager(
 
             #[cfg(target_arch = "wasm32")]
             match init_wasm_indexdb_on_every_thread().await {
-                Ok(_) => log::info!("Initialized IndexedDB"),
-                Err(e) => log::error!("Failed to initialize IndexedDB: {:?}", e),
+                Ok(_) => event!(Level::INFO, "Initialized IndexedDB"),
+                Err(e) => event!(Level::ERROR, "Failed to initialize IndexedDB: {:?}", e),
             }
 
             let fut = parser_thread(
@@ -147,8 +148,6 @@ pub fn parser_iteration(
 ) -> Result<ParsingState, AbwError> {
     let mut parsing_state = go(source, client, camera_data, root)?;
 
-    let _span = tracing::debug_span!("parser_iteration",).entered();
-
     if let Some(tile) = root {
         if let Some(TileSourceContentState::LoadedTileSet { permanent, .. }) = &tile.loaded {
             if let Some(permanent_root) = permanent.as_ref() {
@@ -230,12 +229,8 @@ pub async fn parser_thread(
     loop {
         let new_cam_gen = cam.generation();
         if new_cam_gen != last_cam_gen || parsing_state == ParsingState::Instable {
-            tracing::debug!(
-                "Parser iteration start {} -> {} (state: {:?})",
-                new_cam_gen,
-                last_cam_gen,
-                parsing_state
-            );
+            let span = tracing::debug_span!("parser_iteration",).entered();
+
             let camera_data = cam.refinement_data();
             parsing_state = parser_iteration(
                 source,
@@ -250,6 +245,8 @@ pub async fn parser_thread(
 
             last_cam_gen = new_cam_gen;
             parsing_gen += 1;
+
+            drop(span);
 
             sleep_ms(10).await;
         } else {

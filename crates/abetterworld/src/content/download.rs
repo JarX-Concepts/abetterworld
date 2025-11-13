@@ -1,10 +1,10 @@
 use bytes::Bytes;
-use std::sync::Arc;
+use tracing::{event, Level};
 
 use crate::{
     cache::get_tileset_cache,
     content::Client,
-    helpers::{AbwError, PlatformAwait, TileLoadingContext},
+    helpers::{AbwError, TileLoadingContext},
 };
 
 pub async fn download_content(
@@ -17,7 +17,7 @@ pub async fn download_content(
         return Ok((content_type, bytes));
     }
 
-    log::info!("Downloading content from {}", content_url);
+    event!(Level::INFO, "Downloading content from {}", content_url);
 
     let response_result = client
         .get(content_url)
@@ -26,7 +26,12 @@ pub async fn download_content(
         .tile_loading(&format!("Failed to download content from {}", content_url));
 
     if let Err(e) = &response_result {
-        log::error!("Failed to download content from {}: {:?}", content_url, e);
+        event!(
+            Level::ERROR,
+            "Failed to download content from {}: {:?}",
+            content_url,
+            e
+        );
         return Err(AbwError::Network(format!(
             "Failed to download content from {}: {:?}",
             content_url, e
@@ -55,7 +60,8 @@ pub async fn download_content(
 
     if let Some(expected) = expected_len {
         if bytes.len() < expected {
-            log::error!(
+            event!(
+                Level::ERROR,
                 "Truncated content: expected {} bytes, got {}",
                 expected,
                 bytes.len()
@@ -68,7 +74,7 @@ pub async fn download_content(
         .insert(content_url.to_string(), content_type.clone(), bytes.clone())
         .await?;
 
-    /*     log::info!(
+    /*     event!(Level::INFO,
         "Downloaded content from {}, {} bytes",
         content_url,
         bytes.len()

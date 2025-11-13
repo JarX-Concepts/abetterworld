@@ -4,6 +4,8 @@ use crate::render::RenderableMap;
 use cgmath::Matrix4;
 use cgmath::Point3;
 use std::sync::RwLock;
+use tracing::event;
+use tracing::Level;
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Debug)]
@@ -60,7 +62,8 @@ impl InstanceBuffer {
         if needed <= self.capacity {
             return false;
         }
-        log::info!(
+        event!(
+            Level::INFO,
             "Growing instance buffer from {} to {} instances",
             self.capacity,
             needed
@@ -122,7 +125,7 @@ pub fn build_instances(
 
 pub fn upload_instances(queue: &wgpu::Queue, ibuf: &InstanceBuffer, instances: &[Instance3x4]) {
     if instances.len() > ibuf.capacity {
-        log::error!(
+        event!(Level::ERROR,
             "Instance buffer too small ({}), need {}",
             ibuf.capacity,
             instances.len()

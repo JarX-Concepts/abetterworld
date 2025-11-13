@@ -11,6 +11,7 @@ crate-type = ["staticlib", "cdylib"]
 [dependencies]
 wgpu = { workspace = true }
 winit = { workspace = true }
+tracing = { workspace = true }
 abetterworld = { path = "../../crates/abetterworld" }
 log = "0.4"
 env_logger = "0.11"
@@ -24,6 +25,7 @@ core-graphics = "0.25"
 raw-window-handle = "0.6.2"
 ctrlc = "3.4"
 cocoa = "0.26"
+
 
 [features]
 metal = ["wgpu/metal"]

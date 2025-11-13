@@ -8,10 +8,10 @@ use jni::JNIEnv;
 use wgpu::Error;
 
 use ndk::native_window::NativeWindow;
-use wgpu::{self, util::DeviceExt};
-
 use std::ffi::c_void;
 use std::ptr::NonNull;
+use tracing::{event, Level};
+use wgpu::{self, util::DeviceExt};
 
 use crate::logging::init_logger;
 mod logging;
@@ -73,7 +73,10 @@ pub extern "C" fn Java_com_jarxconcepts_abetterworld_Renderer_nativeCreateState(
     );
     let _ = init_logger().expect("Logger initialization failed");
 
-    log::info!("Creating native state for Android A Better World");
+    event!(
+        Level::INFO,
+        "Creating native state for Android A Better World"
+    );
 
     let state = Box::new(State { gfx: None });
     Box::into_raw(state) as jlong
@@ -152,20 +155,21 @@ pub extern "C" fn Java_com_jarxconcepts_abetterworld_Renderer_nativeInitRenderer
 
     device.on_uncaptured_error(Box::new(move |e: Error| match e {
         Error::Validation { description, .. } => {
-            log::error!("WGPU validation error: {description}");
+            event!(Level::ERROR, "WGPU validation error: {description}");
         }
         Error::OutOfMemory { source } => {
-            log::error!("WGPU OOM: {source:?}");
+            event!(Level::ERROR, "WGPU OOM: {source:?}");
         }
         other => {
-            log::error!("WGPU uncaptured error: {other:?}");
+            event!(Level::ERROR, "WGPU uncaptured error: {other:?}");
         }
     }));
 
     // 6) Surface config (choose supported format/modes)
     let caps = surface.get_capabilities(&adapter);
 
-    log::info!(
+    event!(
+        Level::INFO,
         "caps: formats={:?} present_modes={:?} alpha_modes={:?}",
         caps.formats,
         caps.present_modes,
@@ -198,7 +202,8 @@ pub extern "C" fn Java_com_jarxconcepts_abetterworld_Renderer_nativeInitRenderer
         let scale = f32::min(max_dim as f32 / w as f32, max_dim as f32 / h as f32);
         w = ((w as f32) * scale).floor() as u32;
         h = ((h as f32) * scale).floor() as u32;
-        log::warn!(
+        event!(
+            Level::WARN,
             "Clamping surface from {}x{} to {}x{} (max_dim={})",
             width,
             height,
@@ -222,7 +227,7 @@ pub extern "C" fn Java_com_jarxconcepts_abetterworld_Renderer_nativeInitRenderer
     };
     surface.configure(&device, &config);
     if let Some(err) = pollster::block_on(device.pop_error_scope()) {
-        log::error!("surface.configure validation error: {err}");
+        event!(Level::ERROR, "surface.configure validation error: {err}");
     }
 
     let abw = World::new(&device, &config, format, &get_debug_config());
@@ -279,7 +284,10 @@ pub extern "C" fn Java_com_jarxconcepts_abetterworld_Renderer_nativeRender(
         Ok(f) => f,
         Err(e) => {
             // Reconfigure on Outdated/Lost
-            log::warn!("get_current_texture failed: {e:?}; reconfiguring");
+            event!(
+                Level::WARN,
+                "get_current_texture failed: {e:?}; reconfiguring"
+            );
             g.surface.configure(&g.device, &g.config);
             match g.surface.get_current_texture() {
                 Ok(f) => f,
