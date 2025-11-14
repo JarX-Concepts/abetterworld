@@ -18,6 +18,9 @@ _Designed to work on all major platforms._
   <img src="assets/nyc-wasm-2.png" alt="NYC WASM" width="45%"/>
 </div>
 
+![Tracy Integration](assets/abw-Tracy-iOS.png)
+_Tracy Integration._
+
 ---
 
 ## 🚀 Getting Started
