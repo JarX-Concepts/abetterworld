@@ -1,6 +1,7 @@
 // world/config_loader.rs
 use crate::world::{Config, Source}; // or the correct path
 use thiserror::Error;
+use tracing::{event, Level};
 
 #[derive(Debug, Error)]
 pub enum LoadConfigError {
@@ -11,10 +12,8 @@ pub enum LoadConfigError {
     De(#[from] serde_json::Error),
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(any(target_arch = "wasm32", target_os = "ios")))]
 pub fn load_config() -> Result<Config, LoadConfigError> {
-    use tracing::{event, Level};
-
     let _ = dotenvy::dotenv();
 
     let builder = config::Config::builder()
@@ -43,8 +42,9 @@ pub fn load_config() -> Result<Config, LoadConfigError> {
     Ok(cfg)
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", target_os = "ios"))]
 pub fn load_config() -> Result<Config, LoadConfigError> {
+    event!(tracing::Level::INFO, "Loading embedded config for wasm/ios");
     const CONFIG_JSON: &str = include_str!("../../../../abw_wasm_config.json");
 
     // Parse into your typed Config

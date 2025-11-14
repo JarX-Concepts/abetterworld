@@ -10,7 +10,8 @@ mod world;
 mod tests;
 
 pub use world::{
-    CameraPosition, Config, InputEvent, Key, Location, MouseButton, Orientation, Source, World,
+    AutoTour, CameraPosition, Config, InputEvent, Key, Location, MouseButton, Orientation, Source,
+    World,
 };
 
 use crate::world::load_config;
@@ -27,6 +28,7 @@ pub fn get_debug_config() -> Config {
         debug_camera_geodetic_position: (34.4208, -119.6982, 500.0).into(),
         debug_camera_render_frustum: true,
         debug_render_volumes: false,
+        debug_auto_tour: false,
         tile_culling: false,
     })
 }

@@ -121,7 +121,7 @@ pub extern "C" fn abetterworld_ios_init(
     }))
     .expect("Failed to create device");
 
-    let texture_format = wgpu::TextureFormat::Bgra8UnormSrgb;
+    let texture_format = wgpu::TextureFormat::Rgba8UnormSrgb;
 
     // Create a render texture with drawable size
     let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -155,6 +155,7 @@ pub extern "C" fn abetterworld_ios_init(
 
     // Initialize sphere renderer with device and config
     let mut debug_config = get_debug_config();
+    debug_config.debug_auto_tour = true;
     debug_config.cache_dir = if cache_dir.is_null() {
         debug_config.cache_dir
     } else {

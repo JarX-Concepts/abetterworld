@@ -1,5 +1,3 @@
-mod test_control;
-use test_control::AutoTour;
 use tracing::{event, Level};
 use wgpu_profiler::{GpuProfiler, GpuProfilerSettings};
 
@@ -30,8 +28,6 @@ struct State<'window> {
     size: winit::dpi::PhysicalSize<u32>,
     world: World,
     profiler: wgpu_profiler::GpuProfiler,
-
-    debug_auto_zoom: Option<AutoTour>,
 }
 
 impl<'window> State<'window> {
@@ -109,6 +105,7 @@ impl<'window> State<'window> {
         let mut abw_config = get_debug_config();
         abw_config.use_debug_camera = DEBUG_CAMERA;
         abw_config.debug_render_volumes = DEBUG_VOLUMES;
+        abw_config.debug_auto_tour = DEBUG_PATH;
         let world = World::new(
             &device,
             &config,
@@ -124,12 +121,6 @@ impl<'window> State<'window> {
             size,
             world,
             profiler,
-
-            debug_auto_zoom: if DEBUG_PATH {
-                Some(AutoTour::new())
-            } else {
-                None
-            },
         }
     }
 
@@ -150,18 +141,6 @@ impl<'window> State<'window> {
     }
 
     fn update(&mut self) {
-        if let Some(script) = self.debug_auto_zoom.as_mut() {
-            if let Some(cam_pos) = script.step() {
-                // Use your provided interface; enable debug camera controls while auto-zooming.
-                self.world.set_camera_position(cam_pos, DEBUG_CAMERA);
-            } else {
-                // Finished: clear script so it stops running.
-                self.debug_auto_zoom = None;
-                // Optionally: one last set with debug_camera=false to “hand back” to normal camera.
-                // self.set_camera_position(cam_pos, false);
-            }
-        }
-
         let _ = self
             .world
             .update(&self.device, &self.queue)

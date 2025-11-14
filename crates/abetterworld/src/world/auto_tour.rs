@@ -1,4 +1,4 @@
-use abetterworld::{CameraPosition, Location, Orientation};
+use crate::{CameraPosition, Location, Orientation};
 use std::f64::consts::PI;
 use std::time::Instant;
 

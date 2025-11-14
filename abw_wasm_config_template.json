@@ -18,5 +18,6 @@
     "lat": 34.4208,
     "lon": -119.6982,
     "alt_m": 500.0
-  }
+  },
+  "debug_auto_tour": false
 }

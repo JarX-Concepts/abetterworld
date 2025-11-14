@@ -37,7 +37,7 @@ public class ABetterWorldRenderer {
         print("Initializing with dimensions: \(width) x \(height)")
         
         self.metalLayer = layer
-        layer.pixelFormat = .bgra8Unorm_srgb
+        layer.pixelFormat = .rgba8Unorm_srgb
         if layer.responds(to: #selector(setter: CAMetalLayer.colorspace)) {
             layer.colorspace = CGColorSpace(name: CGColorSpace.sRGB)
         }

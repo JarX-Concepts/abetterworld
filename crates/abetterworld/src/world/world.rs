@@ -15,7 +15,8 @@ use crate::{
         build_debug_pipeline, build_frustum_render, build_pipeline, import_renderables,
         FrustumRender, RenderAndUpdate, RenderPipeline, SceneGraph,
     },
-    Config,
+    world::auto_tour,
+    AutoTour, Config,
 };
 use std::{sync::Arc, time::Duration};
 
@@ -35,6 +36,8 @@ pub struct WorldPrivate {
     pub dynamics: Dynamics,
 
     pub clock: FrameClock,
+
+    pub debug_auto_tour: Option<AutoTour>,
 }
 
 pub struct World {
@@ -185,6 +188,12 @@ impl World {
             loader_tx,
         );
 
+        let auto_tour = if abw_config.debug_auto_tour {
+            Some(AutoTour::new())
+        } else {
+            None
+        };
+
         Self {
             private: WorldPrivate {
                 dynamics: { Dynamics::new(camera.position()) },
@@ -198,6 +207,7 @@ impl World {
                 receiver: render_rx,
                 clock: FrameClock::new(std::time::Duration::from_millis(16), 0.2),
                 surface_format: texture_surface_format,
+                debug_auto_tour: auto_tour,
             },
             render: RenderAndUpdate::new(),
             config: abw_config.clone(),
@@ -249,6 +259,14 @@ impl World {
 
     #[instrument(skip(self, device, queue), fields(need_update = false))]
     pub fn update(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> Result<bool, AbwError> {
+        if let Some(script) = self.private.debug_auto_tour.as_mut() {
+            if let Some(cam_pos) = script.step() {
+                self.set_camera_position(cam_pos, self.config.use_debug_camera);
+            } else {
+                self.private.debug_auto_tour = None;
+            }
+        }
+
         let tick = self.private.clock.tick();
 
         self.private.input_state.flush(&mut self.private.dynamics);

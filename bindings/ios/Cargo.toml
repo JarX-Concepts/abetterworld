@@ -12,7 +12,7 @@ crate-type = ["staticlib", "cdylib"]
 wgpu = { workspace = true }
 winit = { workspace = true }
 tracing = { workspace = true }
-abetterworld = { path = "../../crates/abetterworld" }
+abetterworld = { path = "../../crates/abetterworld", features=["profile-tracy"] }
 log = "0.4"
 env_logger = "0.11"
 pollster = "0.4"

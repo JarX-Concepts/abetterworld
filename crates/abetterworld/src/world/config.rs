@@ -45,5 +45,6 @@ pub struct Config {
     pub debug_camera_geodetic_position: Geodetic,
     pub debug_camera_render_frustum: bool,
     pub debug_render_volumes: bool,
+    pub debug_auto_tour: bool,
     pub tile_culling: bool,
 }
