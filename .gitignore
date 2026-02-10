@@ -32,3 +32,5 @@ target/
 
 .env
 abw_wasm_config.json
+
+.vscode/**
