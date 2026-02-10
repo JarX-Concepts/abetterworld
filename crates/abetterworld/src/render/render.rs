@@ -4,7 +4,7 @@ use crate::{
     helpers::{AbwError, Uniforms},
     render::{
         build_instances, get_renderable_tile, rebuild_tile_bg, upload_instances,
-        with_renderable_state, DebugVertex, SceneGraph,
+        with_renderable_state, DebugVertex, SceneGraph, SIZE_OF_VOLUME,
     },
     world::WorldPrivate,
 };
@@ -280,18 +280,21 @@ impl RenderAndUpdate {
             }
         }
 
-        /*         if draw_tile_volumes {
+        if draw_tile_volumes {
             let renderables = &world.content.renderable;
             for (index, renderable_tile_id) in self.frame.tiles.iter().enumerate() {
-                let renderable = get_renderable_tile(renderables, *renderable_tile_id)?;
-
                 if index + 1 >= MAX_RENDERABLE_TILES_US {
-                    //event!(Level::WARN,"Hit maximum number of volumes (Update)");
                     break;
                 }
-                let new_frustum_vertices: Vec<DebugVertex> = renderable
-                    .culling_volume
-                    .corners
+
+                let tile_ptr = get_renderable_tile(renderables, *renderable_tile_id)?;
+                let tile_guard = tile_ptr.read().unwrap();
+                let corners = match &tile_guard.tile_info {
+                    Some(info) => info.volume.corners(),
+                    None => continue,
+                };
+
+                let new_frustum_vertices: Vec<DebugVertex> = corners
                     .iter()
                     .map(|p| DebugVertex {
                         position: [
@@ -309,7 +312,7 @@ impl RenderAndUpdate {
                     bytemuck::cast_slice(&new_frustum_vertices),
                 );
             }
-        } */
+        }
 
         // main camera
         {
