@@ -1,6 +1,6 @@
 use crate::{
     content::types::{Material, Node, Texture},
-    decode::{self, DracoClient, OwnedDecodedMesh},
+    decode::{self, DracoClient, OwnedDecodedMesh, Vertex},
     render::TextureResource,
 };
 use byteorder::{LittleEndian, ReadBytesExt};
@@ -128,43 +128,25 @@ pub async fn build_meshes(
         for mesh in meshes {
             if let Some(primitives) = mesh.get("primitives").and_then(|v| v.as_array()) {
                 for primitive in primitives {
-                    if let Some(draco) = primitive
+                    let draco = primitive
                         .get("extensions")
-                        .and_then(|v| v.get("KHR_draco_mesh_compression"))
-                    {
-                        if let Some(buffer_view_idx) =
-                            draco.get("bufferView").and_then(|v| v.as_u64())
+                        .and_then(|v| v.get("KHR_draco_mesh_compression"));
+
+                    let mesh_data = if let Some(draco) = draco {
+                        // Draco-compressed path
+                        decode_draco_primitive(json, bin, draco, &decode_client).await?
+                    } else {
+                        // Standard accessor-based path
+                        decode_accessor_primitive(json, bin, primitive)?
+                    };
+
+                    if let Some(mut mesh_data) = mesh_data {
+                        if let Some(material_idx) =
+                            primitive.get("material").and_then(|v| v.as_u64())
                         {
-                            if let Some(buffer_view) = json
-                                .get("bufferViews")
-                                .and_then(|v| v.get(buffer_view_idx as usize))
-                            {
-                                let offset = buffer_view
-                                    .get("byteOffset")
-                                    .and_then(|v| v.as_u64())
-                                    .unwrap_or(0);
-                                let length = buffer_view
-                                    .get("byteLength")
-                                    .and_then(|v| v.as_u64())
-                                    .unwrap_or(0);
-                                let start = offset as usize;
-                                let end = start + length as usize;
-
-                                if end <= bin.len() && start < end {
-                                    // Use a slice directly, NOT .to_vec()
-                                    let mut mesh_data =
-                                        decode_client.decode(&bin[start..end]).await?;
-
-                                    if let Some(material_idx) =
-                                        primitive.get("material").and_then(|v| v.as_u64())
-                                    {
-                                        mesh_data.material_index = Some(material_idx as usize);
-                                    }
-
-                                    results.push(mesh_data);
-                                }
-                            }
+                            mesh_data.material_index = Some(material_idx as usize);
                         }
+                        results.push(mesh_data);
                     }
                 }
             }
@@ -172,6 +154,272 @@ pub async fn build_meshes(
     }
 
     Ok(results)
+}
+
+async fn decode_draco_primitive(
+    json: &Value,
+    bin: &[u8],
+    draco: &Value,
+    decode_client: &DracoClient,
+) -> Result<Option<OwnedDecodedMesh>, std::io::Error> {
+    let buffer_view_idx = match draco.get("bufferView").and_then(|v| v.as_u64()) {
+        Some(idx) => idx,
+        None => return Ok(None),
+    };
+    let buffer_view = match json
+        .get("bufferViews")
+        .and_then(|v| v.get(buffer_view_idx as usize))
+    {
+        Some(bv) => bv,
+        None => return Ok(None),
+    };
+
+    let offset = buffer_view
+        .get("byteOffset")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let length = buffer_view
+        .get("byteLength")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let start = offset as usize;
+    let end = start + length as usize;
+
+    if end > bin.len() || start >= end {
+        return Ok(None);
+    }
+
+    let mesh_data = decode_client.decode(&bin[start..end]).await?;
+    Ok(Some(mesh_data))
+}
+
+/// Read a float slice from an accessor (supports f32 component type 5126).
+fn read_accessor_f32(json: &Value, bin: &[u8], accessor_idx: u64) -> Option<Vec<f32>> {
+    let accessor = json.get("accessors")?.get(accessor_idx as usize)?;
+    let buffer_view_idx = accessor.get("bufferView")?.as_u64()?;
+    let buffer_view = json.get("bufferViews")?.get(buffer_view_idx as usize)?;
+    let component_type = accessor.get("componentType")?.as_u64()?;
+    let count = accessor.get("count")?.as_u64()? as usize;
+    let acc_type = accessor.get("type")?.as_str()?;
+
+    let components_per_element = match acc_type {
+        "SCALAR" => 1,
+        "VEC2" => 2,
+        "VEC3" => 3,
+        "VEC4" => 4,
+        _ => return None,
+    };
+
+    let bv_offset = buffer_view
+        .get("byteOffset")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
+    let acc_offset = accessor
+        .get("byteOffset")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
+    let stride = buffer_view
+        .get("byteStride")
+        .and_then(|v| v.as_u64())
+        .map(|s| s as usize);
+
+    let total_floats = count * components_per_element;
+
+    match component_type {
+        5126 => {
+            // FLOAT
+            let element_byte_size = components_per_element * 4;
+            let byte_stride = stride.unwrap_or(element_byte_size);
+            let mut result = Vec::with_capacity(total_floats);
+            for i in 0..count {
+                let base = bv_offset + acc_offset + i * byte_stride;
+                for c in 0..components_per_element {
+                    let off = base + c * 4;
+                    if off + 4 > bin.len() {
+                        return None;
+                    }
+                    let val = f32::from_le_bytes([
+                        bin[off],
+                        bin[off + 1],
+                        bin[off + 2],
+                        bin[off + 3],
+                    ]);
+                    result.push(val);
+                }
+            }
+            Some(result)
+        }
+        _ => None,
+    }
+}
+
+/// Read indices from an accessor (supports u16=5123 and u32=5125).
+fn read_accessor_indices(json: &Value, bin: &[u8], accessor_idx: u64) -> Option<Vec<u32>> {
+    let accessor = json.get("accessors")?.get(accessor_idx as usize)?;
+    let buffer_view_idx = accessor.get("bufferView")?.as_u64()?;
+    let buffer_view = json.get("bufferViews")?.get(buffer_view_idx as usize)?;
+    let component_type = accessor.get("componentType")?.as_u64()?;
+    let count = accessor.get("count")?.as_u64()? as usize;
+
+    let bv_offset = buffer_view
+        .get("byteOffset")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
+    let acc_offset = accessor
+        .get("byteOffset")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
+    let stride = buffer_view
+        .get("byteStride")
+        .and_then(|v| v.as_u64())
+        .map(|s| s as usize);
+
+    match component_type {
+        5123 => {
+            // UNSIGNED_SHORT
+            let byte_stride = stride.unwrap_or(2);
+            let mut result = Vec::with_capacity(count);
+            for i in 0..count {
+                let off = bv_offset + acc_offset + i * byte_stride;
+                if off + 2 > bin.len() {
+                    return None;
+                }
+                let val = u16::from_le_bytes([bin[off], bin[off + 1]]);
+                result.push(val as u32);
+            }
+            Some(result)
+        }
+        5125 => {
+            // UNSIGNED_INT
+            let byte_stride = stride.unwrap_or(4);
+            let mut result = Vec::with_capacity(count);
+            for i in 0..count {
+                let off = bv_offset + acc_offset + i * byte_stride;
+                if off + 4 > bin.len() {
+                    return None;
+                }
+                let val = u32::from_le_bytes([bin[off], bin[off + 1], bin[off + 2], bin[off + 3]]);
+                result.push(val);
+            }
+            Some(result)
+        }
+        5121 => {
+            // UNSIGNED_BYTE
+            let byte_stride = stride.unwrap_or(1);
+            let mut result = Vec::with_capacity(count);
+            for i in 0..count {
+                let off = bv_offset + acc_offset + i * byte_stride;
+                if off >= bin.len() {
+                    return None;
+                }
+                result.push(bin[off] as u32);
+            }
+            Some(result)
+        }
+        _ => None,
+    }
+}
+
+fn decode_accessor_primitive(
+    json: &Value,
+    bin: &[u8],
+    primitive: &Value,
+) -> Result<Option<OwnedDecodedMesh>, std::io::Error> {
+    let attributes = match primitive.get("attributes") {
+        Some(a) => a,
+        None => return Ok(None),
+    };
+
+    // POSITION is required
+    let pos_idx = match attributes.get("POSITION").and_then(|v| v.as_u64()) {
+        Some(idx) => idx,
+        None => return Ok(None),
+    };
+    let positions = match read_accessor_f32(json, bin, pos_idx) {
+        Some(p) => p,
+        None => return Ok(None),
+    };
+    let vertex_count = positions.len() / 3;
+
+    // NORMAL (optional)
+    let normals = attributes
+        .get("NORMAL")
+        .and_then(|v| v.as_u64())
+        .and_then(|idx| read_accessor_f32(json, bin, idx));
+
+    // TEXCOORD_0 (optional)
+    let texcoords0 = attributes
+        .get("TEXCOORD_0")
+        .and_then(|v| v.as_u64())
+        .and_then(|idx| read_accessor_f32(json, bin, idx));
+
+    // TEXCOORD_1 (optional)
+    let texcoords1 = attributes
+        .get("TEXCOORD_1")
+        .and_then(|v| v.as_u64())
+        .and_then(|idx| read_accessor_f32(json, bin, idx));
+
+    // COLOR_0 (optional)
+    let colors = attributes
+        .get("COLOR_0")
+        .and_then(|v| v.as_u64())
+        .and_then(|idx| read_accessor_f32(json, bin, idx));
+
+    // Build vertices
+    let mut vertices = Vec::with_capacity(vertex_count);
+    for i in 0..vertex_count {
+        let position = [
+            positions[i * 3],
+            positions[i * 3 + 1],
+            positions[i * 3 + 2],
+        ];
+        let normal = normals
+            .as_ref()
+            .map(|n| [n[i * 3], n[i * 3 + 1], n[i * 3 + 2]])
+            .unwrap_or([0.0, 0.0, 1.0]);
+        let color = colors
+            .as_ref()
+            .map(|c| {
+                let components = c.len() / vertex_count;
+                if components >= 4 {
+                    [c[i * components], c[i * components + 1], c[i * components + 2], c[i * components + 3]]
+                } else if components == 3 {
+                    [c[i * components], c[i * components + 1], c[i * components + 2], 1.0]
+                } else {
+                    [1.0, 1.0, 1.0, 1.0]
+                }
+            })
+            .unwrap_or([1.0, 1.0, 1.0, 1.0]);
+        let texcoord0 = texcoords0
+            .as_ref()
+            .map(|t| [t[i * 2], t[i * 2 + 1]])
+            .unwrap_or([0.0, 0.0]);
+        let texcoord1 = texcoords1
+            .as_ref()
+            .map(|t| [t[i * 2], t[i * 2 + 1]])
+            .unwrap_or([0.0, 0.0]);
+
+        vertices.push(Vertex {
+            position,
+            normal,
+            color,
+            texcoord0,
+            texcoord1,
+        });
+    }
+
+    // Indices (optional — generate sequential if missing)
+    let indices = if let Some(idx_accessor) = primitive.get("indices").and_then(|v| v.as_u64()) {
+        match read_accessor_indices(json, bin, idx_accessor) {
+            Some(idx) => idx,
+            None => return Ok(None),
+        }
+    } else {
+        (0..vertex_count as u32).collect()
+    };
+
+    let mut mesh = OwnedDecodedMesh::from_vertices_and_indices(vertices, indices);
+    Ok(Some(mesh))
 }
 
 pub fn parse_textures_from_gltf(json: &Value, bin: &[u8]) -> Result<Vec<Texture>, std::io::Error> {

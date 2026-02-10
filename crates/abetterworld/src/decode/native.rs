@@ -7,7 +7,21 @@ extern "C" {
 
 impl Drop for InnerDecodedMesh {
     fn drop(&mut self) {
-        unsafe { free_decoded_mesh(&mut self.data) }
+        if self.rust_owned {
+            // Reconstruct boxed slices so Rust frees the memory
+            unsafe {
+                let _ = Box::from_raw(std::slice::from_raw_parts_mut(
+                    self.data.vertices,
+                    self.data.vertex_count as usize,
+                ));
+                let _ = Box::from_raw(std::slice::from_raw_parts_mut(
+                    self.data.indices,
+                    self.data.index_count as usize,
+                ));
+            }
+        } else {
+            unsafe { free_decoded_mesh(&mut self.data) }
+        }
     }
 }
 
@@ -36,7 +50,10 @@ impl DracoClient {
             }
 
             Ok(OwnedDecodedMesh {
-                inner: std::sync::Arc::new(InnerDecodedMesh { data: mesh }),
+                inner: std::sync::Arc::new(InnerDecodedMesh {
+                    data: mesh,
+                    rust_owned: false,
+                }),
                 material_index: None,
             })
         }

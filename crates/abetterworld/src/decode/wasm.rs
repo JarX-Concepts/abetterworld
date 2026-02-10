@@ -4,7 +4,8 @@ use tracing::{event, Level};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 
-use crate::decode::{types::Vertex, DecodedMesh, OwnedDecodedMesh};
+use crate::decode::types::{InnerDecodedMesh, Vertex};
+use crate::decode::{DecodedMesh, OwnedDecodedMesh};
 
 #[wasm_bindgen(module = "/js/dist/draco-client.js")]
 extern "C" {
@@ -163,6 +164,7 @@ impl DracoClient {
                 Ok(OwnedDecodedMesh {
                     inner: std::sync::Arc::new(crate::decode::types::InnerDecodedMesh {
                         data: mesh,
+                        rust_owned: false,
                     }),
                     material_index: None,
                 })
@@ -172,6 +174,24 @@ impl DracoClient {
                 format!("Draco decode failed: {:?}", e),
             )),
         }
+    }
+}
+
+impl Drop for InnerDecodedMesh {
+    fn drop(&mut self) {
+        if self.rust_owned {
+            unsafe {
+                let _ = Box::from_raw(std::slice::from_raw_parts_mut(
+                    self.data.vertices,
+                    self.data.vertex_count as usize,
+                ));
+                let _ = Box::from_raw(std::slice::from_raw_parts_mut(
+                    self.data.indices,
+                    self.data.index_count as usize,
+                ));
+            }
+        }
+        // Draco-decoded (rust_owned == false) memory was mem::forget'd — no cleanup needed
     }
 }
 

@@ -109,6 +109,7 @@ impl RenderAndUpdate {
             with_renderable_state(renderables, *render_tile_id, |render_tile| {
                 for _node in render_tile.nodes.iter() {
                     for mesh in render_tile.meshes.iter() {
+                        eprintln!("Draw Title {}, node {}", render_tile_id, node_counter);
                         render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                         render_pass.set_index_buffer(
                             mesh.index_buffer.slice(..),
@@ -122,6 +123,11 @@ impl RenderAndUpdate {
                                 render_pass.set_bind_group(1, &texture_resource.bind_group, &[]);
                             }
                         }
+
+                        eprintln!(
+                            "Drawing tile {}, node {}, mesh {}",
+                            render_tile_id, node_counter, mesh.num_indices
+                        );
 
                         // Draw call for this mesh
                         render_pass.draw_indexed(

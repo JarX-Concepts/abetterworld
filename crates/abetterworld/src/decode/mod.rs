@@ -1,5 +1,5 @@
 mod types;
-pub use types::{DecodedMesh, OwnedDecodedMesh};
+pub use types::{DecodedMesh, OwnedDecodedMesh, Vertex};
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native;

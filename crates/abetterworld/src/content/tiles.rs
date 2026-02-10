@@ -59,6 +59,17 @@ async fn process_content_bytes(
     let (gltf_json, gltf_bin) =
         parse_glb(&bytes).tile_loading(&format!("Failed to parse GLB: URI: {}", load.uri,))?;
 
+    // write out the gltf_json for debugging
+    /*     #[cfg(debug_assertions)]
+    {
+        use std::fs::File;
+        use std::io::Write;
+        let mut json_file = File::create(format!("debug.gltf")).unwrap();
+        json_file
+            .write_all(gltf_json.to_string().as_bytes())
+            .unwrap();
+    } */
+
     let meshes = build_meshes(decoder, &gltf_json, &gltf_bin)
         .await
         .tile_loading(&format!("Failed to parse GLB meshes: URI: {}", load.uri,))?;
